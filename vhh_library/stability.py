@@ -14,6 +14,19 @@ _HALLMARK_POSITIONS: list[int] = [37, 44, 45, 47]
 _HYDROPHOBIC_AAS: frozenset[str] = frozenset("VILMFYW")
 _DISULFIDE_POSITIONS: list[int] = [23, 104]
 
+# Composite score weights (legacy)
+_W_DISULFIDE: float = 0.25
+_W_HALLMARK: float = 0.20
+_W_AGGREGATION: float = 0.25
+_W_CHARGE: float = 0.15
+_W_HYDROPHOBIC: float = 0.15
+
+# Nanomelt Tm normalisation parameters
+_TM_BASELINE: float = 40.0
+_TM_RANGE: float = 50.0
+_NANOMELT_WEIGHT: float = 0.7
+_LEGACY_WEIGHT: float = 0.3
+
 # ---------------------------------------------------------------------------
 # Optional dependency probes
 # ---------------------------------------------------------------------------
@@ -126,11 +139,11 @@ class StabilityScorer:
         pi = isoelectric_point(seq)
 
         legacy = (
-            0.25 * disulfide
-            + 0.20 * hallmark
-            + 0.25 * aggregation
-            + 0.15 * charge_balance
-            + 0.15 * hydrophobic_core
+            _W_DISULFIDE * disulfide
+            + _W_HALLMARK * hallmark
+            + _W_AGGREGATION * aggregation
+            + _W_CHARGE * charge_balance
+            + _W_HYDROPHOBIC * hydrophobic_core
         )
 
         result: dict = {
@@ -151,8 +164,8 @@ class StabilityScorer:
                 prediction = nanomelt.predict(seq)
                 tm: float = prediction["Tm"]
                 result["predicted_tm"] = tm
-                nm_normalized = max(0.0, min(1.0, (tm - 40.0) / 50.0))
-                result["composite_score"] = 0.3 * legacy + 0.7 * nm_normalized
+                nm_normalized = max(0.0, min(1.0, (tm - _TM_BASELINE) / _TM_RANGE))
+                result["composite_score"] = _LEGACY_WEIGHT * legacy + _NANOMELT_WEIGHT * nm_normalized
                 result["scoring_method"] = "nanomelt"
             except Exception:
                 result["composite_score"] = legacy
