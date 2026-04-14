@@ -1,1 +1,9 @@
-vhh_library/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+sessions/
+*.egg
