@@ -1,0 +1,2402 @@
+[
+  {
+    "sequence": "KNLLGFEVDAK",
+    "length": 11,
+    "mass_da": 1104.5815,
+    "mz_2plus": 553.298,
+    "mz_1plus": 1105.5888,
+    "hydrophobicity": 0.16
+  },
+  {
+    "sequence": "KAIVLK",
+    "length": 6,
+    "mass_da": 542.3792,
+    "mz_2plus": 272.1969,
+    "mz_1plus": 543.3864,
+    "hydrophobicity": 2.08
+  },
+  {
+    "sequence": "KFSSNR",
+    "length": 6,
+    "mass_da": 609.2871,
+    "mz_2plus": 305.6508,
+    "mz_1plus": 610.2944,
+    "hydrophobicity": -1.36
+  },
+  {
+    "sequence": "KFTEPSIEDLPR",
+    "length": 12,
+    "mass_da": 1302.6455,
+    "mz_2plus": 652.3301,
+    "mz_1plus": 1303.6528,
+    "hydrophobicity": -0.7818
+  },
+  {
+    "sequence": "RINEHLR",
+    "length": 7,
+    "mass_da": 780.4242,
+    "mz_2plus": 391.2194,
+    "mz_1plus": 781.4315,
+    "hydrophobicity": -1.0667
+  },
+  {
+    "sequence": "RNLQDLR",
+    "length": 7,
+    "mass_da": 757.4082,
+    "mz_2plus": 379.7114,
+    "mz_1plus": 758.4155,
+    "hydrophobicity": -1.2333
+  },
+  {
+    "sequence": "KTNEIQIYTWGR",
+    "length": 12,
+    "mass_da": 1379.6834,
+    "mz_2plus": 690.849,
+    "mz_1plus": 1380.6906,
+    "hydrophobicity": -0.9091
+  },
+  {
+    "sequence": "RDFGHVETTK",
+    "length": 10,
+    "mass_da": 1032.4876,
+    "mz_2plus": 517.2511,
+    "mz_1plus": 1033.4949,
+    "hydrophobicity": -0.9889
+  },
+  {
+    "sequence": "RAFNQFPVHR",
+    "length": 10,
+    "mass_da": 1114.5672,
+    "mz_2plus": 558.2909,
+    "mz_1plus": 1115.5745,
+    "hydrophobicity": -0.5222
+  },
+  {
+    "sequence": "KHFPIGSHR",
+    "length": 9,
+    "mass_da": 949.4882,
+    "mz_2plus": 475.7514,
+    "mz_1plus": 950.4955,
+    "hydrophobicity": -0.8
+  },
+  {
+    "sequence": "KYAFSPLDLR",
+    "length": 10,
+    "mass_da": 1080.5604,
+    "mz_2plus": 541.2875,
+    "mz_1plus": 1081.5676,
+    "hydrophobicity": 0.0556
+  },
+  {
+    "sequence": "KYEGGYHNVK",
+    "length": 10,
+    "mass_da": 1065.4879,
+    "mz_2plus": 533.7513,
+    "mz_1plus": 1066.4952,
+    "hydrophobicity": -1.4778
+  },
+  {
+    "sequence": "KTSWWFR",
+    "length": 7,
+    "mass_da": 881.4184,
+    "mz_2plus": 441.7165,
+    "mz_1plus": 882.4257,
+    "hydrophobicity": -0.8333
+  },
+  {
+    "sequence": "KQALLAK",
+    "length": 7,
+    "mass_da": 642.4064,
+    "mz_2plus": 322.2105,
+    "mz_1plus": 643.4137,
+    "hydrophobicity": 0.6333
+  },
+  {
+    "sequence": "KEDQEK",
+    "length": 6,
+    "mass_da": 647.2762,
+    "mz_2plus": 324.6454,
+    "mz_1plus": 648.2835,
+    "hydrophobicity": -3.58
+  },
+  {
+    "sequence": "KYIGYLYVIR",
+    "length": 10,
+    "mass_da": 1158.6437,
+    "mz_2plus": 580.3291,
+    "mz_1plus": 1159.651,
+    "hydrophobicity": 0.9111
+  },
+  {
+    "sequence": "KSVVWR",
+    "length": 6,
+    "mass_da": 645.3598,
+    "mz_2plus": 323.6872,
+    "mz_1plus": 646.3671,
+    "hydrophobicity": 0.44
+  },
+  {
+    "sequence": "KDTQFLIIWGVK",
+    "length": 12,
+    "mass_da": 1318.7285,
+    "mz_2plus": 660.3715,
+    "mz_1plus": 1319.7358,
+    "hydrophobicity": 0.6273
+  },
+  {
+    "sequence": "RLEWFDR",
+    "length": 7,
+    "mass_da": 864.413,
+    "mz_2plus": 433.2138,
+    "mz_1plus": 865.4203,
+    "hydrophobicity": -0.9667
+  },
+  {
+    "sequence": "KLHVYYITDHK",
+    "length": 11,
+    "mass_da": 1287.6611,
+    "mz_2plus": 644.8379,
+    "mz_1plus": 1288.6684,
+    "hydrophobicity": -0.46
+  },
+  {
+    "sequence": "KNWPVYGIR",
+    "length": 9,
+    "mass_da": 1003.5239,
+    "mz_2plus": 502.7692,
+    "mz_1plus": 1004.5312,
+    "hydrophobicity": -0.4375
+  },
+  {
+    "sequence": "KDQDDYHK",
+    "length": 8,
+    "mass_da": 919.3672,
+    "mz_2plus": 460.6909,
+    "mz_1plus": 920.3744,
+    "hydrophobicity": -3.2
+  },
+  {
+    "sequence": "KEELTK",
+    "length": 6,
+    "mass_da": 618.3224,
+    "mz_2plus": 310.1685,
+    "mz_1plus": 619.3297,
+    "hydrophobicity": -1.56
+  },
+  {
+    "sequence": "KEVQNK",
+    "length": 6,
+    "mass_da": 616.318,
+    "mz_2plus": 309.1663,
+    "mz_1plus": 617.3253,
+    "hydrophobicity": -2.04
+  },
+  {
+    "sequence": "RNTGPWK",
+    "length": 7,
+    "mass_da": 701.3497,
+    "mz_2plus": 351.6821,
+    "mz_1plus": 702.3569,
+    "hydrophobicity": -1.8333
+  },
+  {
+    "sequence": "KSPHWPAK",
+    "length": 8,
+    "mass_da": 821.4184,
+    "mz_2plus": 411.7165,
+    "mz_1plus": 822.4257,
+    "hydrophobicity": -1.4571
+  },
+  {
+    "sequence": "RGNFFGNPIQK",
+    "length": 11,
+    "mass_da": 1120.5665,
+    "mz_2plus": 561.2905,
+    "mz_1plus": 1121.5738,
+    "hydrophobicity": -0.67
+  },
+  {
+    "sequence": "RNDEVNR",
+    "length": 7,
+    "mass_da": 745.3355,
+    "mz_2plus": 373.675,
+    "mz_1plus": 746.3428,
+    "hydrophobicity": -2.3833
+  },
+  {
+    "sequence": "KGNHWR",
+    "length": 6,
+    "mass_da": 668.3143,
+    "mz_2plus": 335.1644,
+    "mz_1plus": 669.3216,
+    "hydrophobicity": -2.5
+  },
+  {
+    "sequence": "RFEGDSGVGK",
+    "length": 10,
+    "mass_da": 894.4083,
+    "mz_2plus": 448.2114,
+    "mz_1plus": 895.4156,
+    "hydrophobicity": -0.6556
+  },
+  {
+    "sequence": "RDSILR",
+    "length": 6,
+    "mass_da": 602.3388,
+    "mz_2plus": 302.1767,
+    "mz_1plus": 603.346,
+    "hydrophobicity": -0.1
+  },
+  {
+    "sequence": "KVGLHHVAHQR",
+    "length": 11,
+    "mass_da": 1152.6264,
+    "mz_2plus": 577.3205,
+    "mz_1plus": 1153.6337,
+    "hydrophobicity": -0.4
+  },
+  {
+    "sequence": "RNHFTDYLIWSK",
+    "length": 12,
+    "mass_da": 1422.6932,
+    "mz_2plus": 712.3539,
+    "mz_1plus": 1423.7005,
+    "hydrophobicity": -0.6091
+  },
+  {
+    "sequence": "KAITQNEK",
+    "length": 8,
+    "mass_da": 802.4185,
+    "mz_2plus": 402.2165,
+    "mz_1plus": 803.4258,
+    "hydrophobicity": -1.2571
+  },
+  {
+    "sequence": "RTQAFNHNDFVR",
+    "length": 12,
+    "mass_da": 1347.632,
+    "mz_2plus": 674.8233,
+    "mz_1plus": 1348.6393,
+    "hydrophobicity": -0.9818
+  },
+  {
+    "sequence": "RFTINDVR",
+    "length": 8,
+    "mass_da": 863.4501,
+    "mz_2plus": 432.7323,
+    "mz_1plus": 864.4574,
+    "hydrophobicity": -0.1
+  },
+  {
+    "sequence": "KVEQQR",
+    "length": 6,
+    "mass_da": 658.3398,
+    "mz_2plus": 330.1772,
+    "mz_1plus": 659.3471,
+    "hydrophobicity": -2.16
+  },
+  {
+    "sequence": "KPVQTPGIVTR",
+    "length": 11,
+    "mass_da": 1066.6135,
+    "mz_2plus": 534.314,
+    "mz_1plus": 1067.6208,
+    "hydrophobicity": -0.01
+  },
+  {
+    "sequence": "KTAPPIVQWWR",
+    "length": 11,
+    "mass_da": 1252.6716,
+    "mz_2plus": 627.3431,
+    "mz_1plus": 1253.6789,
+    "hydrophobicity": -0.32
+  },
+  {
+    "sequence": "KHEPQELPR",
+    "length": 9,
+    "mass_da": 1004.5039,
+    "mz_2plus": 503.2592,
+    "mz_1plus": 1005.5112,
+    "hydrophobicity": -2.2
+  },
+  {
+    "sequence": "KADLYEK",
+    "length": 7,
+    "mass_da": 737.3596,
+    "mz_2plus": 369.6871,
+    "mz_1plus": 738.3668,
+    "hydrophobicity": -1.1
+  },
+  {
+    "sequence": "RTYTLGAFK",
+    "length": 9,
+    "mass_da": 899.4753,
+    "mz_2plus": 450.7449,
+    "mz_1plus": 900.4825,
+    "hydrophobicity": 0.175
+  },
+  {
+    "sequence": "RHWDLFWGWQWK",
+    "length": 12,
+    "mass_da": 1587.7411,
+    "mz_2plus": 794.8778,
+    "mz_1plus": 1588.7484,
+    "hydrophobicity": -1.0455
+  },
+  {
+    "sequence": "RHYWNLNYLR",
+    "length": 10,
+    "mass_da": 1277.6305,
+    "mz_2plus": 639.8225,
+    "mz_1plus": 1278.6378,
+    "hydrophobicity": -1.1778
+  },
+  {
+    "sequence": "RPLNQQEK",
+    "length": 8,
+    "mass_da": 855.445,
+    "mz_2plus": 428.7298,
+    "mz_1plus": 856.4523,
+    "hydrophobicity": -2.2429
+  },
+  {
+    "sequence": "KTGIEVK",
+    "length": 7,
+    "mass_da": 645.3697,
+    "mz_2plus": 323.6921,
+    "mz_1plus": 646.377,
+    "hydrophobicity": 0.0333
+  },
+  {
+    "sequence": "RVDIVTATR",
+    "length": 9,
+    "mass_da": 873.492,
+    "mz_2plus": 437.7533,
+    "mz_1plus": 874.4992,
+    "hydrophobicity": 0.6625
+  },
+  {
+    "sequence": "KPTVLYLNR",
+    "length": 9,
+    "mass_da": 974.5549,
+    "mz_2plus": 488.2847,
+    "mz_1plus": 975.5622,
+    "hydrophobicity": 0.025
+  },
+  {
+    "sequence": "RTQTHWGAK",
+    "length": 9,
+    "mass_da": 927.4563,
+    "mz_2plus": 464.7354,
+    "mz_1plus": 928.4635,
+    "hydrophobicity": -1.4375
+  },
+  {
+    "sequence": "KVGWHDNTK",
+    "length": 9,
+    "mass_da": 955.4512,
+    "mz_2plus": 478.7329,
+    "mz_1plus": 956.4584,
+    "hydrophobicity": -1.4875
+  },
+  {
+    "sequence": "KQQTNVNR",
+    "length": 8,
+    "mass_da": 858.4308,
+    "mz_2plus": 430.2227,
+    "mz_1plus": 859.4381,
+    "hydrophobicity": -2.1429
+  },
+  {
+    "sequence": "KADSLEDALIAR",
+    "length": 12,
+    "mass_da": 1172.6037,
+    "mz_2plus": 587.3091,
+    "mz_1plus": 1173.611,
+    "hydrophobicity": 0.1545
+  },
+  {
+    "sequence": "KPFAPTTIEK",
+    "length": 10,
+    "mass_da": 1002.5386,
+    "mz_2plus": 502.2766,
+    "mz_1plus": 1003.5459,
+    "hydrophobicity": -0.3222
+  },
+  {
+    "sequence": "KPFDSVSEQK",
+    "length": 10,
+    "mass_da": 1035.4873,
+    "mz_2plus": 518.7509,
+    "mz_1plus": 1036.4946,
+    "hydrophobicity": -1.1778
+  },
+  {
+    "sequence": "RFVSWR",
+    "length": 6,
+    "mass_da": 693.3598,
+    "mz_2plus": 347.6872,
+    "mz_1plus": 694.3671,
+    "hydrophobicity": 0.16
+  },
+  {
+    "sequence": "KHNYWVNQLER",
+    "length": 11,
+    "mass_da": 1357.6527,
+    "mz_2plus": 679.8336,
+    "mz_1plus": 1358.66,
+    "hydrophobicity": -1.59
+  },
+  {
+    "sequence": "RWTQAYQK",
+    "length": 8,
+    "mass_da": 923.4501,
+    "mz_2plus": 462.7323,
+    "mz_1plus": 924.4574,
+    "hydrophobicity": -1.7143
+  },
+  {
+    "sequence": "RSNQNNK",
+    "length": 7,
+    "mass_da": 703.3249,
+    "mz_2plus": 352.6697,
+    "mz_1plus": 704.3322,
+    "hydrophobicity": -3.1167
+  },
+  {
+    "sequence": "KELVYLYYWK",
+    "length": 10,
+    "mass_da": 1275.6539,
+    "mz_2plus": 638.8342,
+    "mz_1plus": 1276.6612,
+    "hydrophobicity": -0.0444
+  },
+  {
+    "sequence": "KPLTLPSYSVQK",
+    "length": 12,
+    "mass_da": 1231.6812,
+    "mz_2plus": 616.8479,
+    "mz_1plus": 1232.6885,
+    "hydrophobicity": -0.2182
+  },
+  {
+    "sequence": "RPNLFIQR",
+    "length": 8,
+    "mass_da": 886.5025,
+    "mz_2plus": 444.2585,
+    "mz_1plus": 887.5098,
+    "hydrophobicity": -0.2857
+  },
+  {
+    "sequence": "KIYNPK",
+    "length": 6,
+    "mass_da": 633.3486,
+    "mz_2plus": 317.6816,
+    "mz_1plus": 634.3559,
+    "hydrophobicity": -1.16
+  },
+  {
+    "sequence": "KLSHPR",
+    "length": 6,
+    "mass_da": 608.3394,
+    "mz_2plus": 305.177,
+    "mz_1plus": 609.3467,
+    "hydrophobicity": -1.26
+  },
+  {
+    "sequence": "KDDPGR",
+    "length": 6,
+    "mass_da": 558.2398,
+    "mz_2plus": 280.1272,
+    "mz_1plus": 559.2471,
+    "hydrophobicity": -2.7
+  },
+  {
+    "sequence": "RAPYYWQHDNK",
+    "length": 11,
+    "mass_da": 1320.5887,
+    "mz_2plus": 661.3016,
+    "mz_1plus": 1321.596,
+    "hydrophobicity": -2.09
+  },
+  {
+    "sequence": "RETYEDGGPELK",
+    "length": 12,
+    "mass_da": 1236.551,
+    "mz_2plus": 619.2828,
+    "mz_1plus": 1237.5583,
+    "hydrophobicity": -1.6818
+  },
+  {
+    "sequence": "RTWWPK",
+    "length": 6,
+    "mass_da": 716.3646,
+    "mz_2plus": 359.1896,
+    "mz_1plus": 717.3719,
+    "hydrophobicity": -1.6
+  },
+  {
+    "sequence": "RDFIINEHLHER",
+    "length": 12,
+    "mass_da": 1421.7051,
+    "mz_2plus": 711.8598,
+    "mz_1plus": 1422.7124,
+    "hydrophobicity": -0.8455
+  },
+  {
+    "sequence": "KWYPDLR",
+    "length": 7,
+    "mass_da": 848.4181,
+    "mz_2plus": 425.2163,
+    "mz_1plus": 849.4254,
+    "hydrophobicity": -1.3333
+  },
+  {
+    "sequence": "RELNIVFR",
+    "length": 8,
+    "mass_da": 889.5021,
+    "mz_2plus": 445.7583,
+    "mz_1plus": 890.5094,
+    "hydrophobicity": 0.5429
+  },
+  {
+    "sequence": "RTNYWR",
+    "length": 6,
+    "mass_da": 738.3449,
+    "mz_2plus": 370.1797,
+    "mz_1plus": 739.3522,
+    "hydrophobicity": -2.18
+  },
+  {
+    "sequence": "KQNAER",
+    "length": 6,
+    "mass_da": 616.2929,
+    "mz_2plus": 309.1537,
+    "mz_1plus": 617.3002,
+    "hydrophobicity": -2.64
+  },
+  {
+    "sequence": "KDHYWNR",
+    "length": 7,
+    "mass_da": 889.3831,
+    "mz_2plus": 445.6988,
+    "mz_1plus": 890.3904,
+    "hydrophobicity": -2.8167
+  },
+  {
+    "sequence": "REYSVQR",
+    "length": 7,
+    "mass_da": 780.3766,
+    "mz_2plus": 391.1956,
+    "mz_1plus": 781.3839,
+    "hydrophobicity": -1.5667
+  },
+  {
+    "sequence": "KQVYPTDK",
+    "length": 8,
+    "mass_da": 849.4232,
+    "mz_2plus": 425.7189,
+    "mz_1plus": 850.4305,
+    "hydrophobicity": -1.4714
+  },
+  {
+    "sequence": "KNQFTAWVR",
+    "length": 9,
+    "mass_da": 1020.5141,
+    "mz_2plus": 511.2643,
+    "mz_1plus": 1021.5214,
+    "hydrophobicity": -0.5375
+  },
+  {
+    "sequence": "KYWDIR",
+    "length": 6,
+    "mass_da": 751.3653,
+    "mz_2plus": 376.6899,
+    "mz_1plus": 752.3726,
+    "hydrophobicity": -1.14
+  },
+  {
+    "sequence": "KWYFALHR",
+    "length": 8,
+    "mass_da": 991.5028,
+    "mz_2plus": 496.7587,
+    "mz_1plus": 992.5101,
+    "hydrophobicity": -0.2143
+  },
+  {
+    "sequence": "KELFWFGR",
+    "length": 8,
+    "mass_da": 953.4759,
+    "mz_2plus": 477.7452,
+    "mz_1plus": 954.4832,
+    "hydrophobicity": 0.0143
+  },
+  {
+    "sequence": "RVYYLWGTR",
+    "length": 9,
+    "mass_da": 1056.5393,
+    "mz_2plus": 529.2769,
+    "mz_1plus": 1057.5465,
+    "hydrophobicity": -0.1375
+  },
+  {
+    "sequence": "KNVQNAK",
+    "length": 7,
+    "mass_da": 672.3555,
+    "mz_2plus": 337.185,
+    "mz_1plus": 673.3628,
+    "hydrophobicity": -1.4
+  },
+  {
+    "sequence": "RGWYSQTR",
+    "length": 8,
+    "mass_da": 896.4141,
+    "mz_2plus": 449.2143,
+    "mz_1plus": 897.4213,
+    "hydrophobicity": -1.7286
+  },
+  {
+    "sequence": "RLTLVDQYK",
+    "length": 9,
+    "mass_da": 978.5386,
+    "mz_2plus": 490.2766,
+    "mz_1plus": 979.5459,
+    "hydrophobicity": -0.1375
+  },
+  {
+    "sequence": "RGYDGQFWFWR",
+    "length": 11,
+    "mass_da": 1360.5989,
+    "mz_2plus": 681.3067,
+    "mz_1plus": 1361.6062,
+    "hydrophobicity": -0.98
+  },
+  {
+    "sequence": "KGEYNR",
+    "length": 6,
+    "mass_da": 637.282,
+    "mz_2plus": 319.6483,
+    "mz_1plus": 638.2893,
+    "hydrophobicity": -2.64
+  },
+  {
+    "sequence": "RQTQYDEK",
+    "length": 8,
+    "mass_da": 910.4032,
+    "mz_2plus": 456.2089,
+    "mz_1plus": 911.4105,
+    "hydrophobicity": -2.8429
+  },
+  {
+    "sequence": "REVFFWK",
+    "length": 7,
+    "mass_da": 854.4327,
+    "mz_2plus": 428.2236,
+    "mz_1plus": 855.4399,
+    "hydrophobicity": 0.25
+  },
+  {
+    "sequence": "RDQDPSK",
+    "length": 7,
+    "mass_da": 688.3028,
+    "mz_2plus": 345.1587,
+    "mz_1plus": 689.3101,
+    "hydrophobicity": -2.8
+  },
+  {
+    "sequence": "RLVHHHEK",
+    "length": 8,
+    "mass_da": 898.4773,
+    "mz_2plus": 450.2459,
+    "mz_1plus": 899.4846,
+    "hydrophobicity": -1.2857
+  },
+  {
+    "sequence": "RYGLWNWNAK",
+    "length": 10,
+    "mass_da": 1150.556,
+    "mz_2plus": 576.2853,
+    "mz_1plus": 1151.5632,
+    "hydrophobicity": -0.9778
+  },
+  {
+    "sequence": "RHEWSPVNWPIR",
+    "length": 12,
+    "mass_da": 1419.7047,
+    "mz_2plus": 710.8596,
+    "mz_1plus": 1420.712,
+    "hydrophobicity": -1.0727
+  },
+  {
+    "sequence": "RLTSPPATK",
+    "length": 9,
+    "mass_da": 813.4596,
+    "mz_2plus": 407.7371,
+    "mz_1plus": 814.4669,
+    "hydrophobicity": -0.4625
+  },
+  {
+    "sequence": "KYPLSLIK",
+    "length": 8,
+    "mass_da": 832.5058,
+    "mz_2plus": 417.2602,
+    "mz_1plus": 833.5131,
+    "hydrophobicity": 0.6429
+  },
+  {
+    "sequence": "RFDPWDSGEK",
+    "length": 10,
+    "mass_da": 1079.456,
+    "mz_2plus": 540.7353,
+    "mz_1plus": 1080.4632,
+    "hydrophobicity": -1.7
+  },
+  {
+    "sequence": "RHIGSNHR",
+    "length": 8,
+    "mass_da": 819.41,
+    "mz_2plus": 410.7123,
+    "mz_1plus": 820.4173,
+    "hydrophobicity": -1.5857
+  },
+  {
+    "sequence": "RQFWEGLR",
+    "length": 8,
+    "mass_da": 934.4661,
+    "mz_2plus": 468.2403,
+    "mz_1plus": 935.4734,
+    "hydrophobicity": -0.8857
+  },
+  {
+    "sequence": "KAQLER",
+    "length": 6,
+    "mass_da": 615.334,
+    "mz_2plus": 308.6743,
+    "mz_1plus": 616.3413,
+    "hydrophobicity": -1.18
+  },
+  {
+    "sequence": "RVFGDDPYFFR",
+    "length": 11,
+    "mass_da": 1261.5767,
+    "mz_2plus": 631.7957,
+    "mz_1plus": 1262.584,
+    "hydrophobicity": -0.22
+  },
+  {
+    "sequence": "KWSVGVR",
+    "length": 7,
+    "mass_da": 702.3813,
+    "mz_2plus": 352.1979,
+    "mz_1plus": 703.3886,
+    "hydrophobicity": 0.3
+  },
+  {
+    "sequence": "RDTNIR",
+    "length": 6,
+    "mass_da": 617.3133,
+    "mz_2plus": 309.6639,
+    "mz_1plus": 618.3206,
+    "hydrophobicity": -1.54
+  },
+  {
+    "sequence": "RIADQK",
+    "length": 6,
+    "mass_da": 573.3122,
+    "mz_2plus": 287.6634,
+    "mz_1plus": 574.3195,
+    "hydrophobicity": -0.92
+  },
+  {
+    "sequence": "KEIILQK",
+    "length": 7,
+    "mass_da": 742.4589,
+    "mz_2plus": 372.2367,
+    "mz_1plus": 743.4662,
+    "hydrophobicity": 0.3167
+  },
+  {
+    "sequence": "KAHNDGVFEYWR",
+    "length": 12,
+    "mass_da": 1392.6211,
+    "mz_2plus": 697.3178,
+    "mz_1plus": 1393.6283,
+    "hydrophobicity": -1.0909
+  },
+  {
+    "sequence": "RWLDPWADYTVK",
+    "length": 12,
+    "mass_da": 1392.6714,
+    "mz_2plus": 697.343,
+    "mz_1plus": 1393.6786,
+    "hydrophobicity": -0.5909
+  },
+  {
+    "sequence": "KWEEQGEGNQR",
+    "length": 11,
+    "mass_da": 1231.5218,
+    "mz_2plus": 616.7682,
+    "mz_1plus": 1232.529,
+    "hydrophobicity": -2.72
+  },
+  {
+    "sequence": "RVFFIVWLR",
+    "length": 9,
+    "mass_da": 1078.6327,
+    "mz_2plus": 540.3237,
+    "mz_1plus": 1079.64,
+    "hydrophobicity": 2.1125
+  },
+  {
+    "sequence": "RTVFQVQNR",
+    "length": 9,
+    "mass_da": 990.5247,
+    "mz_2plus": 496.2696,
+    "mz_1plus": 991.532,
+    "hydrophobicity": -0.5625
+  },
+  {
+    "sequence": "KEEEEVFR",
+    "length": 8,
+    "mass_da": 936.4189,
+    "mz_2plus": 469.2167,
+    "mz_1plus": 937.4261,
+    "hydrophobicity": -1.6429
+  },
+  {
+    "sequence": "RDQFVSVDPPK",
+    "length": 11,
+    "mass_da": 1130.5608,
+    "mz_2plus": 566.2877,
+    "mz_1plus": 1131.568,
+    "hydrophobicity": -0.72
+  },
+  {
+    "sequence": "KGYLFSSK",
+    "length": 8,
+    "mass_da": 800.4068,
+    "mz_2plus": 401.2107,
+    "mz_1plus": 801.4141,
+    "hydrophobicity": -0.0857
+  },
+  {
+    "sequence": "RVANAK",
+    "length": 6,
+    "mass_da": 501.2911,
+    "mz_2plus": 251.6528,
+    "mz_1plus": 502.2984,
+    "hydrophobicity": 0.08
+  },
+  {
+    "sequence": "RQSAHGR",
+    "length": 7,
+    "mass_da": 654.3198,
+    "mz_2plus": 328.1672,
+    "mz_1plus": 655.327,
+    "hydrophobicity": -1.7667
+  },
+  {
+    "sequence": "RGAEITVWQK",
+    "length": 10,
+    "mass_da": 1030.5447,
+    "mz_2plus": 516.2796,
+    "mz_1plus": 1031.552,
+    "hydrophobicity": -0.2667
+  },
+  {
+    "sequence": "RQEDGHR",
+    "length": 7,
+    "mass_da": 740.3202,
+    "mz_2plus": 371.1674,
+    "mz_1plus": 741.3274,
+    "hydrophobicity": -3.1
+  },
+  {
+    "sequence": "KNWVYWVNIFSK",
+    "length": 12,
+    "mass_da": 1454.7346,
+    "mz_2plus": 728.3746,
+    "mz_1plus": 1455.7419,
+    "hydrophobicity": 0.0818
+  },
+  {
+    "sequence": "KYPDLTDAR",
+    "length": 9,
+    "mass_da": 949.4505,
+    "mz_2plus": 475.7325,
+    "mz_1plus": 950.4578,
+    "hydrophobicity": -1.1875
+  },
+  {
+    "sequence": "RGNPQFK",
+    "length": 7,
+    "mass_da": 689.3497,
+    "mz_2plus": 345.6821,
+    "mz_1plus": 690.3569,
+    "hydrophobicity": -1.6833
+  },
+  {
+    "sequence": "RHGTLR",
+    "length": 6,
+    "mass_da": 582.3238,
+    "mz_2plus": 292.1692,
+    "mz_1plus": 583.3311,
+    "hydrophobicity": -1.0
+  },
+  {
+    "sequence": "RTDVAWEQVK",
+    "length": 10,
+    "mass_da": 1074.5345,
+    "mz_2plus": 538.2746,
+    "mz_1plus": 1075.5418,
+    "hydrophobicity": -0.6444
+  },
+  {
+    "sequence": "RPFTAQHWSR",
+    "length": 10,
+    "mass_da": 1128.5465,
+    "mz_2plus": 565.2805,
+    "mz_1plus": 1129.5537,
+    "hydrophobicity": -1.1778
+  },
+  {
+    "sequence": "RLVTEK",
+    "length": 6,
+    "mass_da": 588.3483,
+    "mz_2plus": 295.1814,
+    "mz_1plus": 589.3555,
+    "hydrophobicity": -0.02
+  },
+  {
+    "sequence": "RLQHEFISR",
+    "length": 9,
+    "mass_da": 1028.5403,
+    "mz_2plus": 515.2774,
+    "mz_1plus": 1029.5476,
+    "hydrophobicity": -0.55
+  },
+  {
+    "sequence": "KFGNIHGK",
+    "length": 8,
+    "mass_da": 771.4028,
+    "mz_2plus": 386.7087,
+    "mz_1plus": 772.41,
+    "hydrophobicity": -0.5857
+  },
+  {
+    "sequence": "KYWWQQGWEYWK",
+    "length": 12,
+    "mass_da": 1658.7306,
+    "mz_2plus": 830.3726,
+    "mz_1plus": 1659.7379,
+    "hydrophobicity": -1.9091
+  },
+  {
+    "sequence": "RDSEPWWDDSR",
+    "length": 11,
+    "mass_da": 1291.5105,
+    "mz_2plus": 646.7625,
+    "mz_1plus": 1292.5178,
+    "hydrophobicity": -2.35
+  },
+  {
+    "sequence": "RETWDWIQYGDK",
+    "length": 12,
+    "mass_da": 1439.6357,
+    "mz_2plus": 720.8251,
+    "mz_1plus": 1440.643,
+    "hydrophobicity": -1.6
+  },
+  {
+    "sequence": "KEHDLWWHR",
+    "length": 9,
+    "mass_da": 1177.5417,
+    "mz_2plus": 589.7781,
+    "mz_1plus": 1178.549,
+    "hydrophobicity": -1.9875
+  },
+  {
+    "sequence": "RTVQDQER",
+    "length": 8,
+    "mass_da": 874.4145,
+    "mz_2plus": 438.2145,
+    "mz_1plus": 875.4217,
+    "hydrophobicity": -2.1429
+  },
+  {
+    "sequence": "RGEPTQGR",
+    "length": 8,
+    "mass_da": 743.3562,
+    "mz_2plus": 372.6854,
+    "mz_1plus": 744.3635,
+    "hydrophobicity": -2.0857
+  },
+  {
+    "sequence": "KSASPHIQYIR",
+    "length": 11,
+    "mass_da": 1170.6145,
+    "mz_2plus": 586.3146,
+    "mz_1plus": 1171.6218,
+    "hydrophobicity": -0.49
+  },
+  {
+    "sequence": "KEPFDQK",
+    "length": 7,
+    "mass_da": 762.3548,
+    "mz_2plus": 382.1847,
+    "mz_1plus": 763.3621,
+    "hydrophobicity": -2.2
+  },
+  {
+    "sequence": "KGHHHWDVSLWR",
+    "length": 12,
+    "mass_da": 1428.6799,
+    "mz_2plus": 715.3472,
+    "mz_1plus": 1429.6872,
+    "hydrophobicity": -1.1455
+  },
+  {
+    "sequence": "RLLPYISWWR",
+    "length": 10,
+    "mass_da": 1232.6706,
+    "mz_2plus": 617.3426,
+    "mz_1plus": 1233.6779,
+    "hydrophobicity": 0.2333
+  },
+  {
+    "sequence": "RVHIGNDYSFFR",
+    "length": 12,
+    "mass_da": 1353.6466,
+    "mz_2plus": 677.8306,
+    "mz_1plus": 1354.6538,
+    "hydrophobicity": -0.2636
+  },
+  {
+    "sequence": "KNWGVELK",
+    "length": 8,
+    "mass_da": 844.4443,
+    "mz_2plus": 423.2294,
+    "mz_1plus": 845.4516,
+    "hydrophobicity": -0.6
+  },
+  {
+    "sequence": "RAVDTSLTESLR",
+    "length": 12,
+    "mass_da": 1190.6143,
+    "mz_2plus": 596.3144,
+    "mz_1plus": 1191.6215,
+    "hydrophobicity": -0.0818
+  },
+  {
+    "sequence": "RQGGDK",
+    "length": 6,
+    "mass_da": 503.234,
+    "mz_2plus": 252.6243,
+    "mz_1plus": 504.2412,
+    "hydrophobicity": -2.34
+  },
+  {
+    "sequence": "RYWAEANK",
+    "length": 8,
+    "mass_da": 880.4079,
+    "mz_2plus": 441.2112,
+    "mz_1plus": 881.4152,
+    "hydrophobicity": -1.3571
+  },
+  {
+    "sequence": "KFPLPFR",
+    "length": 7,
+    "mass_da": 775.4381,
+    "mz_2plus": 388.7263,
+    "mz_1plus": 776.4454,
+    "hydrophobicity": 0.2833
+  },
+  {
+    "sequence": "KWEFYR",
+    "length": 6,
+    "mass_da": 799.3653,
+    "mz_2plus": 400.6899,
+    "mz_1plus": 800.3726,
+    "hydrophobicity": -1.48
+  },
+  {
+    "sequence": "KGPVASLVHK",
+    "length": 10,
+    "mass_da": 906.5287,
+    "mz_2plus": 454.2716,
+    "mz_1plus": 907.536,
+    "hydrophobicity": 0.4556
+  },
+  {
+    "sequence": "KEATYDTSNAR",
+    "length": 11,
+    "mass_da": 1126.4891,
+    "mz_2plus": 564.2518,
+    "mz_1plus": 1127.4963,
+    "hydrophobicity": -1.49
+  },
+  {
+    "sequence": "KLFQGDSR",
+    "length": 8,
+    "mass_da": 821.4032,
+    "mz_2plus": 411.7089,
+    "mz_1plus": 822.4104,
+    "hydrophobicity": -0.8714
+  },
+  {
+    "sequence": "RWYHGEWDPK",
+    "length": 10,
+    "mass_da": 1216.5301,
+    "mz_2plus": 609.2723,
+    "mz_1plus": 1217.5374,
+    "hydrophobicity": -2.1333
+  },
+  {
+    "sequence": "KDQPTYK",
+    "length": 7,
+    "mass_da": 750.3548,
+    "mz_2plus": 376.1847,
+    "mz_1plus": 751.3621,
+    "hydrophobicity": -2.4167
+  },
+  {
+    "sequence": "KPSDQNFK",
+    "length": 8,
+    "mass_da": 834.3872,
+    "mz_2plus": 418.2009,
+    "mz_1plus": 835.3945,
+    "hydrophobicity": -2.0
+  },
+  {
+    "sequence": "RTWTQHYYSNER",
+    "length": 12,
+    "mass_da": 1483.648,
+    "mz_2plus": 742.8313,
+    "mz_1plus": 1484.6553,
+    "hydrophobicity": -2.1727
+  },
+  {
+    "sequence": "RVHPQFEQPPK",
+    "length": 11,
+    "mass_da": 1205.6193,
+    "mz_2plus": 603.8169,
+    "mz_1plus": 1206.6266,
+    "hydrophobicity": -1.54
+  },
+  {
+    "sequence": "RWSWDSVNK",
+    "length": 9,
+    "mass_da": 1020.4665,
+    "mz_2plus": 511.2405,
+    "mz_1plus": 1021.4738,
+    "hydrophobicity": -1.2625
+  },
+  {
+    "sequence": "KTSHAGWDGEK",
+    "length": 11,
+    "mass_da": 1086.473,
+    "mz_2plus": 544.2438,
+    "mz_1plus": 1087.4803,
+    "hydrophobicity": -1.55
+  },
+  {
+    "sequence": "RTDGWSR",
+    "length": 7,
+    "mass_da": 720.3191,
+    "mz_2plus": 361.1668,
+    "mz_1plus": 721.3264,
+    "hydrophobicity": -1.8
+  },
+  {
+    "sequence": "RGSTQNLK",
+    "length": 8,
+    "mass_da": 746.3923,
+    "mz_2plus": 374.2034,
+    "mz_1plus": 747.3995,
+    "hydrophobicity": -1.2857
+  },
+  {
+    "sequence": "KYTFNK",
+    "length": 6,
+    "mass_da": 671.3279,
+    "mz_2plus": 336.6712,
+    "mz_1plus": 672.3352,
+    "hydrophobicity": -1.32
+  },
+  {
+    "sequence": "RIPYIFGEWHWR",
+    "length": 12,
+    "mass_da": 1502.7459,
+    "mz_2plus": 752.3802,
+    "mz_1plus": 1503.7532,
+    "hydrophobicity": -0.4091
+  },
+  {
+    "sequence": "REPPHR",
+    "length": 6,
+    "mass_da": 634.3187,
+    "mz_2plus": 318.1666,
+    "mz_1plus": 635.326,
+    "hydrophobicity": -2.88
+  },
+  {
+    "sequence": "KLFIGLYASSR",
+    "length": 11,
+    "mass_da": 1125.6182,
+    "mz_2plus": 563.8164,
+    "mz_1plus": 1126.6255,
+    "hydrophobicity": 0.89
+  },
+  {
+    "sequence": "KEPTYVVEK",
+    "length": 9,
+    "mass_da": 963.4913,
+    "mz_2plus": 482.7529,
+    "mz_1plus": 964.4986,
+    "hydrophobicity": -0.7625
+  },
+  {
+    "sequence": "RWWSGHK",
+    "length": 7,
+    "mass_da": 799.3765,
+    "mz_2plus": 400.6955,
+    "mz_1plus": 800.3838,
+    "hydrophobicity": -1.6833
+  },
+  {
+    "sequence": "KDFGPHHQLSPR",
+    "length": 12,
+    "mass_da": 1289.6265,
+    "mz_2plus": 645.8205,
+    "mz_1plus": 1290.6338,
+    "hydrophobicity": -1.4273
+  },
+  {
+    "sequence": "KDNIVAYPPYLK",
+    "length": 12,
+    "mass_da": 1291.6812,
+    "mz_2plus": 646.8479,
+    "mz_1plus": 1292.6885,
+    "hydrophobicity": -0.2182
+  },
+  {
+    "sequence": "RWEDHWVYWIQR",
+    "length": 12,
+    "mass_da": 1616.7524,
+    "mz_2plus": 809.3835,
+    "mz_1plus": 1617.7597,
+    "hydrophobicity": -1.2273
+  },
+  {
+    "sequence": "KQSTGSFQLR",
+    "length": 10,
+    "mass_da": 1022.5145,
+    "mz_2plus": 512.2645,
+    "mz_1plus": 1023.5218,
+    "hydrophobicity": -0.8444
+  },
+  {
+    "sequence": "KWLGFDPTR",
+    "length": 9,
+    "mass_da": 990.4923,
+    "mz_2plus": 496.2534,
+    "mz_1plus": 991.4996,
+    "hydrophobicity": -0.625
+  },
+  {
+    "sequence": "RHQQIHYWYPYK",
+    "length": 12,
+    "mass_da": 1561.7466,
+    "mz_2plus": 781.8806,
+    "mz_1plus": 1562.7539,
+    "hydrophobicity": -1.7455
+  },
+  {
+    "sequence": "KWLISR",
+    "length": 6,
+    "mass_da": 673.3911,
+    "mz_2plus": 337.7028,
+    "mz_1plus": 674.3984,
+    "hydrophobicity": 0.42
+  },
+  {
+    "sequence": "KYYPAR",
+    "length": 6,
+    "mass_da": 668.3282,
+    "mz_2plus": 335.1714,
+    "mz_1plus": 669.3355,
+    "hydrophobicity": -1.38
+  },
+  {
+    "sequence": "RTWNFGFTSK",
+    "length": 10,
+    "mass_da": 1086.5134,
+    "mz_2plus": 544.264,
+    "mz_1plus": 1087.5207,
+    "hydrophobicity": -0.5889
+  },
+  {
+    "sequence": "RGITDDDGQYWR",
+    "length": 12,
+    "mass_da": 1324.5684,
+    "mz_2plus": 663.2915,
+    "mz_1plus": 1325.5756,
+    "hydrophobicity": -1.6091
+  },
+  {
+    "sequence": "KQHTPQR",
+    "length": 7,
+    "mass_da": 765.3882,
+    "mz_2plus": 383.7014,
+    "mz_1plus": 766.3955,
+    "hydrophobicity": -2.8333
+  },
+  {
+    "sequence": "RYASQFVPAR",
+    "length": 10,
+    "mass_da": 1037.5294,
+    "mz_2plus": 519.772,
+    "mz_1plus": 1038.5367,
+    "hydrophobicity": -0.1222
+  },
+  {
+    "sequence": "RLDYHTGLDR",
+    "length": 10,
+    "mass_da": 1088.525,
+    "mz_2plus": 545.2698,
+    "mz_1plus": 1089.5323,
+    "hydrophobicity": -1.0556
+  },
+  {
+    "sequence": "KAWQVGVIVK",
+    "length": 10,
+    "mass_da": 998.5913,
+    "mz_2plus": 500.3029,
+    "mz_1plus": 999.5986,
+    "hydrophobicity": 1.1333
+  },
+  {
+    "sequence": "RGIQYTQHWK",
+    "length": 10,
+    "mass_da": 1159.5774,
+    "mz_2plus": 580.796,
+    "mz_1plus": 1160.5847,
+    "hydrophobicity": -1.4333
+  },
+  {
+    "sequence": "RNYILNPLPR",
+    "length": 10,
+    "mass_da": 1098.6186,
+    "mz_2plus": 550.3166,
+    "mz_1plus": 1099.6258,
+    "hydrophobicity": -0.4333
+  },
+  {
+    "sequence": "RYQYSNPFTTSK",
+    "length": 12,
+    "mass_da": 1334.6143,
+    "mz_2plus": 668.3144,
+    "mz_1plus": 1335.6216,
+    "hydrophobicity": -1.3909
+  },
+  {
+    "sequence": "KDPESWNYIINR",
+    "length": 12,
+    "mass_da": 1405.6626,
+    "mz_2plus": 703.8386,
+    "mz_1plus": 1406.6699,
+    "hydrophobicity": -1.2818
+  },
+  {
+    "sequence": "RFLLDLLDFK",
+    "length": 10,
+    "mass_da": 1122.6325,
+    "mz_2plus": 562.3235,
+    "mz_1plus": 1123.6397,
+    "hydrophobicity": 1.1
+  },
+  {
+    "sequence": "RFGAHVYYR",
+    "length": 9,
+    "mass_da": 1011.4926,
+    "mz_2plus": 506.7536,
+    "mz_1plus": 1012.4999,
+    "hydrophobicity": -0.2375
+  },
+  {
+    "sequence": "KQPDELDHVHR",
+    "length": 11,
+    "mass_da": 1244.5898,
+    "mz_2plus": 623.3022,
+    "mz_1plus": 1245.597,
+    "hydrophobicity": -1.85
+  },
+  {
+    "sequence": "RHPDAR",
+    "length": 6,
+    "mass_da": 594.2874,
+    "mz_2plus": 298.151,
+    "mz_1plus": 595.2947,
+    "hydrophobicity": -2.2
+  },
+  {
+    "sequence": "KPWYGWNR",
+    "length": 8,
+    "mass_da": 977.4508,
+    "mz_2plus": 489.7327,
+    "mz_1plus": 978.4581,
+    "hydrophobicity": -1.8714
+  },
+  {
+    "sequence": "KHWNHAR",
+    "length": 7,
+    "mass_da": 819.3888,
+    "mz_2plus": 410.7017,
+    "mz_1plus": 820.3961,
+    "hydrophobicity": -2.25
+  },
+  {
+    "sequence": "RIHTVQETFHR",
+    "length": 11,
+    "mass_da": 1266.6469,
+    "mz_2plus": 634.3307,
+    "mz_1plus": 1267.6542,
+    "hydrophobicity": -0.78
+  },
+  {
+    "sequence": "RLANTLR",
+    "length": 7,
+    "mass_da": 686.4075,
+    "mz_2plus": 344.211,
+    "mz_1plus": 687.4148,
+    "hydrophobicity": 0.1167
+  },
+  {
+    "sequence": "RTPFPSLLK",
+    "length": 9,
+    "mass_da": 901.5273,
+    "mz_2plus": 451.7709,
+    "mz_1plus": 902.5346,
+    "hydrophobicity": 0.225
+  },
+  {
+    "sequence": "RWSVYIK",
+    "length": 7,
+    "mass_da": 794.4327,
+    "mz_2plus": 398.2236,
+    "mz_1plus": 795.4399,
+    "hydrophobicity": 0.3
+  },
+  {
+    "sequence": "KWSEFDIGHQWK",
+    "length": 12,
+    "mass_da": 1431.6571,
+    "mz_2plus": 716.8358,
+    "mz_1plus": 1432.6644,
+    "hydrophobicity": -1.2091
+  },
+  {
+    "sequence": "KEWDWR",
+    "length": 6,
+    "mass_da": 790.3398,
+    "mz_2plus": 396.1772,
+    "mz_1plus": 791.3471,
+    "hydrophobicity": -2.66
+  },
+  {
+    "sequence": "RDWPATR",
+    "length": 7,
+    "mass_da": 744.3555,
+    "mz_2plus": 373.185,
+    "mz_1plus": 745.3628,
+    "hydrophobicity": -1.5667
+  },
+  {
+    "sequence": "KEDVSEDK",
+    "length": 8,
+    "mass_da": 820.345,
+    "mz_2plus": 411.1798,
+    "mz_1plus": 821.3523,
+    "hydrophobicity": -2.0714
+  },
+  {
+    "sequence": "RPVHGK",
+    "length": 6,
+    "mass_da": 536.3071,
+    "mz_2plus": 269.1608,
+    "mz_1plus": 537.3143,
+    "hydrophobicity": -0.98
+  },
+  {
+    "sequence": "RTWTTEGSFHTR",
+    "length": 12,
+    "mass_da": 1321.6051,
+    "mz_2plus": 661.8098,
+    "mz_1plus": 1322.6124,
+    "hydrophobicity": -1.2091
+  },
+  {
+    "sequence": "KAAPWVTLLK",
+    "length": 10,
+    "mass_da": 997.596,
+    "mz_2plus": 499.8053,
+    "mz_1plus": 998.6033,
+    "hydrophobicity": 0.9222
+  },
+  {
+    "sequence": "RNIFDVALK",
+    "length": 9,
+    "mass_da": 918.5174,
+    "mz_2plus": 460.266,
+    "mz_1plus": 919.5247,
+    "hydrophobicity": 0.775
+  },
+  {
+    "sequence": "KDWDLDK",
+    "length": 7,
+    "mass_da": 790.3497,
+    "mz_2plus": 396.1821,
+    "mz_1plus": 791.357,
+    "hydrophobicity": -1.9167
+  },
+  {
+    "sequence": "RIDGPLQQK",
+    "length": 9,
+    "mass_da": 897.492,
+    "mz_2plus": 449.7533,
+    "mz_1plus": 898.4992,
+    "hydrophobicity": -1.0125
+  },
+  {
+    "sequence": "RLVPNDK",
+    "length": 7,
+    "mass_da": 684.3806,
+    "mz_2plus": 343.1976,
+    "mz_1plus": 685.3879,
+    "hydrophobicity": -0.75
+  },
+  {
+    "sequence": "KYDSTQVVGR",
+    "length": 10,
+    "mass_da": 1023.4985,
+    "mz_2plus": 512.7565,
+    "mz_1plus": 1024.5058,
+    "hydrophobicity": -0.7
+  },
+  {
+    "sequence": "RYLLPGWK",
+    "length": 8,
+    "mass_da": 875.4905,
+    "mz_2plus": 438.7525,
+    "mz_1plus": 876.4978,
+    "hydrophobicity": -0.0714
+  },
+  {
+    "sequence": "RGTLNR",
+    "length": 6,
+    "mass_da": 559.3078,
+    "mz_2plus": 280.6612,
+    "mz_1plus": 560.3151,
+    "hydrophobicity": -1.06
+  },
+  {
+    "sequence": "RWSEIDK",
+    "length": 7,
+    "mass_da": 776.3705,
+    "mz_2plus": 389.1925,
+    "mz_1plus": 777.3777,
+    "hydrophobicity": -1.35
+  },
+  {
+    "sequence": "REIIYIQK",
+    "length": 8,
+    "mass_da": 905.5222,
+    "mz_2plus": 453.7684,
+    "mz_1plus": 906.5295,
+    "hydrophobicity": 0.1857
+  },
+  {
+    "sequence": "KIFYLITK",
+    "length": 8,
+    "mass_da": 896.5371,
+    "mz_2plus": 449.2758,
+    "mz_1plus": 897.5444,
+    "hydrophobicity": 1.3857
+  },
+  {
+    "sequence": "RTWSPNR",
+    "length": 7,
+    "mass_da": 759.3664,
+    "mz_2plus": 380.6905,
+    "mz_1plus": 760.3737,
+    "hydrophobicity": -2.0
+  },
+  {
+    "sequence": "RFYQISQR",
+    "length": 8,
+    "mass_da": 940.4767,
+    "mz_2plus": 471.2456,
+    "mz_1plus": 941.4839,
+    "hydrophobicity": -0.9
+  },
+  {
+    "sequence": "KGANVPGIK",
+    "length": 9,
+    "mass_da": 754.4337,
+    "mz_2plus": 378.2241,
+    "mz_1plus": 755.441,
+    "hydrophobicity": 0.0875
+  },
+  {
+    "sequence": "KLYQNYYR",
+    "length": 8,
+    "mass_da": 1018.4872,
+    "mz_2plus": 510.2509,
+    "mz_1plus": 1019.4945,
+    "hydrophobicity": -1.6571
+  },
+  {
+    "sequence": "KHGYHDDER",
+    "length": 9,
+    "mass_da": 1027.4108,
+    "mz_2plus": 514.7127,
+    "mz_1plus": 1028.418,
+    "hydrophobicity": -2.8875
+  },
+  {
+    "sequence": "KVGLEGAIWSDK",
+    "length": 12,
+    "mass_da": 1173.6029,
+    "mz_2plus": 587.8088,
+    "mz_1plus": 1174.6102,
+    "hydrophobicity": 0.0818
+  },
+  {
+    "sequence": "RAAVAANPAR",
+    "length": 10,
+    "mass_da": 839.4613,
+    "mz_2plus": 420.7379,
+    "mz_1plus": 840.4686,
+    "hydrophobicity": 0.4
+  },
+  {
+    "sequence": "RSTWLLPEDETK",
+    "length": 12,
+    "mass_da": 1317.6452,
+    "mz_2plus": 659.8299,
+    "mz_1plus": 1318.6525,
+    "hydrophobicity": -1.0455
+  },
+  {
+    "sequence": "RDAHEYVQR",
+    "length": 9,
+    "mass_da": 1016.4675,
+    "mz_2plus": 509.2411,
+    "mz_1plus": 1017.4748,
+    "hydrophobicity": -1.6875
+  },
+  {
+    "sequence": "KLIYNDENDK",
+    "length": 10,
+    "mass_da": 1122.5193,
+    "mz_2plus": 562.2669,
+    "mz_1plus": 1123.5266,
+    "hydrophobicity": -1.6
+  },
+  {
+    "sequence": "RIGTEPK",
+    "length": 7,
+    "mass_da": 643.3541,
+    "mz_2plus": 322.6843,
+    "mz_1plus": 644.3614,
+    "hydrophobicity": -0.9333
+  },
+  {
+    "sequence": "KQTGESR",
+    "length": 7,
+    "mass_da": 676.314,
+    "mz_2plus": 339.1643,
+    "mz_1plus": 677.3213,
+    "hydrophobicity": -2.2333
+  },
+  {
+    "sequence": "KLEQTR",
+    "length": 6,
+    "mass_da": 645.3446,
+    "mz_2plus": 323.6796,
+    "mz_1plus": 646.3519,
+    "hydrophobicity": -1.68
+  },
+  {
+    "sequence": "RNWYLSTVHTEK",
+    "length": 12,
+    "mass_da": 1376.6724,
+    "mz_2plus": 689.3435,
+    "mz_1plus": 1377.6797,
+    "hydrophobicity": -0.9545
+  },
+  {
+    "sequence": "KWSNFR",
+    "length": 6,
+    "mass_da": 708.3344,
+    "mz_2plus": 355.1745,
+    "mz_1plus": 709.3416,
+    "hydrophobicity": -1.38
+  },
+  {
+    "sequence": "KVWVFAK",
+    "length": 7,
+    "mass_da": 748.4272,
+    "mz_2plus": 375.2209,
+    "mz_1plus": 749.4345,
+    "hydrophobicity": 1.3667
+  },
+  {
+    "sequence": "RQTAPK",
+    "length": 6,
+    "mass_da": 543.3016,
+    "mz_2plus": 272.6581,
+    "mz_1plus": 544.3089,
+    "hydrophobicity": -1.58
+  },
+  {
+    "sequence": "RLHTHGNPK",
+    "length": 9,
+    "mass_da": 902.4722,
+    "mz_2plus": 452.2434,
+    "mz_1plus": 903.4795,
+    "hydrophobicity": -1.5875
+  },
+  {
+    "sequence": "REHVNVPK",
+    "length": 8,
+    "mass_da": 821.4395,
+    "mz_2plus": 411.727,
+    "mz_1plus": 822.4468,
+    "hydrophobicity": -1.0429
+  },
+  {
+    "sequence": "KNLYIWFGR",
+    "length": 9,
+    "mass_da": 1067.5552,
+    "mz_2plus": 534.7849,
+    "mz_1plus": 1068.5625,
+    "hydrophobicity": 0.0625
+  },
+  {
+    "sequence": "KQTQWQVR",
+    "length": 8,
+    "mass_da": 944.4828,
+    "mz_2plus": 473.2487,
+    "mz_1plus": 945.4901,
+    "hydrophobicity": -1.7714
+  },
+  {
+    "sequence": "KQIYQHTQPYLR",
+    "length": 12,
+    "mass_da": 1445.7415,
+    "mz_2plus": 723.8781,
+    "mz_1plus": 1446.7488,
+    "hydrophobicity": -1.3455
+  },
+  {
+    "sequence": "RTSFIHAR",
+    "length": 8,
+    "mass_da": 830.4399,
+    "mz_2plus": 416.2272,
+    "mz_1plus": 831.4472,
+    "hydrophobicity": -0.0143
+  },
+  {
+    "sequence": "RWPEVYGPLNK",
+    "length": 11,
+    "mass_da": 1201.6131,
+    "mz_2plus": 601.8138,
+    "mz_1plus": 1202.6204,
+    "hydrophobicity": -0.87
+  },
+  {
+    "sequence": "KTEWYTVDSER",
+    "length": 11,
+    "mass_da": 1284.5622,
+    "mz_2plus": 643.2884,
+    "mz_1plus": 1285.5695,
+    "hydrophobicity": -1.52
+  },
+  {
+    "sequence": "KHDTQR",
+    "length": 6,
+    "mass_da": 655.3038,
+    "mz_2plus": 328.6592,
+    "mz_1plus": 656.3111,
+    "hydrophobicity": -3.08
+  },
+  {
+    "sequence": "RAFNLLWSTWGK",
+    "length": 12,
+    "mass_da": 1321.6819,
+    "mz_2plus": 661.8482,
+    "mz_1plus": 1322.6892,
+    "hydrophobicity": 0.1
+  },
+  {
+    "sequence": "KFPVEFGR",
+    "length": 8,
+    "mass_da": 850.4337,
+    "mz_2plus": 426.2241,
+    "mz_1plus": 851.441,
+    "hydrophobicity": -0.0286
+  },
+  {
+    "sequence": "RWIYSYFR",
+    "length": 8,
+    "mass_da": 1033.5021,
+    "mz_2plus": 517.7584,
+    "mz_1plus": 1034.5094,
+    "hydrophobicity": -0.2143
+  },
+  {
+    "sequence": "REPDFAQFR",
+    "length": 9,
+    "mass_da": 1008.4665,
+    "mz_2plus": 505.2405,
+    "mz_1plus": 1009.4738,
+    "hydrophobicity": -1.15
+  },
+  {
+    "sequence": "KHHQVWLTHHK",
+    "length": 11,
+    "mass_da": 1321.6792,
+    "mz_2plus": 661.8469,
+    "mz_1plus": 1322.6865,
+    "hydrophobicity": -1.38
+  },
+  {
+    "sequence": "RAIWVTAIINR",
+    "length": 11,
+    "mass_da": 1155.6764,
+    "mz_2plus": 578.8455,
+    "mz_1plus": 1156.6837,
+    "hydrophobicity": 1.17
+  },
+  {
+    "sequence": "KHSQIWFNYQTK",
+    "length": 12,
+    "mass_da": 1450.6993,
+    "mz_2plus": 726.3569,
+    "mz_1plus": 1451.7066,
+    "hydrophobicity": -1.2727
+  },
+  {
+    "sequence": "RSSWHPEGQK",
+    "length": 10,
+    "mass_da": 1054.4832,
+    "mz_2plus": 528.2489,
+    "mz_1plus": 1055.4905,
+    "hydrophobicity": -2.0667
+  },
+  {
+    "sequence": "KFHSGR",
+    "length": 6,
+    "mass_da": 602.2925,
+    "mz_2plus": 302.1535,
+    "mz_1plus": 603.2998,
+    "hydrophobicity": -1.22
+  },
+  {
+    "sequence": "RGTVHYHHYR",
+    "length": 10,
+    "mass_da": 1168.5526,
+    "mz_2plus": 585.2836,
+    "mz_1plus": 1169.5599,
+    "hydrophobicity": -1.5111
+  },
+  {
+    "sequence": "KQWDSAYK",
+    "length": 8,
+    "mass_da": 896.4028,
+    "mz_2plus": 449.2087,
+    "mz_1plus": 897.4101,
+    "hydrophobicity": -1.7286
+  },
+  {
+    "sequence": "KYVYVWR",
+    "length": 7,
+    "mass_da": 884.4545,
+    "mz_2plus": 443.2345,
+    "mz_1plus": 885.4617,
+    "hydrophobicity": 0.0667
+  },
+  {
+    "sequence": "KALPDNLPK",
+    "length": 9,
+    "mass_da": 866.4861,
+    "mz_2plus": 434.2504,
+    "mz_1plus": 867.4934,
+    "hydrophobicity": -0.5875
+  },
+  {
+    "sequence": "KISVHGIIDSNK",
+    "length": 12,
+    "mass_da": 1181.6404,
+    "mz_2plus": 591.8275,
+    "mz_1plus": 1182.6477,
+    "hydrophobicity": 0.1455
+  },
+  {
+    "sequence": "KPPNFGVDNR",
+    "length": 10,
+    "mass_da": 1014.4883,
+    "mz_2plus": 508.2514,
+    "mz_1plus": 1015.4956,
+    "hydrophobicity": -1.2889
+  },
+  {
+    "sequence": "KSETIVIYNQPR",
+    "length": 12,
+    "mass_da": 1318.6881,
+    "mz_2plus": 660.3513,
+    "mz_1plus": 1319.6954,
+    "hydrophobicity": -0.5636
+  },
+  {
+    "sequence": "KQDDFWAR",
+    "length": 8,
+    "mass_da": 936.409,
+    "mz_2plus": 469.2118,
+    "mz_1plus": 937.4162,
+    "hydrophobicity": -1.6143
+  },
+  {
+    "sequence": "KWAVIR",
+    "length": 6,
+    "mass_da": 643.3806,
+    "mz_2plus": 322.6976,
+    "mz_1plus": 644.3878,
+    "hydrophobicity": 1.02
+  },
+  {
+    "sequence": "RVEFAIYEK",
+    "length": 9,
+    "mass_da": 997.512,
+    "mz_2plus": 499.7633,
+    "mz_1plus": 998.5193,
+    "hydrophobicity": 0.1375
+  },
+  {
+    "sequence": "KAAQFVR",
+    "length": 7,
+    "mass_da": 690.3813,
+    "mz_2plus": 346.1979,
+    "mz_1plus": 691.3886,
+    "hydrophobicity": 0.4333
+  },
+  {
+    "sequence": "KELTEFFQSPR",
+    "length": 11,
+    "mass_da": 1252.6088,
+    "mz_2plus": 627.3117,
+    "mz_1plus": 1253.6161,
+    "hydrophobicity": -0.87
+  },
+  {
+    "sequence": "RGEAHWK",
+    "length": 7,
+    "mass_da": 726.3449,
+    "mz_2plus": 364.1797,
+    "mz_1plus": 727.3522,
+    "hydrophobicity": -1.6833
+  },
+  {
+    "sequence": "KVWIEFGK",
+    "length": 8,
+    "mass_da": 877.4698,
+    "mz_2plus": 439.7422,
+    "mz_1plus": 878.477,
+    "hydrophobicity": 0.4
+  },
+  {
+    "sequence": "KSVQGLNELPAR",
+    "length": 12,
+    "mass_da": 1182.6357,
+    "mz_2plus": 592.3251,
+    "mz_1plus": 1183.6429,
+    "hydrophobicity": -0.3818
+  },
+  {
+    "sequence": "RITPDLYTFLYK",
+    "length": 12,
+    "mass_da": 1372.7278,
+    "mz_2plus": 687.3712,
+    "mz_1plus": 1373.7351,
+    "hydrophobicity": 0.1727
+  },
+  {
+    "sequence": "KSQGTVSHYEK",
+    "length": 11,
+    "mass_da": 1134.5305,
+    "mz_2plus": 568.2726,
+    "mz_1plus": 1135.5378,
+    "hydrophobicity": -1.39
+  },
+  {
+    "sequence": "KNIDDK",
+    "length": 6,
+    "mass_da": 603.2864,
+    "mz_2plus": 302.6505,
+    "mz_1plus": 604.2937,
+    "hydrophobicity": -1.98
+  },
+  {
+    "sequence": "RVVTEGNEPEIR",
+    "length": 12,
+    "mass_da": 1241.6251,
+    "mz_2plus": 621.8199,
+    "mz_1plus": 1242.6324,
+    "hydrophobicity": -0.7545
+  },
+  {
+    "sequence": "KTEPVLDLEVFR",
+    "length": 12,
+    "mass_da": 1316.6976,
+    "mz_2plus": 659.3561,
+    "mz_1plus": 1317.7049,
+    "hydrophobicity": 0.1364
+  },
+  {
+    "sequence": "KHFAGAHYR",
+    "length": 9,
+    "mass_da": 957.4569,
+    "mz_2plus": 479.7357,
+    "mz_1plus": 958.4642,
+    "hydrophobicity": -0.775
+  },
+  {
+    "sequence": "RSGNFAQK",
+    "length": 8,
+    "mass_da": 750.366,
+    "mz_2plus": 376.1903,
+    "mz_1plus": 751.3733,
+    "hydrophobicity": -1.0714
+  },
+  {
+    "sequence": "RENEYWSDYHSR",
+    "length": 12,
+    "mass_da": 1484.5957,
+    "mz_2plus": 743.3051,
+    "mz_1plus": 1485.6029,
+    "hydrophobicity": -2.4364
+  },
+  {
+    "sequence": "RFLADAK",
+    "length": 7,
+    "mass_da": 663.3591,
+    "mz_2plus": 332.6869,
+    "mz_1plus": 664.3664,
+    "hydrophobicity": 0.4667
+  },
+  {
+    "sequence": "KSTGHDR",
+    "length": 7,
+    "mass_da": 671.2987,
+    "mz_2plus": 336.6566,
+    "mz_1plus": 672.306,
+    "hydrophobicity": -2.1833
+  },
+  {
+    "sequence": "KLDTEWPPQK",
+    "length": 10,
+    "mass_da": 1112.5502,
+    "mz_2plus": 557.2824,
+    "mz_1plus": 1113.5575,
+    "hydrophobicity": -1.7111
+  },
+  {
+    "sequence": "RSIPPK",
+    "length": 6,
+    "mass_da": 540.3271,
+    "mz_2plus": 271.1708,
+    "mz_1plus": 541.3344,
+    "hydrophobicity": -0.68
+  },
+  {
+    "sequence": "KSYILGAVALR",
+    "length": 11,
+    "mass_da": 1061.6233,
+    "mz_2plus": 531.8189,
+    "mz_1plus": 1062.6306,
+    "hydrophobicity": 1.29
+  },
+  {
+    "sequence": "RQATPFILVK",
+    "length": 10,
+    "mass_da": 1015.6066,
+    "mz_2plus": 508.8106,
+    "mz_1plus": 1016.6139,
+    "hydrophobicity": 0.8222
+  },
+  {
+    "sequence": "KNEDLVSWK",
+    "length": 9,
+    "mass_da": 989.4818,
+    "mz_2plus": 495.7482,
+    "mz_1plus": 990.4891,
+    "hydrophobicity": -1.0125
+  },
+  {
+    "sequence": "KGTEDVGLPNK",
+    "length": 11,
+    "mass_da": 1028.5138,
+    "mz_2plus": 515.2642,
+    "mz_1plus": 1029.5211,
+    "hydrophobicity": -0.95
+  },
+  {
+    "sequence": "RQQWNLEIGFGR",
+    "length": 12,
+    "mass_da": 1346.6731,
+    "mz_2plus": 674.3438,
+    "mz_1plus": 1347.6804,
+    "hydrophobicity": -0.8273
+  },
+  {
+    "sequence": "KWQVFR",
+    "length": 6,
+    "mass_da": 734.3864,
+    "mz_2plus": 368.2005,
+    "mz_1plus": 735.3937,
+    "hydrophobicity": -0.38
+  },
+  {
+    "sequence": "RWPWNFEHPK",
+    "length": 10,
+    "mass_da": 1239.5825,
+    "mz_2plus": 620.7985,
+    "mz_1plus": 1240.5898,
+    "hydrophobicity": -1.8111
+  },
+  {
+    "sequence": "KQGELSTDPNHK",
+    "length": 12,
+    "mass_da": 1224.5735,
+    "mz_2plus": 613.294,
+    "mz_1plus": 1225.5807,
+    "hydrophobicity": -1.8909
+  },
+  {
+    "sequence": "RLFWFR",
+    "length": 6,
+    "mass_da": 767.4119,
+    "mz_2plus": 384.7132,
+    "mz_1plus": 768.4191,
+    "hydrophobicity": 0.8
+  },
+  {
+    "sequence": "KADLGITSENEK",
+    "length": 12,
+    "mass_da": 1175.567,
+    "mz_2plus": 588.7908,
+    "mz_1plus": 1176.5742,
+    "hydrophobicity": -0.8818
+  },
+  {
+    "sequence": "KWGEQK",
+    "length": 6,
+    "mass_da": 646.3075,
+    "mz_2plus": 324.161,
+    "mz_1plus": 647.3147,
+    "hydrophobicity": -2.44
+  },
+  {
+    "sequence": "KDHVTR",
+    "length": 6,
+    "mass_da": 626.3136,
+    "mz_2plus": 314.1641,
+    "mz_1plus": 627.3209,
+    "hydrophobicity": -1.54
+  },
+  {
+    "sequence": "KVHSIHNNR",
+    "length": 9,
+    "mass_da": 975.4999,
+    "mz_2plus": 488.7572,
+    "mz_1plus": 976.5071,
+    "hydrophobicity": -1.25
+  },
+  {
+    "sequence": "KLPYVYDEK",
+    "length": 9,
+    "mass_da": 1025.5069,
+    "mz_2plus": 513.7608,
+    "mz_1plus": 1026.5142,
+    "hydrophobicity": -0.8875
+  },
+  {
+    "sequence": "RVILATSK",
+    "length": 8,
+    "mass_da": 730.4589,
+    "mz_2plus": 366.2367,
+    "mz_1plus": 731.4662,
+    "hydrophobicity": 1.2714
+  },
+  {
+    "sequence": "RQTNHAQLR",
+    "length": 9,
+    "mass_da": 966.4995,
+    "mz_2plus": 484.257,
+    "mz_1plus": 967.5068,
+    "hydrophobicity": -1.6625
+  },
+  {
+    "sequence": "RYSLHK",
+    "length": 6,
+    "mass_da": 646.3439,
+    "mz_2plus": 324.1792,
+    "mz_1plus": 647.3511,
+    "hydrophobicity": -1.08
+  },
+  {
+    "sequence": "KNDLTK",
+    "length": 6,
+    "mass_da": 589.3071,
+    "mz_2plus": 295.6608,
+    "mz_1plus": 590.3144,
+    "hydrophobicity": -1.56
+  },
+  {
+    "sequence": "KLQSASGK",
+    "length": 8,
+    "mass_da": 689.3708,
+    "mz_2plus": 345.6927,
+    "mz_1plus": 690.3781,
+    "hydrophobicity": -0.5429
+  },
+  {
+    "sequence": "KPHYDEDLLR",
+    "length": 10,
+    "mass_da": 1156.5513,
+    "mz_2plus": 579.2829,
+    "mz_1plus": 1157.5585,
+    "hydrophobicity": -1.5
+  },
+  {
+    "sequence": "RQIGQK",
+    "length": 6,
+    "mass_da": 572.3282,
+    "mz_2plus": 287.1714,
+    "mz_1plus": 573.3355,
+    "hydrophobicity": -1.36
+  },
+  {
+    "sequence": "KDAGGFSESTR",
+    "length": 11,
+    "mass_da": 1025.4414,
+    "mz_2plus": 513.728,
+    "mz_1plus": 1026.4487,
+    "hydrophobicity": -1.0
+  },
+  {
+    "sequence": "KPQGHVYQHR",
+    "length": 10,
+    "mass_da": 1120.5526,
+    "mz_2plus": 561.2836,
+    "mz_1plus": 1121.5599,
+    "hydrophobicity": -1.8889
+  },
+  {
+    "sequence": "RHTPPGHATDK",
+    "length": 11,
+    "mass_da": 1059.5097,
+    "mz_2plus": 530.7621,
+    "mz_1plus": 1060.517,
+    "hydrophobicity": -1.7
+  },
+  {
+    "sequence": "RFYGQEK",
+    "length": 7,
+    "mass_da": 770.3599,
+    "mz_2plus": 386.1872,
+    "mz_1plus": 771.3672,
+    "hydrophobicity": -1.6333
+  },
+  {
+    "sequence": "RHEQWAR",
+    "length": 7,
+    "mass_da": 825.3882,
+    "mz_2plus": 413.7014,
+    "mz_1plus": 826.3955,
+    "hydrophobicity": -2.3
+  },
+  {
+    "sequence": "KESNFADK",
+    "length": 8,
+    "mass_da": 809.3555,
+    "mz_2plus": 405.685,
+    "mz_1plus": 810.3628,
+    "hydrophobicity": -1.5143
+  },
+  {
+    "sequence": "RHVYTSTFR",
+    "length": 9,
+    "mass_da": 1009.4981,
+    "mz_2plus": 505.7563,
+    "mz_1plus": 1010.5054,
+    "hydrophobicity": -0.525
+  },
+  {
+    "sequence": "RHWEDPAQNFEK",
+    "length": 12,
+    "mass_da": 1399.6156,
+    "mz_2plus": 700.8151,
+    "mz_1plus": 1400.6229,
+    "hydrophobicity": -2.0455
+  },
+  {
+    "sequence": "KHEEQYAR",
+    "length": 8,
+    "mass_da": 931.4148,
+    "mz_2plus": 466.7147,
+    "mz_1plus": 932.4221,
+    "hydrophobicity": -2.5286
+  },
+  {
+    "sequence": "KHDFQIIVR",
+    "length": 9,
+    "mass_da": 1026.561,
+    "mz_2plus": 514.2878,
+    "mz_1plus": 1027.5683,
+    "hydrophobicity": 0.1625
+  },
+  {
+    "sequence": "RPLFDTYGDSR",
+    "length": 11,
+    "mass_da": 1169.5353,
+    "mz_2plus": 585.7749,
+    "mz_1plus": 1170.5426,
+    "hydrophobicity": -0.97
+  },
+  {
+    "sequence": "RPYIFK",
+    "length": 6,
+    "mass_da": 666.3741,
+    "mz_2plus": 334.1943,
+    "mz_1plus": 667.3814,
+    "hydrophobicity": 0.1
+  },
+  {
+    "sequence": "KPEYFK",
+    "length": 6,
+    "mass_da": 682.3326,
+    "mz_2plus": 342.1736,
+    "mz_1plus": 683.3399,
+    "hydrophobicity": -1.5
+  },
+  {
+    "sequence": "RWDNWWNLK",
+    "length": 9,
+    "mass_da": 1160.5403,
+    "mz_2plus": 581.2774,
+    "mz_1plus": 1161.5476,
+    "hydrophobicity": -1.6625
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "6xHis": {
+    "aa_sequence": "HHHHHH",
+    "dna_sequence": "CACCACCACCACCACCAC",
+    "description": "6x Histidine tag for Ni-NTA purification"
+  },
+  "HA": {
+    "aa_sequence": "YPYDVPDYA",
+    "dna_sequence": "TATCCTTATGATGTTCCTGATTATGCT",
+    "description": "Influenza hemagglutinin epitope tag"
+  },
+  "Myc": {
+    "aa_sequence": "EQKLISEEDL",
+    "dna_sequence": "GAACAAAAACTCATCTCAGAAGAGGATCTG",
+    "description": "c-Myc epitope tag"
+  },
+  "FLAG": {
+    "aa_sequence": "DYKDDDDK",
+    "dna_sequence": "GACTACAAAGACCATGACGGTGATTATAAAGATCATGACATCGATTACAAGGATGACGATGACAAG",
+    "description": "FLAG epitope tag"
+  },
+  "Aga2p": {
+    "aa_sequence": "MVSQQINLSGSHVGGEPGLQTRRQLLGPQNKAKSDVFIPIFSVLFIAFVASCSIASVNSSPSIGATRSIADSASTTFGPSPATLNAAKNSSRTFATGSTMKPNLRSTRASPPSYAAAASPKKTGSSRSSPVSSSPATIPISTTKNTSPVHIKPETLPQMHKPTNSSSSPAVSKPDDPNIEPSPFFDNPSTGRDSGGSRSPSSVSSSGRNNSTTSQKKSGSPSGGAIGRGSSAAPQILPSSARSSSSTSSS",
+    "dna_sequence": "",
+    "description": "Yeast surface display anchor protein Aga2p"
+  },
+  "pIII_pelB": {
+    "aa_sequence": "MKYLLPTAAAGLLLLAAQPAMAEGIAFADL",
+    "dna_sequence": "ATGAAATACCTATTGCCTACGGCAGCCGCTGGATTGTTATTACTCGCTGCCCAACCAGCCATGGCCGAAGGCATCGCCTTTGCTGATCTG",
+    "description": "pIII signal peptide with pelB leader for phage display"
+  }
+}
