@@ -53,9 +53,8 @@ def translate(dna_sequence: str) -> str:
     """Translate a DNA sequence to an amino acid sequence."""
     seq = dna_sequence.upper()
     amino_acids: list[str] = []
-    for i in range(0, len(seq) - 2, 3):
-        codon = seq[i : i + 3]
-        amino_acids.append(CODON_TABLE.get(codon, "X"))
+    for i in range(0, len(seq) - len(seq) % 3, 3):
+        amino_acids.append(CODON_TABLE.get(seq[i : i + 3], "X"))
     return "".join(amino_acids)
 
 
@@ -64,7 +63,7 @@ def net_charge(sequence: str, pH: float = 7.4) -> float:
     if not sequence:
         return 0.0
 
-    # pKa values for ionisable groups
+    # pKa values (Bjellqvist scale) for ionisable groups
     pka_positive = {"K": 10.5, "R": 12.4, "H": 6.0}
     pka_negative = {"D": 3.9, "E": 4.1, "C": 8.3, "Y": 10.1}
     pka_nterm = 8.0

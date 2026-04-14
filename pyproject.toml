@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "vhh-biosimilar-library-generator"
+version = "0.1.0"
+description = "VHH (nanobody) biosimilar variant library generator with humanness scoring, stability prediction, codon optimisation, and LC-MS/MS barcoding."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "streamlit>=1.30",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.0",
+    "fair-esm>=2.0",
+]
+nanomelt = [
+    "nanomelt",
+    "biopython",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.setuptools.packages.find]
+include = ["vhh_library*"]

@@ -1,0 +1,40 @@
+{
+  "germlines": [
+    {
+      "name": "IGHV3S1",
+      "species": "Camelus dromedarius",
+      "fr1": "QVQLVESGGGLVQAGGSLRLSCAAS",
+      "fr2": "WFRQAPGKEREF",
+      "fr3": "GRFTISRDNAKNTVYLQMNSLKPEDTAVYYC",
+      "fr4": "WGQGTLVTVSS",
+      "hallmark_positions": {"37": "F", "44": "E", "45": "R", "47": "G"}
+    },
+    {
+      "name": "IGHV3S3",
+      "species": "Camelus dromedarius",
+      "fr1": "QVQLVESGGGLVQPGGSLRLSCAAS",
+      "fr2": "WFRQAPGKERDF",
+      "fr3": "GRFTISRDNAKNTVYLQMNSLKPEDTAVYYC",
+      "fr4": "WGQGTLVTVSS",
+      "hallmark_positions": {"37": "Y", "44": "E", "45": "R", "47": "G"}
+    },
+    {
+      "name": "IGHV3S53",
+      "species": "Lama glama",
+      "fr1": "QVQLVESGGGLVQAGGSLRLSCAAS",
+      "fr2": "WFRQAPGKEREF",
+      "fr3": "GRFTISRDNAKNTVYLQMNSLKPEDTAVYYC",
+      "fr4": "WGQGTLVTVSS",
+      "hallmark_positions": {"37": "F", "44": "E", "45": "R", "47": "G"}
+    },
+    {
+      "name": "IGHV3S65",
+      "species": "Vicugna pacos",
+      "fr1": "QVQLVESGGGLVQAGGSLRLSCAAS",
+      "fr2": "WFRQAPGKEREF",
+      "fr3": "GRFTISRDNAKNTVYLQMNSLKPEDTAVYYC",
+      "fr4": "WGQGTLVTVSS",
+      "hallmark_positions": {"37": "F", "44": "E", "45": "R", "47": "G"}
+    }
+  ]
+}
