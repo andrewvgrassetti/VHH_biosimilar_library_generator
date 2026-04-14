@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from functools import cached_property
 
 from vhh_library.utils import AMINO_ACIDS
@@ -23,22 +22,10 @@ _MAX_LENGTH = 180
 _MAX_IMGT_POS = 128
 
 
-@dataclass
-class ValidationResult:
-    """Container for sequence validation errors and warnings."""
-
-    errors: list[str] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
-
-    @property
-    def is_valid(self) -> bool:
-        return len(self.errors) == 0
-
-
 class VHHSequence:
     """Memory-efficient VHH sequence with IMGT numbering and cached region accessors."""
 
-    __slots__ = ("sequence", "length", "imgt_numbered", "validation_result", "__dict__")
+    __slots__ = ("sequence", "length", "imgt_numbered", "validation_result", "_skip_validation", "__dict__")
 
     # ------------------------------------------------------------------
     # Construction
@@ -48,7 +35,7 @@ class VHHSequence:
         self.sequence: str = sequence.upper().strip()
         self.length: int = len(self.sequence)
         self.imgt_numbered: dict[int, str] = self._imgt_number()
-        self.validation_result: ValidationResult = self._validate()
+        self.validation_result: dict = self._validate()
 
     @classmethod
     def mutate(cls, source: VHHSequence, position: int, new_aa: str) -> VHHSequence:
@@ -85,27 +72,28 @@ class VHHSequence:
     # Validation
     # ------------------------------------------------------------------
 
-    def _validate(self) -> ValidationResult:
-        result = ValidationResult()
+    def _validate(self) -> dict:
+        errors: list[str] = []
+        warnings: list[str] = []
 
         # Check for invalid characters.
         invalid = {aa for aa in self.sequence if aa not in AMINO_ACIDS}
         if invalid:
-            result.errors.append(f"Invalid amino acid(s): {', '.join(sorted(invalid))}")
+            errors.append(f"Invalid amino acid(s): {', '.join(sorted(invalid))}")
 
         # Length check.
         if not (_MIN_LENGTH <= self.length <= _MAX_LENGTH):
-            result.errors.append(f"Length {self.length} outside valid range ({_MIN_LENGTH}-{_MAX_LENGTH})")
+            errors.append(f"Length {self.length} outside valid range ({_MIN_LENGTH}-{_MAX_LENGTH})")
 
         # Conserved residue warnings (only when residues are available).
         if self.imgt_numbered.get(23) != "C":
-            result.warnings.append("Missing conserved Cys at IMGT position 23")
+            warnings.append("Missing conserved Cys at IMGT position 23")
         if self.imgt_numbered.get(104) != "C":
-            result.warnings.append("Missing conserved Cys at IMGT position 104")
+            warnings.append("Missing conserved Cys at IMGT position 104")
         if self.imgt_numbered.get(36) != "W":
-            result.warnings.append("Missing conserved Trp at IMGT position 36")
+            warnings.append("Missing conserved Trp at IMGT position 36")
 
-        return result
+        return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
     # ------------------------------------------------------------------
     # Cached region / position properties
@@ -143,7 +131,7 @@ class VHHSequence:
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
-        return f"VHHSequence(length={self.length}, valid={self.validation_result.is_valid})"
+        return f"VHHSequence(length={self.length}, valid={self.validation_result['valid']})"
 
     def __len__(self) -> int:
         return self.length
