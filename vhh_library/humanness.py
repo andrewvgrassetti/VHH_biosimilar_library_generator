@@ -45,6 +45,8 @@ class HumAnnotator:
 
         position_scores: dict[int, float] = {}
         for pos, aa in vhh.imgt_numbered.items():
+            if not isinstance(pos, int):
+                continue
             freq_dict = self.position_freq.get(str(pos))
             if freq_dict is None:
                 continue
@@ -76,6 +78,8 @@ class HumAnnotator:
         suggestions: list[dict] = []
 
         for pos, aa in vhh.imgt_numbered.items():
+            if not isinstance(pos, int):
+                continue
             if pos in off_limits or pos in cdr_positions:
                 continue
 

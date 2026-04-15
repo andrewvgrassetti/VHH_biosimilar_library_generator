@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import cached_property
 
+from vhh_library.numbering import NumberingBackendUnavailable, NumberingError, number_sequence
 from vhh_library.utils import AMINO_ACIDS
 
 # IMGT region boundaries (inclusive start and end positions).
@@ -20,12 +21,19 @@ IMGT_REGIONS: dict[str, tuple[int, int]] = {
 _MIN_LENGTH = 80
 _MAX_LENGTH = 180
 _MAX_IMGT_POS = 128
-
-
 class VHHSequence:
     """Memory-efficient VHH sequence with IMGT numbering and cached region accessors."""
 
-    __slots__ = ("sequence", "length", "imgt_numbered", "validation_result", "_skip_validation", "__dict__")
+    __slots__ = (
+        "sequence",
+        "length",
+        "imgt_numbered",
+        "validation_result",
+        "chain_type",
+        "species",
+        "_numbering_error",
+        "__dict__",
+    )
 
     # ------------------------------------------------------------------
     # Construction
@@ -34,7 +42,19 @@ class VHHSequence:
     def __init__(self, sequence: str) -> None:
         self.sequence: str = sequence.upper().strip()
         self.length: int = len(self.sequence)
-        self.imgt_numbered: dict[int, str] = self._imgt_number()
+        self.chain_type: str = "unknown"
+        self.species: str = "unknown"
+        self._numbering_error: str | None = None
+        try:
+            numbering = number_sequence(self.sequence)
+            self.imgt_numbered: dict[int | str, str] = numbering.numbered
+            self.chain_type = numbering.chain_type
+            self.species = numbering.species
+        except NumberingBackendUnavailable:
+            self.imgt_numbered = {i + 1: aa for i, aa in enumerate(self.sequence[:_MAX_IMGT_POS])}
+        except NumberingError as exc:
+            self.imgt_numbered = {}
+            self._numbering_error = str(exc)
         self.validation_result: dict = self._validate()
 
     @classmethod
@@ -52,21 +72,23 @@ class VHHSequence:
         checks, so it may be stale if the mutation breaks a conserved site.
         """
         seq_list = list(source.sequence)
-        # ``position`` is 1-based IMGT position; convert to 0-based index.
-        seq_list[position - 1] = new_aa.upper()
+        imgt_to_sequence_index = {
+            key: index
+            for index, key in enumerate(source.imgt_numbered.keys())
+            if isinstance(key, int)
+        }
+        seq_list[imgt_to_sequence_index[position]] = new_aa.upper()
         mutated = object.__new__(cls)
         mutated.sequence = "".join(seq_list)
         mutated.length = len(mutated.sequence)
-        mutated.imgt_numbered = {i + 1: aa for i, aa in enumerate(mutated.sequence[:_MAX_IMGT_POS])}
+        mutated.chain_type = source.chain_type
+        mutated.species = source.species
+        mutated._numbering_error = source._numbering_error
+        mutated.imgt_numbered = dict(source.imgt_numbered)
+        if position in mutated.imgt_numbered:
+            mutated.imgt_numbered[position] = new_aa.upper()
         mutated.validation_result = source.validation_result  # skip re-validation
         return mutated
-
-    # ------------------------------------------------------------------
-    # IMGT numbering (identity mapping, capped at 128)
-    # ------------------------------------------------------------------
-
-    def _imgt_number(self) -> dict[int, str]:
-        return {i + 1: aa for i, aa in enumerate(self.sequence[:_MAX_IMGT_POS])}
 
     # ------------------------------------------------------------------
     # Validation
@@ -85,13 +107,17 @@ class VHHSequence:
         if not (_MIN_LENGTH <= self.length <= _MAX_LENGTH):
             errors.append(f"Length {self.length} outside valid range ({_MIN_LENGTH}-{_MAX_LENGTH})")
 
+        if self._numbering_error:
+            errors.append(self._numbering_error)
+
         # Conserved residue warnings (only when residues are available).
-        if self.imgt_numbered.get(23) != "C":
-            warnings.append("Missing conserved Cys at IMGT position 23")
-        if self.imgt_numbered.get(104) != "C":
-            warnings.append("Missing conserved Cys at IMGT position 104")
-        if self.imgt_numbered.get(36) != "W":
-            warnings.append("Missing conserved Trp at IMGT position 36")
+        if not self._numbering_error:
+            if self.imgt_numbered.get(23) != "C":
+                warnings.append("Missing conserved Cys at IMGT position 23")
+            if self.imgt_numbered.get(104) != "C":
+                warnings.append("Missing conserved Cys at IMGT position 104")
+            if self.imgt_numbered.get(36) != "W":
+                warnings.append("Missing conserved Trp at IMGT position 36")
 
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 

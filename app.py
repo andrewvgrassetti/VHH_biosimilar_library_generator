@@ -116,11 +116,13 @@ def _parse_off_limit_csv(uploaded_file) -> dict[str, set[str]]:
 
 def _aa_forbidden_to_position_forbidden(
     aa_forbidden: dict[str, set[str]],
-    imgt_numbered: dict[int, str],
+    imgt_numbered: dict[int | str, str],
 ) -> dict[int, set[str]]:
     """Convert AA-level forbidden substitutions to position-level using IMGT numbering."""
     position_forbidden: dict[int, set[str]] = {}
     for pos, aa in imgt_numbered.items():
+        if not isinstance(pos, int):
+            continue
         if aa in aa_forbidden:
             position_forbidden[pos] = aa_forbidden[aa]
     return position_forbidden

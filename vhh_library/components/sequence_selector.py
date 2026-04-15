@@ -28,7 +28,7 @@ _REGION_LABEL_COLORS = {
 
 def sequence_selector(
     sequence: str,
-    imgt_numbered: Dict[int, str],
+    imgt_numbered: Dict[int | str, str],
     off_limit_positions: Set[int],
     forbidden_substitutions: Optional[Dict[int, set]] = None,
     key: Optional[str] = None,

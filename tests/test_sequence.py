@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from vhh_library.numbering import NumberingError
 from vhh_library.sequence import VHHSequence
 
-SAMPLE_VHH = (
+SAMPLE_CABBCII10_VHH = (
     "QVQLVESGGGLVQAGGSLRLSCAASGRTFSSYAMGWFRQAPGKEREFVAAISW"
     "SGGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAAAGVRAEWDYWGQGTLVTVSS"
 )
@@ -14,7 +15,7 @@ SAMPLE_VHH = (
 
 @pytest.fixture
 def vhh() -> VHHSequence:
-    return VHHSequence(SAMPLE_VHH)
+    return VHHSequence(SAMPLE_CABBCII10_VHH)
 
 
 class TestVHHSequenceValidation:
@@ -36,6 +37,14 @@ class TestIMGTNumbering:
         numbered = vhh.imgt_numbered
         assert isinstance(numbered, dict)
         assert numbered[1] == "Q"
+        assert vhh.chain_type == "VH"
+        assert vhh.species in {"alpaca", "llama", "human", "mouse", "unknown"}
+
+    def test_known_vhh_cdr_boundaries(self, vhh: VHHSequence) -> None:
+        regions = vhh.regions
+        assert regions["CDR1"][2] == "SGRTFS"
+        assert regions["CDR2"][2] == "REFVAAISW"
+        assert regions["CDR3"][2] == "MNSLKPEDTAVYYCAAAGVR"
 
 
 class TestRegions:
@@ -56,4 +65,17 @@ class TestCDRPositions:
 
 class TestLength:
     def test_length(self, vhh: VHHSequence) -> None:
-        assert vhh.length == len(SAMPLE_VHH)
+        assert vhh.length == len(SAMPLE_CABBCII10_VHH)
+
+
+class TestANARCIFailures:
+    def test_anarci_failure_sets_invalid_validation_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise(_: str) -> object:
+            raise NumberingError(
+                "ANARCI could not assign IMGT numbering to this sequence — it may not be a valid VH/VHH domain."
+            )
+
+        monkeypatch.setattr("vhh_library.sequence.number_sequence", _raise)
+        vhh = VHHSequence(SAMPLE_CABBCII10_VHH)
+        assert vhh.validation_result["valid"] is False
+        assert any("ANARCI could not assign IMGT numbering" in msg for msg in vhh.validation_result["errors"])
