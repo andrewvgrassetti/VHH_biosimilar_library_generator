@@ -20,7 +20,7 @@ SAMPLE_VHH = (
 
 @pytest.fixture(scope="module")
 def engine() -> MutationEngine:
-    return MutationEngine(HumAnnotator(), StabilityScorer(use_nanomelt=False))
+    return MutationEngine(HumAnnotator(), StabilityScorer())
 
 
 @pytest.fixture(scope="module")
@@ -139,7 +139,7 @@ class TestWeightsAndMetrics:
         assert abs(total - 1.0) < 1e-6
 
     def test_stability_is_heaviest_weight(self) -> None:
-        eng = MutationEngine(HumAnnotator(), StabilityScorer(use_nanomelt=False))
+        eng = MutationEngine(HumAnnotator(), StabilityScorer())
         assert eng._weights["stability"] >= max(
             v for k, v in eng._weights.items() if k != "stability"
         )

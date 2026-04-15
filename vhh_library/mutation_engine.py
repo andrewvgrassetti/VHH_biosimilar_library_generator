@@ -16,7 +16,6 @@ from vhh_library.humanness import HumAnnotator
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
     HumanStringContentScorer,
-    NanoMeltStabilityScorer,
 )
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
@@ -106,7 +105,6 @@ class MutationEngine:
         hydrophobicity_scorer: Optional[SurfaceHydrophobicityScorer] = None,
         hsc_scorer: Optional[HumanStringContentScorer] = None,
         consensus_scorer: Optional[ConsensusStabilityScorer] = None,
-        nanomelt_scorer: Optional[NanoMeltStabilityScorer] = None,
         esm_scorer: Optional[ESMStabilityScorer] = None,
         w_humanness: float = 0.35,
         w_stability: float = 0.50,
@@ -118,7 +116,6 @@ class MutationEngine:
         self._hydrophobicity_scorer = hydrophobicity_scorer
         self._hsc_scorer = hsc_scorer
         self._consensus_scorer = consensus_scorer
-        self._nanomelt_scorer = nanomelt_scorer
         self._esm_scorer = esm_scorer
 
         self.w_humanness = w_humanness
@@ -161,10 +158,6 @@ class MutationEngine:
         if self._consensus_scorer is None:
             self._consensus_scorer = ConsensusStabilityScorer()
         return self._consensus_scorer
-
-    @property
-    def nanomelt_scorer(self) -> Optional[NanoMeltStabilityScorer]:
-        return self._nanomelt_scorer
 
     # ------------------------------------------------------------------
     # Weight helpers
@@ -209,16 +202,6 @@ class MutationEngine:
 
         scores["orthogonal_humanness"] = self.hsc_scorer.score(vhh)["composite_score"]
         scores["orthogonal_stability"] = self.consensus_scorer.score(vhh)["composite_score"]
-
-        nm = self.nanomelt_scorer
-        if nm is not None and nm.is_available:
-            try:
-                nm_result = nm.score(vhh)
-                scores["nanomelt_tm_score"] = nm_result["composite_score"]
-                if "predicted_tm" not in scores:
-                    scores["predicted_tm"] = nm_result["predicted_tm"]
-            except Exception:
-                logger.debug("NanoMelt scoring failed for variant", exc_info=True)
 
         return scores
 
@@ -459,8 +442,6 @@ class MutationEngine:
 
         if "predicted_tm" in raw:
             row["predicted_tm"] = raw["predicted_tm"]
-        if "nanomelt_tm_score" in raw:
-            row["nanomelt_tm_score"] = raw["nanomelt_tm_score"]
 
         return row
 

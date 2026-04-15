@@ -8,9 +8,6 @@ from pathlib import Path
 
 from vhh_library.sequence import IMGT_REGIONS, VHHSequence
 
-_NANOMELT_TM_MIN = 40.0
-_NANOMELT_TM_MAX = 90.0
-
 _FR_KEYS = ("fr1", "fr2", "fr3", "fr4")
 _FR_REGION_NAMES = ("FR1", "FR2", "FR3", "FR4")
 
@@ -104,48 +101,6 @@ class ConsensusStabilityScorer:
         self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         if vhh.imgt_numbered.get(str(position)) == new_aa:
-            return 0.0
-        mutant = VHHSequence.mutate(vhh, position, new_aa)
-        return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]
-
-
-class NanoMeltStabilityScorer:
-    """Lazy-loading nanomelt Tm predictor."""
-
-    def __init__(self) -> None:
-        self._available: bool | None = None
-        self._predict_fn = None
-
-    @property
-    def is_available(self) -> bool:
-        if self._available is None:
-            try:
-                from nanomelt.predict import predict_tm  # type: ignore[import-untyped]
-
-                self._predict_fn = predict_tm
-                self._available = True
-            except ImportError:
-                self._available = False
-        return self._available
-
-    def score(self, vhh: VHHSequence) -> dict:
-        if not self.is_available:
-            raise ImportError("nanomelt is not installed")
-
-        tm: float = self._predict_fn(vhh.sequence)
-        raw = (tm - _NANOMELT_TM_MIN) / (_NANOMELT_TM_MAX - _NANOMELT_TM_MIN)
-        composite_score = max(0.0, min(1.0, raw))
-        return {"composite_score": composite_score, "predicted_tm": tm}
-
-    def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int | str, new_aa: str
-    ) -> float:
-        if not self.is_available:
-            return 0.0
-        pos_key = str(position)
-        if pos_key not in vhh.imgt_numbered:
-            return 0.0
-        if vhh.imgt_numbered[pos_key] == new_aa:
             return 0.0
         mutant = VHHSequence.mutate(vhh, position, new_aa)
         return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]

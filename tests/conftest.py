@@ -26,4 +26,4 @@ def hum_annotator() -> HumAnnotator:
 
 @pytest.fixture(scope="session")
 def stability_scorer() -> StabilityScorer:
-    return StabilityScorer(use_nanomelt=False)
+    return StabilityScorer()

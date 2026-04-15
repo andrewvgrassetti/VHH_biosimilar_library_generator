@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from vhh_library.sequence import VHHSequence
-from vhh_library.stability import StabilityScorer, _esm2_pll_available, _nanomelt_available
+from vhh_library.stability import StabilityScorer, _esm2_pll_available
 
 SAMPLE_VHH = (
     "QVQLVESGGGLVQAGGSLRLSCAASGRTFSSYAMGWFRQAPGKEREFVAAISW"
@@ -15,7 +15,7 @@ SAMPLE_VHH = (
 
 @pytest.fixture
 def scorer() -> StabilityScorer:
-    return StabilityScorer(use_nanomelt=False)
+    return StabilityScorer()
 
 
 @pytest.fixture
@@ -50,21 +50,14 @@ class TestMutationEffect:
 class TestScoringMethod:
     def test_scoring_method_present(self, scorer: StabilityScorer, vhh: VHHSequence) -> None:
         result = scorer.score(vhh)
-        assert result["scoring_method"] in ("legacy", "nanomelt")
+        assert result["scoring_method"] in ("legacy", "esm2")
 
     def test_legacy_fallback(self, vhh: VHHSequence) -> None:
-        scorer = StabilityScorer(use_nanomelt=False)
+        scorer = StabilityScorer()
         result = scorer.score(vhh)
         assert result["scoring_method"] == "legacy"
-
-    def test_nanomelt_active_property(self) -> None:
-        scorer = StabilityScorer(use_nanomelt=False)
-        assert scorer.nanomelt_active is False
 
 
 class TestAvailability:
     def test_esm2_pll_available_returns_bool(self) -> None:
         assert isinstance(_esm2_pll_available(), bool)
-
-    def test_nanomelt_available_returns_bool(self) -> None:
-        assert isinstance(_nanomelt_available(), bool)

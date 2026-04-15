@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings as _warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,18 +26,8 @@ _W_AGGREGATION: float = 0.25
 _W_CHARGE: float = 0.15
 _W_HYDROPHOBIC: float = 0.15
 
-# Nanomelt Tm normalization parameters
-_TM_BASELINE: float = 40.0
-_TM_RANGE: float = 50.0
-_NANOMELT_WEIGHT: float = 0.7
-_LEGACY_WEIGHT: float = 0.3
-
 # Composite weights when ESM-2 is active
-_ESM2_WEIGHT_WITH_NANOMELT: float = 0.5
-_LEGACY_WEIGHT_WITH_ESM2_AND_NANOMELT: float = 0.2
-_NANOMELT_WEIGHT_WITH_ESM2: float = 0.3
-
-_ESM2_WEIGHT_WITHOUT_NANOMELT: float = 0.6
+_ESM2_WEIGHT: float = 0.6
 _LEGACY_WEIGHT_WITH_ESM2: float = 0.4
 
 # Fixed normalisation baselines for ESM-2 PLL (typical VHH ~120 AA)
@@ -46,21 +37,6 @@ _ESM2_PLL_BASELINE_MAX: float = -50.0
 # ---------------------------------------------------------------------------
 # Optional dependency probes
 # ---------------------------------------------------------------------------
-
-_nanomelt_flag: bool | None = None
-
-
-def _nanomelt_available() -> bool:
-    global _nanomelt_flag
-    if _nanomelt_flag is None:
-        try:
-            import nanomelt  # noqa: F401
-
-            _nanomelt_flag = True
-        except ImportError:
-            _nanomelt_flag = False
-    return _nanomelt_flag
-
 
 _esm2_pll_flag: bool | None = None
 
@@ -104,32 +80,33 @@ def compute_esm2_pll(sequences: list[str]) -> list[float]:
 
 class StabilityScorer:
     """Score VHH sequences for biophysical stability using legacy heuristics
-    and optional nanomelt / ESM-2 integration."""
+    and optional ESM-2 integration."""
 
     def __init__(
         self,
-        use_nanomelt: bool = True,
-        esm_scorer: ESMStabilityScorer | None = None,
+        esm_scorer: "ESMStabilityScorer | None" = None,
         *,
         esm2_weight: float | None = None,
         legacy_weight: float | None = None,
-        nanomelt_weight: float | None = None,
+        # Kept for backward compatibility; silently ignored.
+        use_nanomelt: bool = False,
     ) -> None:
+        if use_nanomelt:
+            _warnings.warn(
+                "NanoMelt support has been removed; the use_nanomelt parameter is ignored "
+                "and will be removed in a future version.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         germline_path = _DATA_DIR / "vhh_germlines.json"
         with open(germline_path) as fh:
             self.germlines: list[dict] = json.load(fh)["germlines"]
-        self.use_nanomelt: bool = use_nanomelt
-        self.esm_scorer: ESMStabilityScorer | None = esm_scorer
+        self.esm_scorer: "ESMStabilityScorer | None" = esm_scorer
 
         # Configurable composite weights – defaults depend on which scorers
         # are available and are applied at scoring time if not overridden.
         self._esm2_weight = esm2_weight
         self._legacy_weight_override = legacy_weight
-        self._nanomelt_weight_override = nanomelt_weight
-
-    @property
-    def nanomelt_active(self) -> bool:
-        return self.use_nanomelt and _nanomelt_available()
 
     # ------------------------------------------------------------------
     # Public API
@@ -169,19 +146,6 @@ class StabilityScorer:
             "warnings": warnings,
         }
 
-        # --- Determine nanomelt contribution ---
-        nm_normalized: float | None = None
-        if self.nanomelt_active:
-            try:
-                import nanomelt
-
-                prediction = nanomelt.predict(seq)
-                tm: float = prediction["Tm"]
-                result["predicted_tm"] = tm
-                nm_normalized = max(0.0, min(1.0, (tm - _TM_BASELINE) / _TM_RANGE))
-            except Exception:
-                warnings.append("nanomelt prediction failed; fell back to legacy scoring")
-
         # --- Determine ESM-2 contribution ---
         esm2_normalized: float | None = None
         if self.esm_scorer is not None:
@@ -193,30 +157,12 @@ class StabilityScorer:
                     min(1.0, (pll - _ESM2_PLL_BASELINE_MIN) / (_ESM2_PLL_BASELINE_MAX - _ESM2_PLL_BASELINE_MIN)),
                 )
             except Exception:
-                warnings.append("ESM-2 scoring failed; fell back to legacy/nanomelt scoring")
+                warnings.append("ESM-2 scoring failed; fell back to legacy scoring")
 
         # --- Compute composite score ---
-        if esm2_normalized is not None and nm_normalized is not None:
+        if esm2_normalized is not None:
             w_esm = (
-                self._esm2_weight if self._esm2_weight is not None else _ESM2_WEIGHT_WITH_NANOMELT
-            )
-            w_leg = (
-                self._legacy_weight_override
-                if self._legacy_weight_override is not None
-                else _LEGACY_WEIGHT_WITH_ESM2_AND_NANOMELT
-            )
-            w_nm = (
-                self._nanomelt_weight_override
-                if self._nanomelt_weight_override is not None
-                else _NANOMELT_WEIGHT_WITH_ESM2
-            )
-            result["composite_score"] = (
-                w_esm * esm2_normalized + w_leg * legacy + w_nm * nm_normalized
-            )
-            result["scoring_method"] = "esm2+nanomelt"
-        elif esm2_normalized is not None:
-            w_esm = (
-                self._esm2_weight if self._esm2_weight is not None else _ESM2_WEIGHT_WITHOUT_NANOMELT
+                self._esm2_weight if self._esm2_weight is not None else _ESM2_WEIGHT
             )
             w_leg = (
                 self._legacy_weight_override
@@ -225,11 +171,6 @@ class StabilityScorer:
             )
             result["composite_score"] = w_esm * esm2_normalized + w_leg * legacy
             result["scoring_method"] = "esm2"
-        elif nm_normalized is not None:
-            result["composite_score"] = (
-                _LEGACY_WEIGHT * legacy + _NANOMELT_WEIGHT * nm_normalized
-            )
-            result["scoring_method"] = "nanomelt"
         else:
             result["composite_score"] = legacy
             result["scoring_method"] = "legacy"

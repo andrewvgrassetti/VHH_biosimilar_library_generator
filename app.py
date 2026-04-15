@@ -21,20 +21,16 @@ from vhh_library.mutation_engine import MutationEngine
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
     HumanStringContentScorer,
-    NanoMeltStabilityScorer,
 )
 from vhh_library.sequence import IMGT_REGIONS, VHHSequence
 from vhh_library.stability import (
     StabilityScorer,
     _esm2_pll_available,
-    _nanomelt_available,
 )
 from vhh_library.tags import TagManager
 from vhh_library.visualization import SequenceVisualizer
 
 _ESM2_PLL_DEFAULT_TOP_N = 10
-_NANOMELT_TM_MIN = 40.0
-_NANOMELT_TM_MAX = 90.0
 
 st.set_page_config(
     page_title="VHH Biosimilar Library Generator",
@@ -55,8 +51,7 @@ def load_scorers():
     hydro = SurfaceHydrophobicityScorer()
     hsc = HumanStringContentScorer()
     cons = ConsensusStabilityScorer()
-    nano = NanoMeltStabilityScorer()
-    return h, s, hydro, hsc, cons, nano
+    return h, s, hydro, hsc, cons
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +66,6 @@ def init_state():
         "hydrophobicity_scores": None,
         "orthogonal_humanness_scores": None,
         "orthogonal_stability_scores": None,
-        "nanomelt_scores": None,
         "ranked_mutations": None,
         "library": None,
         "construct": None,
@@ -225,7 +219,7 @@ def sidebar():
                 "Computationally expensive – recommended for final library ranking."
             )
             if esm2_available
-            else "Requires torch and fair-esm: pip install -e \".[ml]\"",
+            else "Requires torch and fair-esm (included in default install)",
         )
         st.selectbox(
             "Model tier",
@@ -241,16 +235,9 @@ def sidebar():
             disabled=not esm2_available,
         )
         if not esm2_available:
-            st.info("ESM-2 unavailable (torch / esm not installed). Install with: pip install -e \".[ml]\"")
+            st.info("ESM-2 unavailable (torch / esm not installed). Reinstall with: pip install -e .")
 
         st.divider()
-
-        # -- NanoMelt --
-        st.subheader("NanoMelt Tm")
-        if _nanomelt_available():
-            st.success("NanoMelt is available ✅")
-        else:
-            st.warning("NanoMelt not installed – Tm predictions disabled.")
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +245,7 @@ def sidebar():
 # ---------------------------------------------------------------------------
 
 def tab_input(humanness_scorer, stability_scorer, hydrophobicity_scorer,
-              hsc_scorer, consensus_scorer, nanomelt_scorer, viz):
+              hsc_scorer, consensus_scorer, viz):
     st.header("🔬 Input & Analysis")
 
     raw_seq = st.text_area(
@@ -295,10 +282,6 @@ def tab_input(humanness_scorer, stability_scorer, hydrophobicity_scorer,
             st.session_state["hydrophobicity_scores"] = hydrophobicity_scorer.score(vhh)
             st.session_state["orthogonal_humanness_scores"] = hsc_scorer.score(vhh)
             st.session_state["orthogonal_stability_scores"] = consensus_scorer.score(vhh)
-            if nanomelt_scorer.is_available:
-                st.session_state["nanomelt_scores"] = nanomelt_scorer.score(vhh)
-            else:
-                st.session_state["nanomelt_scores"] = None
 
     # -- Display results --
     vhh = st.session_state.get("vhh_seq")
@@ -311,7 +294,6 @@ def tab_input(humanness_scorer, stability_scorer, hydrophobicity_scorer,
     hy_scores = st.session_state["hydrophobicity_scores"]
     ort_h = st.session_state["orthogonal_humanness_scores"]
     ort_s = st.session_state["orthogonal_stability_scores"]
-    nano_s = st.session_state["nanomelt_scores"]
 
     st.success(f"Sequence accepted – {vhh.length} residues")
 
@@ -330,16 +312,11 @@ def tab_input(humanness_scorer, stability_scorer, hydrophobicity_scorer,
 
     # Orthogonal scores
     st.subheader("Orthogonal Scores")
-    oc1, oc2, oc3 = st.columns(3)
+    oc1, oc2 = st.columns(2)
     with oc1:
         st.metric("Human String Content", f"{ort_h['composite_score']:.3f}")
     with oc2:
         st.metric("Consensus Stability", f"{ort_s['composite_score']:.3f}")
-    with oc3:
-        if nano_s:
-            st.metric("NanoMelt Tm", f"{nano_s.get('predicted_tm', 0):.1f} °C")
-        else:
-            st.metric("NanoMelt Tm", "N/A")
 
     # Region track
     st.subheader("IMGT Region Map")
@@ -462,7 +439,7 @@ def tab_mutations(humanness_scorer, stability_scorer):
         enabled["surface_hydrophobicity"] = False
 
     scorers = load_scorers()
-    _, _, hydrophobicity_scorer, hsc_scorer, consensus_scorer, nanomelt_scorer = scorers
+    _, _, hydrophobicity_scorer, hsc_scorer, consensus_scorer = scorers
 
     if st.button("Rank single mutations", type="primary", key="btn_rank"):
         engine = MutationEngine(
@@ -471,7 +448,6 @@ def tab_mutations(humanness_scorer, stability_scorer):
             hydrophobicity_scorer=hydrophobicity_scorer if enabled.get("surface_hydrophobicity") else None,
             hsc_scorer=hsc_scorer,
             consensus_scorer=consensus_scorer,
-            nanomelt_scorer=nanomelt_scorer if nanomelt_scorer.is_available else None,
             weights=weights,
             enabled_metrics=enabled,
         )
@@ -608,7 +584,7 @@ def tab_library(viz):
         if pll_df is not None:
             st.dataframe(pll_df, use_container_width=True, hide_index=True)
     elif not _esm2_pll_available():
-        st.info("ESM-2 not available (install torch + esm: pip install -e \".[ml]\").")
+        st.info("ESM-2 not available (torch / esm not found). Reinstall with: pip install -e .")
     else:
         st.info("Enable ESM-2 stability scoring in the sidebar to rescore top variants.")
 
@@ -971,7 +947,7 @@ def tab_history():
 def main():
     init_state()
     scorers = load_scorers()
-    humanness_scorer, stability_scorer, hydrophobicity_scorer, hsc_scorer, consensus_scorer, nanomelt_scorer = scorers
+    humanness_scorer, stability_scorer, hydrophobicity_scorer, hsc_scorer, consensus_scorer = scorers
     optimizer = CodonOptimizer()
     tag_manager = TagManager()
     viz = SequenceVisualizer()
@@ -988,7 +964,7 @@ def main():
     ])
     with tabs[0]:
         tab_input(humanness_scorer, stability_scorer, hydrophobicity_scorer,
-                  hsc_scorer, consensus_scorer, nanomelt_scorer, viz)
+                  hsc_scorer, consensus_scorer, viz)
     with tabs[1]:
         tab_mutations(humanness_scorer, stability_scorer)
     with tabs[2]:

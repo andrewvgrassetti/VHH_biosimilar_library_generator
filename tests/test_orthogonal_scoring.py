@@ -7,7 +7,6 @@ import pytest
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
     HumanStringContentScorer,
-    NanoMeltStabilityScorer,
 )
 from vhh_library.sequence import VHHSequence
 
@@ -117,13 +116,3 @@ class TestIntegration:
         # At least one score should change (or both stay same – just verify they run)
         assert isinstance(hsc_mutant, float)
         assert isinstance(con_mutant, float)
-
-
-class TestNanoMeltStabilityScorer:
-    def test_instantiation_does_not_raise(self) -> None:
-        scorer = NanoMeltStabilityScorer()
-        assert scorer is not None
-
-    def test_is_available_returns_bool(self) -> None:
-        scorer = NanoMeltStabilityScorer()
-        assert isinstance(scorer.is_available, bool)

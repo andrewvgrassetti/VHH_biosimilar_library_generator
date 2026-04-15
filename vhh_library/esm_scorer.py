@@ -62,7 +62,7 @@ def _check_ml_deps() -> None:
     except ImportError as exc:
         raise ImportError(
             "ESM-2 scoring requires PyTorch and fair-esm. "
-            'Install them with:  pip install -e ".[ml]"'
+            "Install them with:  pip install torch fair-esm"
         ) from exc
 
 

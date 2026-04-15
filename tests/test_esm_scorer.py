@@ -53,7 +53,7 @@ class TestImportError:
         """ESMStabilityScorer should raise ImportError with a clear install message."""
         # Temporarily hide torch and esm from the import machinery
         with patch.dict(sys.modules, {"torch": None, "esm": None}):
-            with pytest.raises(ImportError, match=r'pip install -e "\.\[ml\]"'):
+            with pytest.raises(ImportError, match=r"pip install torch fair-esm"):
                 from vhh_library.esm_scorer import _check_ml_deps
 
                 _check_ml_deps()
