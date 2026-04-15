@@ -7,7 +7,9 @@ import logging
 import math
 import random
 import re
-from typing import TYPE_CHECKING, Optional
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable, Optional
 
 import pandas as pd
 
@@ -36,6 +38,60 @@ _SAMPLING_THRESHOLD = 50_000
 _ITERATIVE_THRESHOLD = 1_000_000
 _CONVERGENCE_THRESHOLD = 1e-4
 _ANCHOR_UNLOCK_THRESHOLD = 0.01
+
+# Iterative strategy constants
+_DEFAULT_MAX_ROUNDS = 15
+_MIN_DIVERSITY_ENTROPY = 0.5
+_DIVERSITY_INJECTION_FRAC = 0.2
+_RESCORE_TOP_N_DEFAULT = 20
+_EPISTASIS_PAIR_LIMIT = 15
+
+# Anchor confidence scoring parameters
+_ANCHOR_FREQ_FLOOR = 0.3  # Minimum frequency to consider a candidate anchor
+_ANCHOR_FREQ_SCALE = 0.8  # freq_threshold = anchor_threshold * this factor
+_MARGINAL_SCALE = 10.0  # Scale marginal benefit to [0, 1] range
+_MARGINAL_OFFSET = 0.5  # Shift so neutral marginal benefit maps to 0.5
+_CONFIDENCE_W_FREQ = 0.4  # Weight of frequency in confidence score
+_CONFIDENCE_W_MARGINAL = 0.4  # Weight of marginal benefit in confidence score
+_CONFIDENCE_W_BASELINE = 0.2  # Baseline confidence for any passing candidate
+_ANTAGONISTIC_SCALE = 2.0  # Penalty multiplier for antagonistic interactions
+
+
+# ---------------------------------------------------------------------------
+# Progress reporting dataclass
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class IterativeProgress:
+    """Snapshot of iterative strategy progress for UI callbacks."""
+
+    phase: str
+    round_number: int
+    total_rounds: int
+    best_score: float
+    mean_score: float
+    population_size: int
+    n_anchors: int
+    diversity_entropy: float = 0.0
+    message: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Anchor with confidence
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AnchorCandidate:
+    """An anchor mutation with confidence scoring."""
+
+    position: int
+    amino_acid: str
+    frequency: float = 0.0
+    marginal_benefit: float = 0.0
+    confidence: float = 0.0
+    interactions: dict[tuple[int, str], float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +192,69 @@ def _total_grouped_combinations(
 def _imgt_key_to_int(pos_key: str) -> int:
     """Extract the integer portion from an IMGT position key (e.g. ``"111A"`` → 111)."""
     return int("".join(c for c in pos_key if c.isdigit()) or "0")
+
+
+def _mutation_entropy(rows: list[dict]) -> float:
+    """Compute Shannon entropy of mutation frequencies across all rows.
+
+    Higher entropy indicates more diverse variants (more unique mutation
+    combinations).  Returns 0.0 for empty input.
+    """
+    if not rows:
+        return 0.0
+    counts: Counter[tuple[int, str]] = Counter()
+    total = 0
+    for r in rows:
+        for pos, aa in _parse_mut_str(r["mutations"]):
+            counts[(pos, aa)] += 1
+            total += 1
+    if total == 0:
+        return 0.0
+    entropy = 0.0
+    for c in counts.values():
+        p = c / total
+        if p > 0:
+            entropy -= p * math.log2(p)
+    return entropy
+
+
+def _compute_epistasis(
+    rows: list[dict],
+    mut_a: tuple[int, str],
+    mut_b: tuple[int, str],
+) -> float:
+    """Compute epistatic interaction score between two mutations.
+
+    interaction = score(A+B) - score(A_only) - score(B_only) + score(neither)
+
+    Positive → synergistic; Negative → antagonistic.
+    """
+    scores_ab: list[float] = []
+    scores_a: list[float] = []
+    scores_b: list[float] = []
+    scores_none: list[float] = []
+
+    for r in rows:
+        muts = set(_parse_mut_str(r["mutations"]))
+        has_a = mut_a in muts
+        has_b = mut_b in muts
+        s = r["combined_score"]
+        if has_a and has_b:
+            scores_ab.append(s)
+        elif has_a and not has_b:
+            scores_a.append(s)
+        elif has_b and not has_a:
+            scores_b.append(s)
+        else:
+            scores_none.append(s)
+
+    def _median(vals: list[float]) -> float:
+        if not vals:
+            return 0.0
+        sv = sorted(vals)
+        return sv[len(sv) // 2]
+
+    return _median(scores_ab) - _median(scores_a) - _median(scores_b) + _median(scores_none)
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +591,9 @@ class MutationEngine:
         min_mutations: int = 1,
         strategy: str = "auto",
         anchor_threshold: float = 0.6,
-        max_rounds: int = 5,
+        max_rounds: int = _DEFAULT_MAX_ROUNDS,
+        rescore_top_n: int = _RESCORE_TOP_N_DEFAULT,
+        progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
     ) -> pd.DataFrame:
         if top_mutations.empty:
             return self._empty_library_df()
@@ -527,6 +648,8 @@ class MutationEngine:
                 max_variants,
                 anchor_threshold,
                 max_rounds,
+                rescore_top_n=rescore_top_n,
+                progress_callback=progress_callback,
             )
         else:
             raise ValueError(f"Unknown strategy: {strategy!r}")
@@ -711,7 +834,8 @@ class MutationEngine:
         return rows
 
     # ------------------------------------------------------------------
-    # Private: iterative anchor-and-explore
+    # Private: iterative anchor-and-explore (Evolutionary Stability
+    # Optimization)
     # ------------------------------------------------------------------
 
     def _generate_iterative(
@@ -723,93 +847,371 @@ class MutationEngine:
         max_variants: int,
         anchor_threshold: float,
         max_rounds: int,
+        *,
+        rescore_top_n: int = _RESCORE_TOP_N_DEFAULT,
+        progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
     ) -> list[dict]:
-        per_round = max(max_variants // max(max_rounds, 1), 100)
+        """Multi-phase evolutionary strategy with epistasis-aware anchoring.
 
-        # Seed round
-        rows = self._generate_sampled(
-            vhh_sequence, mutation_list, k_min, k_max, per_round
-        )
-        if not rows:
+        Phase 1 – Broad Exploration: random sampling, no anchors, survey landscape.
+        Phase 2 – Anchor Identification: statistical anchor selection + epistasis.
+        Phase 3 – Focused Exploitation: anchor-constrained sampling with diversity.
+        Phase 4 – Final Validation: ESM-2 full-PLL re-scoring of top variants.
+        """
+        # Allocate rounds to phases (adaptive to max_rounds)
+        n_explore = max(2, max_rounds // 5)
+        n_anchor_id = max(1, max_rounds // 7)
+        n_exploit = max(2, max_rounds - n_explore - n_anchor_id - 1)
+        total_phases = n_explore + n_anchor_id + n_exploit + 1  # +1 validation
+
+        per_round_explore = max(max_variants // max(total_phases, 1), 50)
+        per_round_exploit = max(per_round_explore // 2, 30)
+
+        all_rows: list[dict] = []
+        seen_keys: set[str] = set()
+        counter = 1
+        global_round = 0
+        anchor_candidates: list[AnchorCandidate] = []
+        prev_top_avg = -float("inf")
+        prev_diversity = -1.0
+        stagnant_rounds = 0
+
+        def _add_rows(new_rows: list[dict]) -> None:
+            nonlocal counter
+            for r in new_rows:
+                if r["mutations"] not in seen_keys:
+                    seen_keys.add(r["mutations"])
+                    all_rows.append(r)
+                    counter += 1
+
+        def _report(phase: str, msg: str = "") -> None:
+            if progress_callback is None:
+                return
+            best = max((r["combined_score"] for r in all_rows), default=0.0)
+            mean = (
+                sum(r["combined_score"] for r in all_rows) / len(all_rows)
+                if all_rows
+                else 0.0
+            )
+            div = _mutation_entropy(all_rows) if all_rows else 0.0
+            progress_callback(
+                IterativeProgress(
+                    phase=phase,
+                    round_number=global_round,
+                    total_rounds=total_phases,
+                    best_score=best,
+                    mean_score=mean,
+                    population_size=len(all_rows),
+                    n_anchors=len(anchor_candidates),
+                    diversity_entropy=div,
+                    message=msg,
+                )
+            )
+
+        def _esm_score_rows(rows: list[dict]) -> list[dict]:
+            """Apply ESM-2 delta PLL scoring to rows when available."""
+            if self._esm_scorer is None or not rows:
+                return rows
+            parent_seq = vhh_sequence.sequence
+            variants: list[tuple[list[int], list[str]]] = []
+            for r in rows:
+                seq = r["aa_sequence"]
+                positions: list[int] = []
+                new_aas: list[str] = []
+                for i, (p_aa, v_aa) in enumerate(zip(parent_seq, seq)):
+                    if p_aa != v_aa:
+                        positions.append(i)
+                        new_aas.append(v_aa)
+                variants.append((positions, new_aas))
+            delta_scores = self._esm_scorer.score_delta(parent_seq, variants)
+            for r, ds in zip(rows, delta_scores):
+                r["esm2_delta_pll"] = ds
             return rows
 
-        prev_top_avg = -float("inf")
-        stagnant_rounds = 0
-        anchors: dict[int, str] = {}
+        def _esm_rescore_full(rows: list[dict], top_n: int) -> list[dict]:
+            """Re-score top N variants with full PLL for accuracy."""
+            if self._esm_scorer is None or not rows or top_n <= 0:
+                return rows
+            score_key = "esm2_delta_pll" if "esm2_delta_pll" in rows[0] else "combined_score"
+            sorted_rows = sorted(rows, key=lambda r: r.get(score_key, 0.0), reverse=True)
+            top_rows = sorted_rows[:top_n]
+            seqs = [r["aa_sequence"] for r in top_rows]
+            plls = self._esm_scorer.score_batch(seqs)
+            for r, pll in zip(top_rows, plls):
+                r["esm2_full_pll"] = pll
+            return rows
 
-        for round_idx in range(1, max_rounds):
-            rows.sort(key=lambda r: r["combined_score"], reverse=True)
-            top_quartile = rows[: max(len(rows) // 4, 1)]
-            top_avg = sum(r["combined_score"] for r in top_quartile) / len(top_quartile)
+        # ==================================================================
+        # PHASE 1 — Broad Exploration
+        # ==================================================================
+        logger.info("Phase 1: Broad exploration (%d rounds)", n_explore)
+        for _ in range(n_explore):
+            global_round += 1
+            new = self._generate_sampled(
+                vhh_sequence, mutation_list, k_min, k_max, per_round_explore
+            )
+            new = _esm_score_rows(new)
+            _add_rows(new)
+            _report("exploration", f"Exploring ({len(all_rows)} variants)")
 
-            # Convergence check
-            if abs(top_avg - prev_top_avg) < _CONVERGENCE_THRESHOLD:
+            if len(all_rows) >= max_variants:
+                break
+
+        if not all_rows:
+            return all_rows
+
+        # ==================================================================
+        # PHASE 2 — Anchor Identification with epistasis detection
+        # ==================================================================
+        logger.info("Phase 2: Anchor identification (%d rounds)", n_anchor_id)
+        for _ in range(n_anchor_id):
+            global_round += 1
+            new = self._generate_sampled(
+                vhh_sequence, mutation_list, k_min, k_max, per_round_explore
+            )
+            new = _esm_score_rows(new)
+            _add_rows(new)
+
+        # Identify anchor candidates
+        anchor_candidates = self._identify_anchors_with_epistasis(
+            all_rows, anchor_threshold
+        )
+        logger.info(
+            "Identified %d anchor candidates (top confidence: %.2f)",
+            len(anchor_candidates),
+            max((a.confidence for a in anchor_candidates), default=0.0),
+        )
+        _report(
+            "anchor_identification",
+            f"{len(anchor_candidates)} anchors identified",
+        )
+
+        # ==================================================================
+        # PHASE 3 — Focused Exploitation
+        # ==================================================================
+        logger.info("Phase 3: Focused exploitation (%d rounds)", n_exploit)
+        for exploit_round in range(n_exploit):
+            global_round += 1
+
+            # Build weighted anchor set from confident candidates
+            anchors = self._select_anchors_weighted(anchor_candidates)
+
+            if anchors:
+                new = self._generate_constrained_sampled(
+                    vhh_sequence, mutation_list, k_min, k_max,
+                    per_round_exploit, anchors
+                )
+            else:
+                new = self._generate_sampled(
+                    vhh_sequence, mutation_list, k_min, k_max,
+                    per_round_exploit
+                )
+
+            new = _esm_score_rows(new)
+            _add_rows(new)
+
+            # Diversity injection: if entropy drops, add random variants
+            diversity = _mutation_entropy(all_rows)
+            if diversity < _MIN_DIVERSITY_ENTROPY and mutation_list:
+                inject_n = max(int(per_round_exploit * _DIVERSITY_INJECTION_FRAC), 5)
+                inject = self._generate_sampled(
+                    vhh_sequence, mutation_list, k_min, k_max, inject_n
+                )
+                inject = _esm_score_rows(inject)
+                _add_rows(inject)
+                logger.debug(
+                    "Injected %d random variants for diversity (entropy=%.3f)",
+                    len(inject), diversity,
+                )
+
+            # ESM-2 full PLL rescore top N each round
+            _esm_rescore_full(all_rows, rescore_top_n)
+
+            # Convergence check: score stagnation + diversity stabilisation
+            sorted_rows = sorted(
+                all_rows, key=lambda r: r["combined_score"], reverse=True
+            )
+            top_q = sorted_rows[: max(len(sorted_rows) // 4, 1)]
+            top_avg = sum(r["combined_score"] for r in top_q) / len(top_q)
+            score_stagnant = abs(top_avg - prev_top_avg) < _CONVERGENCE_THRESHOLD
+            diversity_stable = (
+                abs(diversity - prev_diversity) < 0.05 if prev_diversity >= 0 else False
+            )
+            if score_stagnant and diversity_stable:
                 stagnant_rounds += 1
                 if stagnant_rounds >= 2:
-                    logger.info("Iterative generation converged at round %d", round_idx)
+                    logger.info(
+                        "Converged at round %d (score=%.4f, entropy=%.3f)",
+                        global_round, top_avg, diversity,
+                    )
                     break
             else:
                 stagnant_rounds = 0
             prev_top_avg = top_avg
+            prev_diversity = diversity
 
-            # Identify anchors from top quartile
-            position_aa_counts: dict[tuple[int, str], int] = {}
-            for r in top_quartile:
-                for pos, aa in _parse_mut_str(r["mutations"]):
-                    position_aa_counts[(pos, aa)] = position_aa_counts.get((pos, aa), 0) + 1
-
-            n_top = len(top_quartile)
-            new_anchors: dict[int, str] = {}
-            for (pos, aa), count in position_aa_counts.items():
-                if count / n_top >= anchor_threshold:
-                    new_anchors[pos] = aa
-
-            # Unlock anchors that don't help
-            verified_anchors: dict[int, str] = {}
-            for pos, aa in new_anchors.items():
-                without = [
-                    r["combined_score"]
-                    for r in top_quartile
-                    if (pos, aa) not in set(_parse_mut_str(r["mutations"]))
-                ]
-                with_anchor = [
-                    r["combined_score"]
-                    for r in top_quartile
-                    if (pos, aa) in set(_parse_mut_str(r["mutations"]))
-                ]
-                avg_with = sum(with_anchor) / len(with_anchor) if with_anchor else 0.0
-                avg_without = sum(without) / len(without) if without else 0.0
-                if avg_with >= avg_without - _ANCHOR_UNLOCK_THRESHOLD:
-                    verified_anchors[pos] = aa
-
-            anchors = verified_anchors
-
-            if anchors:
-                new_rows = self._generate_constrained_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max, per_round, anchors
-                )
-            else:
-                new_rows = self._generate_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max, per_round
+            # Adaptive anchor update: re-assess if new data changes landscape
+            if exploit_round > 0 and exploit_round % 2 == 0:
+                anchor_candidates = self._identify_anchors_with_epistasis(
+                    all_rows, anchor_threshold
                 )
 
-            rows.extend(new_rows)
+            _report(
+                "exploitation",
+                f"Round {global_round}: {len(all_rows)} variants, "
+                f"best={sorted_rows[0]['combined_score']:.4f}",
+            )
 
-            # De-duplicate by mutation set
-            seen: set[str] = set()
-            deduped: list[dict] = []
-            for r in rows:
-                if r["mutations"] not in seen:
-                    seen.add(r["mutations"])
-                    deduped.append(r)
-            rows = deduped
-
-            if len(rows) >= max_variants:
-                rows.sort(key=lambda r: r["combined_score"], reverse=True)
-                rows = rows[:max_variants]
+            if len(all_rows) >= max_variants:
                 break
 
-        return rows
+        # ==================================================================
+        # PHASE 4 — Final Validation
+        # ==================================================================
+        global_round += 1
+        logger.info("Phase 4: Final validation")
+
+        # ESM-2 full PLL for top candidates
+        _esm_rescore_full(all_rows, rescore_top_n * 2)
+        _report("validation", "Final scoring complete")
+
+        # Trim to max_variants, keeping the best
+        all_rows.sort(key=lambda r: r["combined_score"], reverse=True)
+        if len(all_rows) > max_variants:
+            all_rows = all_rows[:max_variants]
+
+        return all_rows
+
+    # ------------------------------------------------------------------
+    # Anchor identification helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _identify_anchors_with_epistasis(
+        rows: list[dict],
+        anchor_threshold: float,
+    ) -> list[AnchorCandidate]:
+        """Identify anchor mutations with marginal contribution + pairwise epistasis.
+
+        Returns a list of :class:`AnchorCandidate` with confidence scores.
+        """
+        if not rows:
+            return []
+
+        sorted_rows = sorted(rows, key=lambda r: r["combined_score"], reverse=True)
+        n_top = max(len(sorted_rows) // 4, 1)
+        top_quartile = sorted_rows[:n_top]
+        all_scores = [r["combined_score"] for r in sorted_rows]
+        median_all = sorted(all_scores)[len(all_scores) // 2]
+
+        # 1. Frequency analysis
+        pa_counts: Counter[tuple[int, str]] = Counter()
+        for r in top_quartile:
+            for pos, aa in _parse_mut_str(r["mutations"]):
+                pa_counts[(pos, aa)] += 1
+
+        # Candidate anchors: those exceeding a relaxed frequency threshold.
+        # _ANCHOR_FREQ_SCALE (0.8×) softens the user-set anchor_threshold so
+        # we don't miss borderline candidates; _ANCHOR_FREQ_FLOOR (0.3) is the
+        # absolute minimum to avoid pure noise.
+        freq_threshold = max(anchor_threshold * _ANCHOR_FREQ_SCALE, _ANCHOR_FREQ_FLOOR)
+        candidates: dict[tuple[int, str], AnchorCandidate] = {}
+        for (pos, aa), count in pa_counts.items():
+            freq = count / n_top
+            if freq >= freq_threshold:
+                candidates[(pos, aa)] = AnchorCandidate(
+                    position=pos, amino_acid=aa, frequency=freq
+                )
+
+        if not candidates:
+            return []
+
+        # 2. Marginal contribution analysis (robust: median comparison)
+        for key, cand in candidates.items():
+            with_scores = []
+            without_scores = []
+            for r in sorted_rows:
+                muts = set(_parse_mut_str(r["mutations"]))
+                if key in muts:
+                    with_scores.append(r["combined_score"])
+                else:
+                    without_scores.append(r["combined_score"])
+            if with_scores and without_scores:
+                median_with = sorted(with_scores)[len(with_scores) // 2]
+                median_without = sorted(without_scores)[len(without_scores) // 2]
+                cand.marginal_benefit = median_with - median_without
+            elif with_scores:
+                cand.marginal_benefit = (
+                    sorted(with_scores)[len(with_scores) // 2] - median_all
+                )
+
+        # 3. Pairwise interaction analysis for top candidates
+        top_candidates = sorted(
+            candidates.values(),
+            key=lambda c: c.marginal_benefit,
+            reverse=True,
+        )[:_EPISTASIS_PAIR_LIMIT]
+
+        for i, ca in enumerate(top_candidates):
+            for cb in top_candidates[i + 1:]:
+                interaction = _compute_epistasis(
+                    sorted_rows,
+                    (ca.position, ca.amino_acid),
+                    (cb.position, cb.amino_acid),
+                )
+                key_a = (ca.position, ca.amino_acid)
+                key_b = (cb.position, cb.amino_acid)
+                ca.interactions[key_b] = interaction
+                cb.interactions[key_a] = interaction
+
+        # 4. Confidence scoring: weighted combination of frequency, marginal
+        # benefit, and epistatic interactions.
+        # - freq_score: normalised frequency (capped at 1.0).
+        # - marginal_score: marginal benefit scaled by _MARGINAL_SCALE and
+        #   shifted by _MARGINAL_OFFSET so a neutral mutation maps to 0.5.
+        # - _CONFIDENCE_W_BASELINE: a small constant so any candidate that
+        #   passed frequency screening starts with non-zero confidence.
+        # - antagonistic_penalty: sum of negative interaction terms scaled by
+        #   _ANTAGONISTIC_SCALE — reduces confidence for mutations that clash
+        #   with other anchors.
+        for cand in candidates.values():
+            freq_score = min(cand.frequency / anchor_threshold, 1.0)
+            marginal_score = max(
+                0.0,
+                min(cand.marginal_benefit * _MARGINAL_SCALE + _MARGINAL_OFFSET, 1.0),
+            )
+            antagonistic_penalty = sum(
+                min(v, 0.0) for v in cand.interactions.values()
+            ) * _ANTAGONISTIC_SCALE
+            cand.confidence = max(
+                0.0,
+                _CONFIDENCE_W_FREQ * freq_score
+                + _CONFIDENCE_W_MARGINAL * marginal_score
+                + _CONFIDENCE_W_BASELINE
+                + antagonistic_penalty,
+            )
+
+        # Filter to reasonable confidence
+        result = [c for c in candidates.values() if c.confidence > 0.2]
+        result.sort(key=lambda c: c.confidence, reverse=True)
+        return result
+
+    @staticmethod
+    def _select_anchors_weighted(
+        candidates: list[AnchorCandidate],
+    ) -> dict[int, str]:
+        """Select anchors using confidence-weighted probabilistic sampling."""
+        if not candidates:
+            return {}
+        anchors: dict[int, str] = {}
+        for cand in candidates:
+            # Higher confidence → higher probability of being selected
+            if random.random() < cand.confidence:
+                # Don't overwrite if a higher-confidence anchor already occupies
+                # this position
+                if cand.position not in anchors:
+                    anchors[cand.position] = cand.amino_acid
+        return anchors
 
     # ------------------------------------------------------------------
     # Private: position-conflict helpers

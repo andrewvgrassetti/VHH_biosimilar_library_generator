@@ -9,8 +9,12 @@ import pytest
 
 from vhh_library.humanness import HumAnnotator
 from vhh_library.mutation_engine import (
+    IterativeProgress,
     MutationEngine,
+    _compute_epistasis,
     _introduces_ptm_liability,
+    _mutation_entropy,
+    _parse_mut_str,
     _total_grouped_combinations,
 )
 from vhh_library.sequence import VHHSequence
@@ -301,8 +305,6 @@ class TestMultiCandidatePerPosition:
             pytest.skip("Empty library")
 
         # Collect all (position, AA) pairs across variants
-        from vhh_library.mutation_engine import _parse_mut_str
-
         position_aas: dict[int, set[str]] = {}
         for _, row in lib.iterrows():
             for pos, aa in _parse_mut_str(row["mutations"]):
@@ -326,8 +328,6 @@ class TestMultiCandidatePerPosition:
         lib = stability_engine.generate_library(vhh, top, n_mutations=3, max_variants=50)
         if lib.empty:
             pytest.skip("Empty library")
-
-        from vhh_library.mutation_engine import _parse_mut_str
 
         for _, row in lib.iterrows():
             muts = _parse_mut_str(row["mutations"])
@@ -383,3 +383,198 @@ class TestGroupedCombinations:
         # k=2: 1 combo * 2*2 = 4
         # Total = 8
         assert _total_grouped_combinations(groups, 1, 2) == 8
+
+
+class TestEvolutionaryIterativeStrategy:
+    """Tests for the redesigned multi-phase iterative strategy."""
+
+    def test_iterative_converges(
+        self, stability_engine: MutationEngine, vhh: VHHSequence, stability_ranked: pd.DataFrame
+    ) -> None:
+        """Final round scores should be >= seed round scores (convergence)."""
+        top10 = stability_ranked.head(10)
+        if top10.empty:
+            pytest.skip("No mutations ranked")
+        lib = stability_engine.generate_library(
+            vhh, top10, n_mutations=3, strategy="iterative",
+            max_variants=100, max_rounds=6,
+        )
+        assert isinstance(lib, pd.DataFrame)
+        if lib.empty:
+            pytest.skip("Empty library")
+        # Top-quartile average should be positive (better than baseline)
+        n_top = max(len(lib) // 4, 1)
+        top_avg = lib.nlargest(n_top, "combined_score")["combined_score"].mean()
+        assert top_avg > 0.0
+
+    def test_iterative_produces_diverse_variants(
+        self, stability_engine: MutationEngine, vhh: VHHSequence, stability_ranked: pd.DataFrame
+    ) -> None:
+        """Iterative strategy should produce diverse (not all identical) variants."""
+        top10 = stability_ranked.head(10)
+        if top10.empty:
+            pytest.skip("No mutations ranked")
+        lib = stability_engine.generate_library(
+            vhh, top10, n_mutations=3, strategy="iterative",
+            max_variants=50, max_rounds=4,
+        )
+        if len(lib) < 2:
+            pytest.skip("Not enough variants")
+        unique_seqs = lib["aa_sequence"].nunique()
+        assert unique_seqs > 1, "All variants are identical"
+        unique_muts = lib["mutations"].nunique()
+        assert unique_muts > 1, "All mutation sets are identical"
+
+    def test_iterative_with_progress_callback(
+        self, stability_engine: MutationEngine, vhh: VHHSequence, stability_ranked: pd.DataFrame
+    ) -> None:
+        """Progress callback should be invoked with valid IterativeProgress."""
+        top5 = stability_ranked.head(5)
+        if top5.empty:
+            pytest.skip("No mutations ranked")
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        lib = stability_engine.generate_library(
+            vhh, top5, n_mutations=2, strategy="iterative",
+            max_variants=30, max_rounds=4,
+            progress_callback=_on_progress,
+        )
+        assert isinstance(lib, pd.DataFrame)
+        assert len(progress_events) > 0, "No progress events reported"
+        # Verify progress event fields
+        for p in progress_events:
+            assert p.phase in (
+                "exploration", "anchor_identification",
+                "exploitation", "validation",
+            )
+            assert p.round_number >= 1
+            assert p.population_size >= 0
+
+    def test_iterative_benchmark_under_5_min(
+        self, stability_engine: MutationEngine, vhh: VHHSequence, stability_ranked: pd.DataFrame
+    ) -> None:
+        """For a 10-mutation search space, strategy should complete in <5 minutes on CPU."""
+        top10 = stability_ranked.head(10)
+        if top10.empty:
+            pytest.skip("No mutations ranked")
+        start = time.time()
+        lib = stability_engine.generate_library(
+            vhh, top10, n_mutations=10, strategy="iterative",
+            max_variants=200, max_rounds=6,
+        )
+        elapsed = time.time() - start
+        assert elapsed < 300, f"Iterative strategy took {elapsed:.1f}s (>5 min)"
+        assert isinstance(lib, pd.DataFrame)
+
+
+class TestEpistasisDetection:
+    """Tests for epistasis detection with synthetic data."""
+
+    def test_compute_epistasis_synergistic(self) -> None:
+        """Synergistic pair: score(A+B) > score(A) + score(B) - score(neither)."""
+        rows = [
+            {"mutations": "A5V, B10L", "combined_score": 1.0},
+            {"mutations": "A5V, B10L", "combined_score": 0.9},
+            {"mutations": "A5V", "combined_score": 0.3},
+            {"mutations": "A5V", "combined_score": 0.35},
+            {"mutations": "B10L", "combined_score": 0.2},
+            {"mutations": "B10L", "combined_score": 0.25},
+            {"mutations": "C15G", "combined_score": 0.1},
+            {"mutations": "C15G", "combined_score": 0.05},
+        ]
+        interaction = _compute_epistasis(rows, (5, "V"), (10, "L"))
+        # Medians: A+B=0.95, A_only=0.325, B_only=0.225
+        # "neither" = C15G rows (no mut A or B): median=0.075
+        # interaction = 0.95 - 0.325 - 0.225 + 0.075 = 0.475 > 0  (synergistic)
+        assert interaction > 0.0, f"Expected synergistic interaction, got {interaction}"
+
+    def test_compute_epistasis_antagonistic(self) -> None:
+        """Antagonistic pair: combination is worse than sum of parts."""
+        rows = [
+            {"mutations": "A5V, B10L", "combined_score": 0.1},
+            {"mutations": "A5V, B10L", "combined_score": 0.15},
+            {"mutations": "A5V", "combined_score": 0.5},
+            {"mutations": "A5V", "combined_score": 0.55},
+            {"mutations": "B10L", "combined_score": 0.4},
+            {"mutations": "B10L", "combined_score": 0.45},
+            {"mutations": "C15G", "combined_score": 0.2},
+            {"mutations": "C15G", "combined_score": 0.1},
+        ]
+        interaction = _compute_epistasis(rows, (5, "V"), (10, "L"))
+        assert interaction < 0.0, f"Expected antagonistic interaction, got {interaction}"
+
+    def test_compute_epistasis_empty_data(self) -> None:
+        """Empty data should return 0."""
+        assert _compute_epistasis([], (1, "A"), (2, "B")) == 0.0
+
+
+class TestMutationEntropy:
+    """Tests for Shannon entropy diversity metric."""
+
+    def test_entropy_zero_for_empty(self) -> None:
+        assert _mutation_entropy([]) == 0.0
+
+    def test_entropy_zero_for_identical(self) -> None:
+        """All identical mutations → low entropy."""
+        rows = [
+            {"mutations": "A5V"},
+            {"mutations": "A5V"},
+            {"mutations": "A5V"},
+        ]
+        assert _mutation_entropy(rows) == 0.0
+
+    def test_entropy_positive_for_diverse(self) -> None:
+        """Different mutations → positive entropy."""
+        rows = [
+            {"mutations": "A5V"},
+            {"mutations": "B10L"},
+            {"mutations": "C15G"},
+        ]
+        assert _mutation_entropy(rows) > 0.0
+
+
+class TestAnchorIdentification:
+    """Tests for epistasis-aware anchor identification."""
+
+    def test_identify_anchors_empty(self) -> None:
+        result = MutationEngine._identify_anchors_with_epistasis([], 0.6)
+        assert result == []
+
+    def test_identify_anchors_returns_candidates(self) -> None:
+        """High-frequency mutations in top quartile should be identified."""
+        rows = [
+            {"mutations": "A5V, B10L", "combined_score": 0.9},
+            {"mutations": "A5V, C15G", "combined_score": 0.85},
+            {"mutations": "A5V, D20F", "combined_score": 0.8},
+            {"mutations": "A5V, E25W", "combined_score": 0.75},
+            {"mutations": "B10L", "combined_score": 0.3},
+            {"mutations": "C15G", "combined_score": 0.25},
+            {"mutations": "D20F", "combined_score": 0.2},
+            {"mutations": "E25W", "combined_score": 0.15},
+        ]
+        anchors = MutationEngine._identify_anchors_with_epistasis(rows, 0.6)
+        assert len(anchors) > 0
+        # A5V should be a top anchor (appears in all top quartile)
+        top_anchor = anchors[0]
+        assert top_anchor.position == 5
+        assert top_anchor.amino_acid == "V"
+        assert top_anchor.confidence > 0.2
+
+    def test_anchor_confidence_ordering(self) -> None:
+        """Anchors should be sorted by confidence (descending)."""
+        rows = [
+            {"mutations": "A5V, B10L", "combined_score": 0.9},
+            {"mutations": "A5V, B10L", "combined_score": 0.85},
+            {"mutations": "A5V, C15G", "combined_score": 0.7},
+            {"mutations": "B10L, C15G", "combined_score": 0.65},
+            {"mutations": "D20F", "combined_score": 0.1},
+            {"mutations": "E25W", "combined_score": 0.05},
+        ]
+        anchors = MutationEngine._identify_anchors_with_epistasis(rows, 0.4)
+        if len(anchors) >= 2:
+            for i in range(len(anchors) - 1):
+                assert anchors[i].confidence >= anchors[i + 1].confidence

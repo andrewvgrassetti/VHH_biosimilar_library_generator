@@ -199,7 +199,12 @@ def sidebar():
         )
         st.selectbox("Strategy", ["Auto", "Random", "Iterative"], key="strategy")
         st.slider("Anchor threshold", 0.0, 1.0, 0.6, 0.05, key="anchor_threshold")
-        st.number_input("Max rounds", 1, 20, 5, key="max_rounds")
+        st.number_input("Max rounds", 1, 30, 15, key="max_rounds")
+        st.number_input(
+            "Rescore top N (ESM-2 full PLL)", 0, 200, 20,
+            key="rescore_top_n",
+            help="After each iterative round, re-score top N variants with full ESM-2 PLL for accuracy (0 = disabled)",
+        )
 
         st.divider()
 
@@ -568,6 +573,24 @@ def tab_mutations(humanness_scorer, stability_scorer):
                 return
             strategy_map = {"Auto": "auto", "Random": "random", "Iterative": "iterative"}
             strategy = strategy_map.get(st.session_state.get("strategy", "Auto"), "auto")
+
+            # Progress bar for iterative strategy
+            progress_bar = st.progress(0, text="Generating library…")
+            status_text = st.empty()
+
+            def _on_progress(prog):
+                frac = prog.round_number / max(prog.total_rounds, 1)
+                progress_bar.progress(
+                    min(frac, 1.0),
+                    text=f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds}",
+                )
+                status_text.caption(
+                    f"🧬 {prog.population_size} variants | "
+                    f"Best: {prog.best_score:.4f} | "
+                    f"Anchors: {prog.n_anchors} | "
+                    f"Diversity: {prog.diversity_entropy:.2f}"
+                )
+
             with st.spinner("Generating library…"):
                 library = engine.generate_library(
                     vhh,
@@ -577,8 +600,11 @@ def tab_mutations(humanness_scorer, stability_scorer):
                     min_mutations=st.session_state.get("min_mutations", 1),
                     strategy=strategy,
                     anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
-                    max_rounds=st.session_state.get("max_rounds", 5),
+                    max_rounds=st.session_state.get("max_rounds", 15),
+                    rescore_top_n=st.session_state.get("rescore_top_n", 20),
+                    progress_callback=_on_progress,
                 )
+            progress_bar.progress(1.0, text="Complete!")
             st.session_state["library"] = library
             st.session_state["esm2_pll_scores"] = None
             st.success(f"Generated {len(library)} variants.")
