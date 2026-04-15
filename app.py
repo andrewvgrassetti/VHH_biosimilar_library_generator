@@ -184,16 +184,32 @@ def sidebar():
 
         # -- Codon Optimization --
         st.subheader("Codon Optimization")
-        st.selectbox(
+
+        _organism_options = [
+            "e_coli", "h_sapiens", "s_cerevisiae", "p_pastoris",
+            "b_subtilis", "m_musculus", "d_melanogaster", "c_elegans",
+        ]
+        organism_choice = st.selectbox(
             "Host organism",
-            ["e_coli", "h_sapiens", "p_pastoris", "s_cerevisiae"],
-            key="host_organism",
+            _organism_options + ["Advanced: enter taxonomy ID"],
+            key="host_organism_select",
         )
-        st.selectbox(
+        if organism_choice == "Advanced: enter taxonomy ID":
+            st.text_input("Taxonomy ID or organism name", value="", key="host_organism_custom")
+
+        st.radio(
             "Codon strategy",
-            ["most_frequent", "harmonized", "gc_balanced"],
+            ["most_frequent", "harmonized", "gc_balanced", "dnachisel_optimized"],
             key="codon_strategy",
         )
+
+        # DnaChisel-specific options (visible when dnachisel_optimized is selected)
+        if st.session_state.get("codon_strategy") == "dnachisel_optimized":
+            st.markdown("**DnaChisel constraints**")
+            st.checkbox("Avoid BamHI / EcoRI / HindIII / NdeI", value=True, key="dc_avoid_common_enzymes")
+            st.checkbox("Avoid BsaI / BpiI (Golden Gate)", value=True, key="dc_avoid_golden_gate")
+            st.checkbox("Enforce GC content window (30–65 %)", value=True, key="dc_gc_window")
+            st.checkbox("Suppress repeats (UniquifyAllKmers k=9)", value=True, key="dc_uniquify")
 
         st.divider()
 
@@ -735,8 +751,28 @@ def tab_construct(optimizer, tag_manager):
     c_tag_val = c_tag if c_tag != "None" else None
 
     if st.button("Build constructs", type="primary", key="btn_build_constructs"):
-        host = st.session_state.get("host_organism", "e_coli")
+        # Resolve host organism from sidebar widgets
+        host_sel = st.session_state.get("host_organism_select", "e_coli")
+        if host_sel == "Advanced: enter taxonomy ID":
+            host = st.session_state.get("host_organism_custom", "e_coli") or "e_coli"
+        else:
+            host = host_sel
         codon_strat = st.session_state.get("codon_strategy", "most_frequent")
+
+        # Build extra kwargs for dnachisel_optimized
+        opt_kwargs: dict = {}
+        if codon_strat == "dnachisel_optimized":
+            enzymes: list[str] = []
+            if st.session_state.get("dc_avoid_common_enzymes", True):
+                enzymes.extend(["BamHI", "EcoRI", "HindIII", "NdeI"])
+            if st.session_state.get("dc_avoid_golden_gate", True):
+                enzymes.extend(["BsaI", "BpiI"])
+            opt_kwargs["restriction_enzymes"] = enzymes
+            if not st.session_state.get("dc_gc_window", True):
+                opt_kwargs["gc_mini"] = 0.0
+                opt_kwargs["gc_maxi"] = 1.0
+            if not st.session_state.get("dc_uniquify", True):
+                opt_kwargs["uniquify_kmers"] = None
 
         source_df = barcoded if (use_barcoded and barcoded is not None) else library
         constructs: list[dict] = []
@@ -746,7 +782,7 @@ def tab_construct(optimizer, tag_manager):
                 for _, row in source_df.iterrows():
                     aa_seq = row.get("barcoded_sequence", row.get("aa_sequence", ""))
                     vid = row.get("variant_id", "variant")
-                    opt = optimizer.optimize(aa_seq, host=host, strategy=codon_strat)
+                    opt = optimizer.optimize(aa_seq, host=host, strategy=codon_strat, **opt_kwargs)
                     construct = tag_manager.build_construct(
                         aa_seq, opt["dna_sequence"],
                         n_tag=n_tag_val, c_tag=c_tag_val, linker=linker,
@@ -762,7 +798,7 @@ def tab_construct(optimizer, tag_manager):
         else:
             # Single sequence mode
             with st.spinner("Optimizing codons…"):
-                opt = optimizer.optimize(vhh.sequence, host=host, strategy=codon_strat)
+                opt = optimizer.optimize(vhh.sequence, host=host, strategy=codon_strat, **opt_kwargs)
             construct = tag_manager.build_construct(
                 vhh.sequence, opt["dna_sequence"],
                 n_tag=n_tag_val, c_tag=c_tag_val, linker=linker,
