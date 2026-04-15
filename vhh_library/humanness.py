@@ -43,9 +43,9 @@ class HumAnnotator:
                 best_identity = identity
                 best_germline = name
 
-        position_scores: dict[int, float] = {}
+        position_scores: dict[str, float] = {}
         for pos, aa in vhh.imgt_numbered.items():
-            freq_dict = self.position_freq.get(str(pos))
+            freq_dict = self.position_freq.get(pos)
             if freq_dict is None:
                 continue
             position_scores[pos] = freq_dict.get(aa, freq_dict.get("other", 0.0))
@@ -68,18 +68,18 @@ class HumAnnotator:
     def get_mutation_suggestions(
         self,
         vhh: VHHSequence,
-        off_limits: set[int],
-        forbidden_substitutions: dict[int, set[str]] | None = None,
+        off_limits: set[int] | set[str],
+        forbidden_substitutions: dict[int, set[str]] | dict[str, set[str]] | None = None,
         excluded_target_aas: set[str] | None = None,
     ) -> list[dict]:
         cdr_positions = vhh.cdr_positions
         suggestions: list[dict] = []
 
         for pos, aa in vhh.imgt_numbered.items():
-            if pos in off_limits or pos in cdr_positions:
+            if pos in off_limits or str(pos) in off_limits or pos in cdr_positions:
                 continue
 
-            freq_dict = self.position_freq.get(str(pos))
+            freq_dict = self.position_freq.get(pos)
             if freq_dict is None:
                 continue
 

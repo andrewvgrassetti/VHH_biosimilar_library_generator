@@ -50,9 +50,9 @@ class HumanStringContentScorer:
         }
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
-        if vhh.imgt_numbered.get(position) == new_aa:
+        if vhh.imgt_numbered.get(str(position)) == new_aa:
             return 0.0
         mutant = VHHSequence.mutate(vhh, position, new_aa)
         return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]
@@ -84,9 +84,10 @@ class ConsensusStabilityScorer:
         positions_evaluated = 0
         consensus_matches = 0
         for pos, consensus_aa in self._consensus.items():
-            if pos in vhh.imgt_numbered:
+            str_pos = str(pos)
+            if str_pos in vhh.imgt_numbered:
                 positions_evaluated += 1
-                if vhh.imgt_numbered[pos] == consensus_aa:
+                if vhh.imgt_numbered[str_pos] == consensus_aa:
                     consensus_matches += 1
 
         avg_conservation = (
@@ -100,9 +101,9 @@ class ConsensusStabilityScorer:
         }
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
-        if vhh.imgt_numbered.get(position) == new_aa:
+        if vhh.imgt_numbered.get(str(position)) == new_aa:
             return 0.0
         mutant = VHHSequence.mutate(vhh, position, new_aa)
         return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]
@@ -137,13 +138,14 @@ class NanoMeltStabilityScorer:
         return {"composite_score": composite_score, "predicted_tm": tm}
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         if not self.is_available:
             return 0.0
-        if position < 1 or position > vhh.length:
+        pos_int = int(position) if not isinstance(position, int) else position
+        if pos_int < 1 or pos_int > vhh.length:
             return 0.0
-        if vhh.imgt_numbered.get(position) == new_aa:
+        if vhh.imgt_numbered.get(str(position)) == new_aa:
             return 0.0
         mutant = VHHSequence.mutate(vhh, position, new_aa)
         return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]

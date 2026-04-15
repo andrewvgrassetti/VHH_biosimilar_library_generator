@@ -28,7 +28,7 @@ _REGION_LABEL_COLORS = {
 
 def sequence_selector(
     sequence: str,
-    imgt_numbered: Dict[int, str],
+    imgt_numbered: Dict[str, str],
     off_limit_positions: Set[int],
     forbidden_substitutions: Optional[Dict[int, set]] = None,
     key: Optional[str] = None,
@@ -55,14 +55,14 @@ def sequence_selector(
         (47, "Trp (VHH hallmark)", "#AB47BC", "#FFF"),
         (118, "Trp (VHH hallmark)", "#AB47BC", "#FFF"),
     ]:
-        if pos in imgt_numbered:
+        if str(pos) in imgt_numbered:
             notable[str(pos)] = {"label": label, "bg": bg, "fg": fg}
 
     forbidden_pos_list = [int(p) for p in forbidden_substitutions.keys()]
 
     result = _component_func(
         sequence=sequence,
-        imgtNumbered={str(k): v for k, v in imgt_numbered.items()},
+        imgtNumbered=dict(imgt_numbered),
         regions=regions,
         offLimitPositions=sorted(off_limit_positions),
         notablePositions=notable,

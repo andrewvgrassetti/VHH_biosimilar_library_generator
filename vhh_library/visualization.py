@@ -30,7 +30,7 @@ class SequenceVisualizer:
             bg = "#E3F2FD" if name.startswith("FR") else "#FFCDD2"
             safe_name = html.escape(name)
             subseq = "".join(
-                vhh.imgt_numbered.get(pos, "") for pos in range(start, end + 1)
+                vhh.imgt_numbered.get(str(pos), "") for pos in range(start, end + 1)
             )
             len(subseq)
             blocks.append(

@@ -52,7 +52,7 @@ class TestHumanStringContentScorer:
     def test_same_aa_returns_zero(
         self, hsc: HumanStringContentScorer, vhh: VHHSequence
     ) -> None:
-        original_aa = vhh.imgt_numbered[1]
+        original_aa = vhh.imgt_numbered["1"]
         delta = hsc.predict_mutation_effect(vhh, 1, original_aa)
         assert delta == 0.0
 
@@ -86,7 +86,7 @@ class TestConsensusStabilityScorer:
     def test_same_aa_returns_zero(
         self, consensus: ConsensusStabilityScorer, vhh: VHHSequence
     ) -> None:
-        original_aa = vhh.imgt_numbered[1]
+        original_aa = vhh.imgt_numbered["1"]
         delta = consensus.predict_mutation_effect(vhh, 1, original_aa)
         assert delta == 0.0
 

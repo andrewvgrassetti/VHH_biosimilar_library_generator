@@ -178,7 +178,7 @@ class StabilityScorer:
         return result
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         """Return the change in composite score when mutating *position* to *new_aa*."""
         parent_score = self.score(vhh)["composite_score"]
@@ -192,10 +192,10 @@ class StabilityScorer:
 
     @staticmethod
     def _disulfide_score(
-        numbered: dict[int, str], warnings: list[str]
+        numbered: dict[str, str], warnings: list[str]
     ) -> float:
         cys_count = sum(
-            1 for pos in _DISULFIDE_POSITIONS if numbered.get(pos) == "C"
+            1 for pos in _DISULFIDE_POSITIONS if numbered.get(str(pos)) == "C"
         )
         if cys_count == 2:
             return 1.0
@@ -206,7 +206,7 @@ class StabilityScorer:
         return 0.0
 
     def _hallmark_score(
-        self, numbered: dict[int, str], warnings: list[str]
+        self, numbered: dict[str, str], warnings: list[str]
     ) -> float:
         allowed: dict[int, set[str]] = {}
         for gl in self.germlines:
@@ -217,7 +217,7 @@ class StabilityScorer:
 
         matches = 0
         for pos in _HALLMARK_POSITIONS:
-            aa = numbered.get(pos)
+            aa = numbered.get(str(pos))
             if aa is not None and aa in allowed.get(pos, set()):
                 matches += 1
             else:
@@ -251,12 +251,12 @@ class StabilityScorer:
         return max(0.0, 1.0 - (abs_charge - 2.0) * 0.1)
 
     @staticmethod
-    def _hydrophobic_core_score(numbered: dict[int, str]) -> float:
+    def _hydrophobic_core_score(numbered: dict[str, str]) -> float:
         if not _HALLMARK_POSITIONS:
             return 0.0
         hits = sum(
             1
             for pos in _HALLMARK_POSITIONS
-            if numbered.get(pos, "") in _HYDROPHOBIC_AAS
+            if numbered.get(str(pos), "") in _HYDROPHOBIC_AAS
         )
         return hits / len(_HALLMARK_POSITIONS)

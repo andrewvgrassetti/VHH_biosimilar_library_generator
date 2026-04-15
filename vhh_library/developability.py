@@ -72,7 +72,7 @@ class PTMLiabilityScorer:
         }
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         """Return the change in composite score when mutating *position* to *new_aa*."""
         parent_score = self.score(vhh)["composite_score"]
@@ -118,7 +118,7 @@ class ClearanceRiskScorer:
         }
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         """Return the change in composite score when mutating *position* to *new_aa*."""
         parent_score = self.score(vhh)["composite_score"]
@@ -200,7 +200,7 @@ class SurfaceHydrophobicityScorer:
         }
 
     def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int, new_aa: str
+        self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         """Return the change in composite score when mutating *position* to *new_aa*."""
         parent_score = self.score(vhh)["composite_score"]

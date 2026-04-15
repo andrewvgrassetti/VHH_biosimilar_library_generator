@@ -246,24 +246,26 @@ class MutationEngine:
         rows: list[dict] = []
 
         for sug in suggestions:
-            pos: int = sug["position"]
+            pos = sug["position"]
+            pos_key = str(pos)
             new_aa: str = sug["suggested_aa"]
             original_aa: str = sug["original_aa"]
 
-            mutant = VHHSequence.mutate(vhh_sequence, pos, new_aa)
-            if _introduces_ptm_liability(parent_seq, mutant.sequence, pos - 1):
+            mutant = VHHSequence.mutate(vhh_sequence, pos_key, new_aa)
+            seq_idx = vhh_sequence._pos_to_seq_idx.get(pos_key, int(pos) - 1)
+            if _introduces_ptm_liability(parent_seq, mutant.sequence, seq_idx):
                 logger.debug(
-                    "Skipping %s%d%s: introduces PTM liability", original_aa, pos, new_aa
+                    "Skipping %s%s%s: introduces PTM liability", original_aa, pos_key, new_aa
                 )
                 continue
 
             delta_hum = sug["delta_humanness"]
             delta_stab = self._stability_scorer.predict_mutation_effect(
-                vhh_sequence, pos, new_aa
+                vhh_sequence, pos_key, new_aa
             )
             delta_sh = (
                 self.hydrophobicity_scorer.predict_mutation_effect(
-                    vhh_sequence, pos, new_aa
+                    vhh_sequence, pos_key, new_aa
                 )
                 if self._enabled_metrics.get("surface_hydrophobicity", False)
                 else 0.0
@@ -276,11 +278,10 @@ class MutationEngine:
             }
             combined = self._combined_score(raw_deltas)
 
-            imgt_pos = str(pos)
             rows.append(
                 {
-                    "position": pos,
-                    "imgt_pos": imgt_pos,
+                    "position": int(pos_key),
+                    "imgt_pos": pos_key,
                     "original_aa": original_aa,
                     "suggested_aa": new_aa,
                     "delta_humanness": delta_hum,
@@ -301,10 +302,25 @@ class MutationEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def apply_mutations(sequence: str, mutations: list[tuple[int, str]]) -> str:
+    def apply_mutations(
+        sequence: str,
+        mutations: list[tuple[int, str]],
+        pos_to_seq_idx: dict[str, int] | None = None,
+    ) -> str:
+        """Apply mutations to a sequence.
+
+        If *pos_to_seq_idx* is provided, use it to translate IMGT positions
+        to 0-based sequence indices.  Otherwise fall back to ``pos - 1``.
+        """
         seq_list = list(sequence)
         for idx, new_aa in mutations:
-            seq_list[idx - 1] = new_aa
+            if pos_to_seq_idx is not None:
+                seq_idx = pos_to_seq_idx.get(str(idx))
+                if seq_idx is None:
+                    continue
+            else:
+                seq_idx = idx - 1
+            seq_list[seq_idx] = new_aa
         return "".join(seq_list)
 
     # ------------------------------------------------------------------
@@ -403,7 +419,9 @@ class MutationEngine:
             f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected
         ]
 
-        mutant_seq = self.apply_mutations(vhh_sequence.sequence, mutations)
+        mutant_seq = self.apply_mutations(
+            vhh_sequence.sequence, mutations, vhh_sequence._pos_to_seq_idx
+        )
         mutant_vhh = VHHSequence(mutant_seq)
         raw = self._score_variant(mutant_vhh)
         combined = self._combined_score(raw)
