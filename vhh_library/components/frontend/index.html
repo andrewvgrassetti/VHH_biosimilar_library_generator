@@ -171,7 +171,11 @@ function applyDragToPos(pos) {
 document.addEventListener("mouseup", function() {
   if (isDragging) {
     isDragging = false; dragStart = -1;
-    Streamlit.setComponentValue(Array.from(offLimitSet).sort());
+    Streamlit.setComponentValue(Array.from(offLimitSet).sort(function(a, b) {
+      var ai = imgtKeyInt(a), bi = imgtKeyInt(b);
+      if (ai !== bi) return ai - bi;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    }));
   }
 });
 

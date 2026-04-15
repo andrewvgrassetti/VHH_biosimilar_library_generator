@@ -94,16 +94,17 @@ def sequence_selector(
 
     forbidden_pos_list = [str(p) for p in forbidden_substitutions.keys()]
 
+    sorted_off_limit = sorted(off_limit_positions, key=lambda k: (imgt_key_int_part(k), k))
     result = _component_func(
         imgtPositionsList=imgt_positions_list,
         regions=regions,
-        offLimitPositions=sorted(off_limit_positions),
+        offLimitPositions=sorted_off_limit,
         notablePositions=notable,
         forbiddenPositions=forbidden_pos_list,
-        default=sorted(off_limit_positions),
+        default=sorted_off_limit,
         key=key,
     )
 
     if result is None:
-        return sorted(off_limit_positions)
+        return sorted_off_limit
     return result
