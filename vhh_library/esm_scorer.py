@@ -180,6 +180,7 @@ class ESMStabilityScorer:
 
         # Disk cache
         self._cache: _ScoreCache | None = None
+        self._cache_dir: str | None = cache_dir
         if cache_dir is not None:
             cache_path = Path(cache_dir) / f"esm2_{self._tier}_scores.sqlite"
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -414,11 +415,7 @@ class ESMStabilityScorer:
                 model_tier="t33_650M",
                 device=self._device_str,
                 batch_size=self._batch_size,
-                cache_dir=(
-                    str(Path(self._cache._db_path).parent)
-                    if self._cache is not None
-                    else None
-                ),
+                cache_dir=self._cache_dir,
             )
             pll_stage3 = stage3_scorer.score_batch(seqs)
             df["esm2_pll"] = pll_stage3

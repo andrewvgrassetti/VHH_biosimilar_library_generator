@@ -25,7 +25,7 @@ _W_AGGREGATION: float = 0.25
 _W_CHARGE: float = 0.15
 _W_HYDROPHOBIC: float = 0.15
 
-# Nanomelt Tm normalisation parameters
+# Nanomelt Tm normalization parameters
 _TM_BASELINE: float = 40.0
 _TM_RANGE: float = 50.0
 _NANOMELT_WEIGHT: float = 0.7

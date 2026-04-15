@@ -7,7 +7,7 @@ import logging
 import math
 import random
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 
@@ -20,6 +20,9 @@ from vhh_library.orthogonal_scoring import (
 )
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
+
+if TYPE_CHECKING:
+    from vhh_library.esm_scorer import ESMStabilityScorer
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +107,7 @@ class MutationEngine:
         hsc_scorer: Optional[HumanStringContentScorer] = None,
         consensus_scorer: Optional[ConsensusStabilityScorer] = None,
         nanomelt_scorer: Optional[NanoMeltStabilityScorer] = None,
-        esm_scorer=None,
+        esm_scorer: Optional[ESMStabilityScorer] = None,
         w_humanness: float = 0.35,
         w_stability: float = 0.50,
         weights: Optional[dict[str, float]] = None,
