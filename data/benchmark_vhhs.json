@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "description": "Benchmark VHH sequences with published or estimated Tm values for validating stability predictions. Placeholder entries are included as examples — users should replace or extend with their own experimentally characterised VHHs. Sources: NbThermo database (https://doi.org/10.1093/nar/gkab1021) and published literature.",
+  "schema": {
+    "name": "Short identifier for the VHH",
+    "sequence": "Full amino-acid sequence",
+    "experimental_tm": "Melting temperature in °C (DSF, DSC, or nanoDSF)",
+    "source": "Literature reference or database accession"
+  },
+  "benchmark_vhhs": [
+    {
+      "name": "Nb_BcII10",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGRTFSSYAMGWFRQAPGKEREFVAAISWSGGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAAAGVRAEDWDYWGQGTLVTVSS",
+      "experimental_tm": 67.0,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_VHH04",
+      "sequence": "QVQLVESGGGLVQPGGSLRLSCAASGFTFDDYAMHWVRQAPGKGLEWVSGISWNSGSIGYADSVKGRFTISRDNAKNSLYLQMNSLRAEDTAVYYCAKGRYEYSSGSYYNYWGQGTLVTVSS",
+      "experimental_tm": 72.5,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Stab01",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGFTFSNYAMGWFRQAPGKERESVAAISWSGDSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAADSTIYASYYRGQGTLVTVSS",
+      "experimental_tm": 78.3,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Low01",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCEASGFTFDDYAIGWFRQAPGKEREGVSCISSSDGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAADRWLLPRVGREYEYWGQGTLVTVSS",
+      "experimental_tm": 48.2,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Mid01",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGRTFSRNAMGWFRQAPGKEREFVAAIGWSDGATYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAAEKVYSTTREYDYWGQGTLVTVSS",
+      "experimental_tm": 61.5,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_High01",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGFTFSSYAMGWFRQAPGKEREFVAAISWSGGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAAAGVRAEDADYWGQGTLVTVSS",
+      "experimental_tm": 81.0,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Mid02",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGFTFSSYDMGWFRQAPGKEREFVAAIGWSGRSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAADRLYGSTYWGQGTLVTVSS",
+      "experimental_tm": 63.8,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Low02",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCEASGRTFSSYAMGWFRQAPGKEREGVSCISGWDGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAADKYWLLSRYWGQGTLVTVSS",
+      "experimental_tm": 52.1,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_High02",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGFTFSSYAMGWFRQAPGKEREFVAAISWSGGSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAAERVSTAGYEYWGQGTLVTVSS",
+      "experimental_tm": 76.4,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    },
+    {
+      "name": "Nb_Mid03",
+      "sequence": "QVQLVESGGGLVQAGGSLRLSCAASGRTFRDYAMGWFRQAPGKEREFVAAISWTGSSTYYADSVKGRFTISRDNAKNTVYLQMNSLKPEDTAVYYCAADNRYEYSYYWGQGTLVTVSS",
+      "experimental_tm": 58.9,
+      "source": "Placeholder — replace with experimentally measured Tm"
+    }
+  ]
+}

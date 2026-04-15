@@ -1003,7 +1003,242 @@ def tab_construct(optimizer, tag_manager):
 
 
 # ---------------------------------------------------------------------------
-# Tab 6 – Session History
+# Tab 6 – Validation
+# ---------------------------------------------------------------------------
+
+def tab_validation(stability_scorer):
+    st.header("📊 Validation & Benchmarking")
+    st.markdown(
+        "Assess whether stability predictions correlate with real VHH thermal stability."
+    )
+
+    from vhh_library.benchmark import (
+        compare_scoring_methods,
+        load_benchmark_dataset,
+        plot_correlation_scatter,
+        plot_residuals,
+        plot_scoring_comparison,
+        run_benchmark,
+        validate_library_predictions,
+    )
+
+    # --- Section 1: Benchmark on reference VHHs ---
+    st.subheader("Benchmark on Reference VHHs")
+    st.caption(
+        "Score the built-in benchmark VHH set and evaluate correlation with known Tm values."
+    )
+
+    cv_folds = st.slider("Cross-validation folds", min_value=2, max_value=10, value=5, key="bench_cv_folds")
+
+    if st.button("Run benchmark on reference VHHs", key="btn_run_benchmark"):
+        try:
+            benchmark_vhhs = load_benchmark_dataset()
+        except Exception as exc:
+            st.error(f"Failed to load benchmark dataset: {exc}")
+            return
+
+        seqs = [v["sequence"] for v in benchmark_vhhs]
+        exp_tms = [float(v["experimental_tm"]) for v in benchmark_vhhs]
+        names = [v["name"] for v in benchmark_vhhs]
+
+        # Compute scores for each benchmark VHH
+        progress = st.progress(0, text="Scoring benchmark VHHs…")
+        composite_scores = []
+        predicted_tms = []
+        esm_plls = []
+        scoring_results: dict[str, list[float]] = {}
+
+        for i, seq in enumerate(seqs):
+            progress.progress((i + 1) / len(seqs), text=f"Scoring {names[i]}…")
+            try:
+                vhh = VHHSequence(seq)
+                result = stability_scorer.score(vhh)
+                composite_scores.append(result.get("composite_score", float("nan")))
+                if "predicted_tm" in result:
+                    predicted_tms.append(result["predicted_tm"])
+                if "esm2_pll" in result:
+                    esm_plls.append(result["esm2_pll"])
+            except Exception:
+                composite_scores.append(float("nan"))
+
+        progress.progress(1.0, text="Done!")
+
+        scoring_results["Composite Score"] = composite_scores
+        if len(predicted_tms) == len(seqs):
+            scoring_results["Predicted Tm"] = predicted_tms
+        if len(esm_plls) == len(seqs):
+            scoring_results["ESM-2 PLL"] = esm_plls
+
+        # Compute per-residue PLLs from ESM data if available
+        per_residue_plls = None
+        if len(esm_plls) == len(seqs):
+            per_residue_plls = [pll / max(len(seq), 1) for pll, seq in zip(esm_plls, seqs)]
+
+        report = run_benchmark(
+            benchmark_vhhs=benchmark_vhhs,
+            per_residue_plls=per_residue_plls,
+            composite_scores=composite_scores,
+            cv_folds=cv_folds,
+        )
+
+        st.session_state["benchmark_report"] = report
+        st.session_state["benchmark_scoring_results"] = scoring_results
+        st.session_state["benchmark_exp_tms"] = exp_tms
+        st.session_state["benchmark_composite_scores"] = composite_scores
+        st.session_state["benchmark_predicted_tms"] = predicted_tms
+
+    # Display results if available
+    report = st.session_state.get("benchmark_report")
+    if report is not None:
+        m = report.correlation
+        st.markdown("#### Correlation Metrics")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            st.metric("Spearman ρ", f"{m.spearman_rho:.3f}" if not _isnan(m.spearman_rho) else "N/A")
+        with mc2:
+            st.metric("Pearson r", f"{m.pearson_r:.3f}" if not _isnan(m.pearson_r) else "N/A")
+        with mc3:
+            st.metric("MAE", f"{m.mae:.2f}" if not _isnan(m.mae) else "N/A")
+        with mc4:
+            st.metric("RMSE", f"{m.rmse:.2f}" if not _isnan(m.rmse) else "N/A")
+
+        mc5, mc6 = st.columns(2)
+        with mc5:
+            st.metric("Ranking Accuracy", f"{m.ranking_accuracy:.1%}" if not _isnan(m.ranking_accuracy) else "N/A")
+        with mc6:
+            st.metric("N Samples", m.n_samples)
+
+        # Scatter plot
+        exp_tms = st.session_state.get("benchmark_exp_tms", [])
+        composite_scores = st.session_state.get("benchmark_composite_scores", [])
+        predicted_tms = st.session_state.get("benchmark_predicted_tms", [])
+
+        if predicted_tms and len(predicted_tms) == len(exp_tms):
+            pred_for_plot, label = predicted_tms, "Predicted Tm (°C)"
+        elif composite_scores and len(composite_scores) == len(exp_tms):
+            pred_for_plot, label = composite_scores, "Composite Score"
+        else:
+            pred_for_plot, label = None, ""
+
+        if pred_for_plot is not None:
+            col1, col2 = st.columns(2)
+            with col1:
+                fig = plot_correlation_scatter(
+                    pred_for_plot, exp_tms, metrics=m,
+                    xlabel=label, ylabel="Experimental Tm (°C)",
+                )
+                st.pyplot(fig)
+                plt.close(fig)
+            with col2:
+                fig2 = plot_residuals(pred_for_plot, exp_tms)
+                st.pyplot(fig2)
+                plt.close(fig2)
+
+        # Cross-validation
+        if report.cross_validation is not None:
+            cv = report.cross_validation
+            st.markdown("#### Cross-Validation Results")
+            cv1, cv2, cv3 = st.columns(3)
+            with cv1:
+                st.metric("Mean R²", f"{cv.mean_r2:.3f} ± {cv.std_r2:.3f}")
+            with cv2:
+                st.metric("Mean MAE", f"{cv.mean_mae:.2f} ± {cv.std_mae:.2f}")
+            with cv3:
+                st.metric("Folds", cv.k)
+
+        # LOO predictions
+        if report.loo_predictions:
+            st.markdown("#### Leave-One-Out Predictions")
+            loo_data = [
+                {
+                    "Name": p.name,
+                    "Experimental Tm": f"{p.experimental_tm:.1f}",
+                    "Predicted Tm": f"{p.predicted_tm:.1f}",
+                    "Residual": f"{p.residual:.2f}",
+                    "Calibration R²": f"{p.calibration_r2:.3f}" if not _isnan(p.calibration_r2) else "N/A",
+                }
+                for p in report.loo_predictions
+            ]
+            st.dataframe(pd.DataFrame(loo_data), use_container_width=True, hide_index=True)
+
+        # Scoring comparison
+        scoring_results = st.session_state.get("benchmark_scoring_results")
+        if scoring_results and len(scoring_results) > 1 and exp_tms:
+            st.markdown("#### Scoring Method Comparison")
+            comparison = compare_scoring_methods(
+                exp_tms, scoring_results,
+            )
+            if comparison:
+                comp_data = [
+                    {
+                        "Method": name,
+                        "Spearman ρ": f"{cm.spearman_rho:.3f}",
+                        "Pearson r": f"{cm.pearson_r:.3f}",
+                        "MAE": f"{cm.mae:.2f}",
+                        "RMSE": f"{cm.rmse:.2f}",
+                        "Ranking Accuracy": f"{cm.ranking_accuracy:.1%}",
+                    }
+                    for name, cm in comparison.items()
+                ]
+                st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
+                fig3 = plot_scoring_comparison(comparison)
+                st.pyplot(fig3)
+                plt.close(fig3)
+
+    # --- Section 2: Upload experimental results ---
+    st.divider()
+    st.subheader("Validate Library Against Experimental Results")
+    st.caption(
+        "Upload a CSV with `variant_id` and `experimental_tm` (or `ranking`) "
+        "columns to validate your library's predictions."
+    )
+
+    library = st.session_state.get("library")
+    exp_file = st.file_uploader(
+        "Upload experimental results CSV",
+        type=["csv"],
+        key="exp_results_upload",
+    )
+
+    if exp_file is not None and library is not None and not library.empty:
+        pred_col = st.selectbox(
+            "Predicted score column",
+            [c for c in library.columns if library[c].dtype in ("float64", "float32", "int64")],
+            key="val_pred_col",
+        )
+        if st.button("Validate predictions", key="btn_validate_lib"):
+            try:
+                import io
+                exp_csv = io.StringIO(exp_file.getvalue().decode("utf-8"))
+                lib_metrics = validate_library_predictions(library, exp_csv, predicted_col=pred_col)
+                st.session_state["lib_validation_metrics"] = lib_metrics
+            except Exception as exc:
+                st.error(f"Validation failed: {exc}")
+
+        lib_metrics = st.session_state.get("lib_validation_metrics")
+        if lib_metrics is not None:
+            st.markdown("#### Library Validation Results")
+            lc1, lc2, lc3, lc4 = st.columns(4)
+            with lc1:
+                st.metric("Spearman ρ", f"{lib_metrics.spearman_rho:.3f}")
+            with lc2:
+                st.metric("Pearson r", f"{lib_metrics.pearson_r:.3f}")
+            with lc3:
+                st.metric("MAE", f"{lib_metrics.mae:.2f}")
+            with lc4:
+                st.metric("Ranking Accuracy", f"{lib_metrics.ranking_accuracy:.1%}")
+    elif exp_file is not None and (library is None or library.empty):
+        st.warning("Generate a library first (Tab 2) to validate against experimental results.")
+
+
+def _isnan(value: float) -> bool:
+    """Check if a float value is NaN."""
+    import math
+    return math.isnan(value) if isinstance(value, float) else False
+
+
+# ---------------------------------------------------------------------------
+# Tab 7 – Session History
 # ---------------------------------------------------------------------------
 
 def tab_history():
@@ -1089,6 +1324,7 @@ def main():
         "📚 Library Results",
         "🧬 Barcoding",
         "🔧 Construct Builder",
+        "📊 Validation",
         "📁 Session History",
     ])
     with tabs[0]:
@@ -1103,6 +1339,8 @@ def main():
     with tabs[4]:
         tab_construct(optimizer, tag_manager)
     with tabs[5]:
+        tab_validation(stability_scorer)
+    with tabs[6]:
         tab_history()
 
 
