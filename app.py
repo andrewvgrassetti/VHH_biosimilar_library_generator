@@ -28,7 +28,6 @@ from vhh_library.stability import (
     StabilityScorer,
     _esm2_pll_available,
     _nanomelt_available,
-    compute_esm2_pll,
 )
 from vhh_library.tags import TagManager
 from vhh_library.visualization import SequenceVisualizer
@@ -214,14 +213,27 @@ def sidebar():
         st.divider()
 
         # -- ESM-2 PLL --
-        st.subheader("ESM-2 PLL Rescoring")
+        st.subheader("ESM-2 Stability Scoring")
         esm2_available = _esm2_pll_available()
         st.checkbox(
-            "Enable ESM-2 PLL",
+            "Enable ESM-2 stability scoring",
             value=False,
             disabled=not esm2_available,
             key="enable_esm2_pll",
-            help="Requires torch and fair-esm." if not esm2_available else None,
+            help=(
+                "Uses ESM-2 protein language model for stability assessment. "
+                "Computationally expensive – recommended for final library ranking."
+            )
+            if esm2_available
+            else "Requires torch and fair-esm: pip install -e \".[ml]\"",
+        )
+        st.selectbox(
+            "Model tier",
+            options=["auto", "t6_8M", "t12_35M", "t33_650M", "t36_3B"],
+            index=0,
+            key="esm2_model_tier",
+            disabled=not esm2_available,
+            help="auto = t6_8M on CPU, t33_650M on GPU",
         )
         st.slider(
             "Top N variants for PLL",
@@ -229,7 +241,7 @@ def sidebar():
             disabled=not esm2_available,
         )
         if not esm2_available:
-            st.info("ESM-2 PLL unavailable (torch / esm not installed).")
+            st.info("ESM-2 unavailable (torch / esm not installed). Install with: pip install -e \".[ml]\"")
 
         st.divider()
 
@@ -565,27 +577,40 @@ def tab_library(viz):
             plt.close(fig2)
 
     # -- ESM-2 PLL rescoring --
-    st.subheader("ESM-2 PLL Rescoring")
+    st.subheader("ESM-2 Stability Scoring")
     if st.session_state.get("enable_esm2_pll") and _esm2_pll_available():
+        model_tier = st.session_state.get("esm2_model_tier", "auto")
         top_n_esm = st.session_state.get("esm2_top_n", _ESM2_PLL_DEFAULT_TOP_N)
-        if st.button("Run ESM-2 PLL", key="btn_esm2"):
+        if st.button("Run ESM-2 Scoring", key="btn_esm2"):
+            from vhh_library.esm_scorer import ESMStabilityScorer
+
             subset = library.nlargest(top_n_esm, "combined_score")
             seqs = subset["aa_sequence"].tolist()
-            with st.spinner("Computing ESM-2 PLL (this may take a while)…"):
-                pll_scores = compute_esm2_pll(seqs)
-            pll_df = subset[["variant_id", "aa_sequence", "combined_score"]].copy()
-            pll_df["esm2_pll"] = pll_scores
-            pll_df = pll_df.sort_values("esm2_pll", ascending=False)
-            st.session_state["esm2_pll_scores"] = pll_df
-            st.success("ESM-2 PLL scoring complete.")
+            progress_bar = st.progress(0, text="Initialising ESM-2 model…")
+            try:
+                scorer = ESMStabilityScorer(model_tier=model_tier, device="auto")
+                progress_bar.progress(10, text="Computing ESM-2 PLL scores…")
+                pll_scores = scorer.score_batch(seqs)
+                progress_bar.progress(100, text="Done!")
+            except Exception as exc:
+                st.error(f"ESM-2 scoring failed: {exc}")
+                progress_bar.empty()
+                pll_scores = None
+
+            if pll_scores is not None:
+                pll_df = subset[["variant_id", "aa_sequence", "combined_score"]].copy()
+                pll_df["esm2_pll"] = pll_scores
+                pll_df = pll_df.sort_values("esm2_pll", ascending=False)
+                st.session_state["esm2_pll_scores"] = pll_df
+                st.success("ESM-2 scoring complete.")
 
         pll_df = st.session_state.get("esm2_pll_scores")
         if pll_df is not None:
             st.dataframe(pll_df, use_container_width=True, hide_index=True)
     elif not _esm2_pll_available():
-        st.info("ESM-2 PLL not available (install torch + esm).")
+        st.info("ESM-2 not available (install torch + esm: pip install -e \".[ml]\").")
     else:
-        st.info("Enable ESM-2 PLL in the sidebar to rescore top variants.")
+        st.info("Enable ESM-2 stability scoring in the sidebar to rescore top variants.")
 
     # -- Downloads --
     st.subheader("Download Library")

@@ -7,7 +7,7 @@ import logging
 import math
 import random
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 
@@ -20,6 +20,9 @@ from vhh_library.orthogonal_scoring import (
 )
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
+
+if TYPE_CHECKING:
+    from vhh_library.esm_scorer import ESMStabilityScorer
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +107,7 @@ class MutationEngine:
         hsc_scorer: Optional[HumanStringContentScorer] = None,
         consensus_scorer: Optional[ConsensusStabilityScorer] = None,
         nanomelt_scorer: Optional[NanoMeltStabilityScorer] = None,
+        esm_scorer: Optional[ESMStabilityScorer] = None,
         w_humanness: float = 0.35,
         w_stability: float = 0.50,
         weights: Optional[dict[str, float]] = None,
@@ -115,6 +119,7 @@ class MutationEngine:
         self._hsc_scorer = hsc_scorer
         self._consensus_scorer = consensus_scorer
         self._nanomelt_scorer = nanomelt_scorer
+        self._esm_scorer = esm_scorer
 
         self.w_humanness = w_humanness
         self.w_stability = w_stability
@@ -400,6 +405,13 @@ class MutationEngine:
         df = pd.DataFrame(rows)
         if not df.empty:
             df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
+
+        # ESM-2 progressive scoring (when scorer is available)
+        if self._esm_scorer is not None and not df.empty:
+            df = self._esm_scorer.score_library_progressive(
+                vhh_sequence, df
+            )
+
         return df
 
     # ------------------------------------------------------------------

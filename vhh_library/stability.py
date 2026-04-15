@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vhh_library.sequence import VHHSequence
 from vhh_library.utils import AA_PROPERTIES, isoelectric_point, net_charge
+
+if TYPE_CHECKING:
+    from vhh_library.esm_scorer import ESMStabilityScorer
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -21,11 +25,23 @@ _W_AGGREGATION: float = 0.25
 _W_CHARGE: float = 0.15
 _W_HYDROPHOBIC: float = 0.15
 
-# Nanomelt Tm normalisation parameters
+# Nanomelt Tm normalization parameters
 _TM_BASELINE: float = 40.0
 _TM_RANGE: float = 50.0
 _NANOMELT_WEIGHT: float = 0.7
 _LEGACY_WEIGHT: float = 0.3
+
+# Composite weights when ESM-2 is active
+_ESM2_WEIGHT_WITH_NANOMELT: float = 0.5
+_LEGACY_WEIGHT_WITH_ESM2_AND_NANOMELT: float = 0.2
+_NANOMELT_WEIGHT_WITH_ESM2: float = 0.3
+
+_ESM2_WEIGHT_WITHOUT_NANOMELT: float = 0.6
+_LEGACY_WEIGHT_WITH_ESM2: float = 0.4
+
+# Fixed normalisation baselines for ESM-2 PLL (typical VHH ~120 AA)
+_ESM2_PLL_BASELINE_MIN: float = -250.0
+_ESM2_PLL_BASELINE_MAX: float = -50.0
 
 # ---------------------------------------------------------------------------
 # Optional dependency probes
@@ -70,34 +86,15 @@ def _esm2_pll_available() -> bool:
 def compute_esm2_pll(sequences: list[str]) -> list[float]:
     """Compute ESM-2 pseudo-log-likelihood for each sequence.
 
+    Delegates to :class:`~vhh_library.esm_scorer.ESMStabilityScorer` with the
+    smallest model tier (``t6_8M``) for backward compatibility.
+
     Raises ``ImportError`` if *torch* or *esm* are not installed.
     """
-    if not _esm2_pll_available():
-        raise ImportError("torch and esm are required for ESM-2 PLL computation")
+    from vhh_library.esm_scorer import ESMStabilityScorer
 
-    import esm
-    import torch
-
-    model, alphabet = esm.pretrained.esm2_t6_8M_UR50D()
-    batch_converter = alphabet.get_batch_converter()
-    model.eval()
-
-    results: list[float] = []
-
-    @torch.no_grad()
-    def _pll_single(seq: str) -> float:
-        tokens = batch_converter([("seq", seq)])[2]
-        log_probs = torch.nn.functional.log_softmax(model(tokens)["logits"], dim=-1)
-        pll = 0.0
-        for i in range(1, len(seq) + 1):
-            token_idx = tokens[0, i].item()
-            pll += log_probs[0, i, token_idx].item()
-        return pll
-
-    for seq in sequences:
-        results.append(_pll_single(seq))
-
-    return results
+    scorer = ESMStabilityScorer(model_tier="t6_8M", device="auto")
+    return scorer.score_batch(sequences)
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +104,28 @@ def compute_esm2_pll(sequences: list[str]) -> list[float]:
 
 class StabilityScorer:
     """Score VHH sequences for biophysical stability using legacy heuristics
-    and optional nanomelt integration."""
+    and optional nanomelt / ESM-2 integration."""
 
-    def __init__(self, use_nanomelt: bool = True) -> None:
+    def __init__(
+        self,
+        use_nanomelt: bool = True,
+        esm_scorer: ESMStabilityScorer | None = None,
+        *,
+        esm2_weight: float | None = None,
+        legacy_weight: float | None = None,
+        nanomelt_weight: float | None = None,
+    ) -> None:
         germline_path = _DATA_DIR / "vhh_germlines.json"
         with open(germline_path) as fh:
             self.germlines: list[dict] = json.load(fh)["germlines"]
         self.use_nanomelt: bool = use_nanomelt
+        self.esm_scorer: ESMStabilityScorer | None = esm_scorer
+
+        # Configurable composite weights – defaults depend on which scorers
+        # are available and are applied at scoring time if not overridden.
+        self._esm2_weight = esm2_weight
+        self._legacy_weight_override = legacy_weight
+        self._nanomelt_weight_override = nanomelt_weight
 
     @property
     def nanomelt_active(self) -> bool:
@@ -157,6 +169,8 @@ class StabilityScorer:
             "warnings": warnings,
         }
 
+        # --- Determine nanomelt contribution ---
+        nm_normalized: float | None = None
         if self.nanomelt_active:
             try:
                 import nanomelt
@@ -165,12 +179,57 @@ class StabilityScorer:
                 tm: float = prediction["Tm"]
                 result["predicted_tm"] = tm
                 nm_normalized = max(0.0, min(1.0, (tm - _TM_BASELINE) / _TM_RANGE))
-                result["composite_score"] = _LEGACY_WEIGHT * legacy + _NANOMELT_WEIGHT * nm_normalized
-                result["scoring_method"] = "nanomelt"
             except Exception:
-                result["composite_score"] = legacy
-                result["scoring_method"] = "legacy"
                 warnings.append("nanomelt prediction failed; fell back to legacy scoring")
+
+        # --- Determine ESM-2 contribution ---
+        esm2_normalized: float | None = None
+        if self.esm_scorer is not None:
+            try:
+                pll = self.esm_scorer.score_single(seq)
+                result["esm2_pll"] = pll
+                esm2_normalized = max(
+                    0.0,
+                    min(1.0, (pll - _ESM2_PLL_BASELINE_MIN) / (_ESM2_PLL_BASELINE_MAX - _ESM2_PLL_BASELINE_MIN)),
+                )
+            except Exception:
+                warnings.append("ESM-2 scoring failed; fell back to legacy/nanomelt scoring")
+
+        # --- Compute composite score ---
+        if esm2_normalized is not None and nm_normalized is not None:
+            w_esm = (
+                self._esm2_weight if self._esm2_weight is not None else _ESM2_WEIGHT_WITH_NANOMELT
+            )
+            w_leg = (
+                self._legacy_weight_override
+                if self._legacy_weight_override is not None
+                else _LEGACY_WEIGHT_WITH_ESM2_AND_NANOMELT
+            )
+            w_nm = (
+                self._nanomelt_weight_override
+                if self._nanomelt_weight_override is not None
+                else _NANOMELT_WEIGHT_WITH_ESM2
+            )
+            result["composite_score"] = (
+                w_esm * esm2_normalized + w_leg * legacy + w_nm * nm_normalized
+            )
+            result["scoring_method"] = "esm2+nanomelt"
+        elif esm2_normalized is not None:
+            w_esm = (
+                self._esm2_weight if self._esm2_weight is not None else _ESM2_WEIGHT_WITHOUT_NANOMELT
+            )
+            w_leg = (
+                self._legacy_weight_override
+                if self._legacy_weight_override is not None
+                else _LEGACY_WEIGHT_WITH_ESM2
+            )
+            result["composite_score"] = w_esm * esm2_normalized + w_leg * legacy
+            result["scoring_method"] = "esm2"
+        elif nm_normalized is not None:
+            result["composite_score"] = (
+                _LEGACY_WEIGHT * legacy + _NANOMELT_WEIGHT * nm_normalized
+            )
+            result["scoring_method"] = "nanomelt"
         else:
             result["composite_score"] = legacy
             result["scoring_method"] = "legacy"
