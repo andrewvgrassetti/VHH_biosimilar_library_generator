@@ -7,3 +7,6 @@ build/
 .pytest_cache/
 sessions/
 *.egg
+venv/
+.venv/
+env/
