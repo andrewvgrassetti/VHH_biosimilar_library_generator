@@ -12,7 +12,7 @@ A computational pipeline for designing humanised VHH (nanobody) variant librarie
 - **Codon Optimisation** — Organism-specific codon usage tables (E. coli, H. sapiens, P. pastoris, S. cerevisiae) with CAI calculation and restriction site flagging
 - **Construct Builder** — Automated tag/linker assembly with DNA encoding
 - **Peptide Barcoding** — Unique trypsin-cleavable barcodes for multiplexed LC-MS/MS screening
-- **ESM-2 PLL Rescoring** — Optional protein language model validation (requires PyTorch)
+- **ESM-2 PLL Rescoring** — Protein language model validation (PyTorch & fair-esm included by default)
 
 ## Installation
 
@@ -23,14 +23,14 @@ source .venv/bin/activate   # Linux / macOS
 # .venv\Scripts\activate    # Windows
 ```
 
-Install the package in editable mode:
+Install the package in editable mode (includes ESM-2 / PyTorch by default):
 ```bash
 pip install -e .
 ```
 
-With optional ML dependencies:
+With optional NanoMelt Tm prediction:
 ```bash
-pip install -e ".[ml,nanomelt]"
+pip install -e ".[nanomelt]"
 ```
 
 ## Usage

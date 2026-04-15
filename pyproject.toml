@@ -19,12 +19,13 @@ dependencies = [
     "hmmer>=3.4",
     "python-codon-tables>=0.1.10",
     "dnachisel>=3.2",
+    "torch>=2.0",
+    "fair-esm>=2.0",
 ]
 
 [project.optional-dependencies]
 ml = [
-    "torch>=2.0",
-    "fair-esm>=2.0",
+    # Kept for backward compatibility; torch and fair-esm are now core deps.
 ]
 nanomelt = [
     "nanomelt",

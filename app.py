@@ -225,7 +225,7 @@ def sidebar():
                 "Computationally expensive – recommended for final library ranking."
             )
             if esm2_available
-            else "Requires torch and fair-esm: pip install -e \".[ml]\"",
+            else "Requires torch and fair-esm (included in default install)",
         )
         st.selectbox(
             "Model tier",
@@ -241,7 +241,7 @@ def sidebar():
             disabled=not esm2_available,
         )
         if not esm2_available:
-            st.info("ESM-2 unavailable (torch / esm not installed). Install with: pip install -e \".[ml]\"")
+            st.info("ESM-2 unavailable (torch / esm not installed). Reinstall with: pip install -e .")
 
         st.divider()
 
@@ -608,7 +608,7 @@ def tab_library(viz):
         if pll_df is not None:
             st.dataframe(pll_df, use_container_width=True, hide_index=True)
     elif not _esm2_pll_available():
-        st.info("ESM-2 not available (install torch + esm: pip install -e \".[ml]\").")
+        st.info("ESM-2 not available (torch / esm not found). Reinstall with: pip install -e .")
     else:
         st.info("Enable ESM-2 stability scoring in the sidebar to rescore top variants.")
 
