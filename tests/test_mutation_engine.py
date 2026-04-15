@@ -57,6 +57,14 @@ class TestRankSingleMutations:
         if not df.empty:
             assert "C" not in df["suggested_aa"].values
 
+    def test_rank_single_mutations_has_humanness_deltas(
+        self, ranked: pd.DataFrame
+    ) -> None:
+        """With humanness scorer, delta_humanness should have non-zero values."""
+        if not ranked.empty:
+            assert "delta_humanness" in ranked.columns
+            assert ranked["delta_humanness"].abs().sum() > 0
+
 
 class TestStabilityDrivenRanking:
     """Tests for stability-driven candidate generation (no humanness scorer)."""

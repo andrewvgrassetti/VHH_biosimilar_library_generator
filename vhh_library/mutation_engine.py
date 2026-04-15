@@ -88,6 +88,11 @@ def _total_combinations(n: int, k_min: int, k_max: int) -> int:
     return total
 
 
+def _imgt_key_to_int(pos_key: str) -> int:
+    """Extract the integer portion from an IMGT position key (e.g. ``"111A"`` → 111)."""
+    return int("".join(c for c in pos_key if c.isdigit()) or "0")
+
+
 # ---------------------------------------------------------------------------
 # Main engine
 # ---------------------------------------------------------------------------
@@ -247,7 +252,7 @@ class MutationEngine:
                 continue
 
             seq_idx = vhh_sequence._pos_to_seq_idx.get(
-                pos_key, int("".join(c for c in pos_key if c.isdigit()) or "0") - 1
+                pos_key, _imgt_key_to_int(pos_key) - 1
             )
 
             for candidate_aa in AMINO_ACIDS:
@@ -336,10 +341,9 @@ class MutationEngine:
                     continue
 
             delta_hum = sug.get("delta_humanness", 0.0)
-            delta_stab = sug.get("delta_stability") if "delta_stability" in sug else (
-                self._stability_scorer.predict_mutation_effect(
-                    vhh_sequence, pos_key, new_aa
-                )
+            delta_stab = sug.get(
+                "delta_stability",
+                self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa),
             )
             delta_sh = (
                 self.hydrophobicity_scorer.predict_mutation_effect(
@@ -358,7 +362,7 @@ class MutationEngine:
 
             rows.append(
                 {
-                    "position": int("".join(c for c in pos_key if c.isdigit()) or "0"),
+                    "position": _imgt_key_to_int(pos_key),
                     "imgt_pos": pos_key,
                     "original_aa": original_aa,
                     "suggested_aa": new_aa,
