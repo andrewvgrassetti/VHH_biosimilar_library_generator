@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -132,3 +134,90 @@ class TestScoringMethod:
 class TestAvailability:
     def test_esm2_pll_available_returns_bool(self) -> None:
         assert isinstance(_esm2_pll_available(), bool)
+
+
+class TestCalibrationIntegration:
+    """Test StabilityScorer loading calibration from file."""
+
+    def test_scorer_uses_calibration_params(self, tmp_path: Path) -> None:
+        cal_path = tmp_path / "stability_calibration.json"
+        cal_data = {
+            "version": 1,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "calibration_vhhs": [{"name": "VHH_1", "sequence": "ACDE", "experimental_tm": 65.0}],
+            "parameters": {
+                "pll_to_tm_slope": 20.0,
+                "pll_to_tm_intercept": 80.0,
+                "tm_ideal_min": 50.0,
+                "tm_ideal_max": 90.0,
+                "penalty_disulfide": 0.30,
+                "penalty_aggregation": 0.15,
+                "penalty_charge": 0.08,
+                "hallmark_bonus_weight": 0.12,
+                "legacy_weights": {
+                    "disulfide": 0.30,
+                    "hallmark": 0.25,
+                    "aggregation": 0.20,
+                    "charge": 0.10,
+                    "hydrophobic": 0.15,
+                },
+            },
+        }
+        cal_path.write_text(json.dumps(cal_data))
+        scorer = StabilityScorer(calibration_path=str(cal_path))
+        assert scorer._calibrated is True
+        assert scorer._pll_slope == 20.0
+        assert scorer._pll_intercept == 80.0
+        assert scorer._tm_min == 50.0
+        assert scorer._tm_max == 90.0
+        assert scorer._penalty_disulfide == 0.30
+        assert scorer._w_disulfide == 0.30
+
+    def test_scorer_falls_back_to_defaults(self, tmp_path: Path) -> None:
+        cal_path = tmp_path / "nonexistent_calibration.json"
+        scorer = StabilityScorer(calibration_path=str(cal_path))
+        assert scorer._calibrated is False
+        assert scorer._pll_slope == 12.5
+        assert scorer._pll_intercept == 95.0
+        assert scorer._tm_min == 55.0
+        assert scorer._tm_max == 80.0
+
+    def test_scorer_falls_back_on_empty_calibration(self, tmp_path: Path) -> None:
+        cal_path = tmp_path / "stability_calibration.json"
+        cal_data = {
+            "version": 1,
+            "created_at": None,
+            "calibration_vhhs": [],
+            "parameters": {"pll_to_tm_slope": 12.5},
+        }
+        cal_path.write_text(json.dumps(cal_data))
+        scorer = StabilityScorer(calibration_path=str(cal_path))
+        assert scorer._calibrated is False
+
+    def test_calibrated_scorer_uses_instance_tm_method(self, tmp_path: Path) -> None:
+        """Verify the instance _pll_to_predicted_tm uses calibrated slope/intercept."""
+        cal_path = tmp_path / "stability_calibration.json"
+        cal_data = {
+            "version": 1,
+            "created_at": "2025-01-01",
+            "calibration_vhhs": [{"name": "x", "sequence": "A", "experimental_tm": 60.0}],
+            "parameters": {
+                "pll_to_tm_slope": 10.0,
+                "pll_to_tm_intercept": 100.0,
+                "tm_ideal_min": 55.0,
+                "tm_ideal_max": 80.0,
+            },
+        }
+        cal_path.write_text(json.dumps(cal_data))
+        scorer = StabilityScorer(calibration_path=str(cal_path))
+        # PLL=-100, seq_len=100 → per_residue=-1.0 → 10.0*(-1.0)+100.0=90.0
+        tm = scorer._pll_to_predicted_tm(-100.0, 100)
+        assert tm == pytest.approx(90.0)
+
+    def test_calibrated_scorer_scoring_still_works(self) -> None:
+        """Default scorer (no calibration file populated) should produce valid scores."""
+        scorer = StabilityScorer()
+        vhh = VHHSequence(SAMPLE_VHH)
+        result = scorer.score(vhh)
+        assert "composite_score" in result
+        assert 0.0 <= result["composite_score"] <= 1.0

@@ -107,11 +107,53 @@ class StabilityScorer:
     def __init__(
         self,
         esm_scorer: "ESMStabilityScorer | None" = None,
+        calibration_path: str | None = None,
     ) -> None:
         germline_path = _DATA_DIR / "vhh_germlines.json"
         with open(germline_path) as fh:
             self.germlines: list[dict] = json.load(fh)["germlines"]
         self.esm_scorer: "ESMStabilityScorer | None" = esm_scorer
+
+        # Load calibration parameters (or fall back to module-level defaults)
+        self._load_calibration_params(calibration_path)
+
+    def _load_calibration_params(self, calibration_path: str | None) -> None:
+        """Load calibration from file or fall back to module-level defaults."""
+        from vhh_library.calibration import load_calibration
+
+        cal = load_calibration(calibration_path)
+        if cal is not None:
+            params = cal.get("parameters", {})
+            self._pll_slope = params.get("pll_to_tm_slope", _PLL_TO_TM_SLOPE)
+            self._pll_intercept = params.get("pll_to_tm_intercept", _PLL_TO_TM_INTERCEPT)
+            self._tm_min = params.get("tm_ideal_min", _TM_IDEAL_MIN)
+            self._tm_max = params.get("tm_ideal_max", _TM_IDEAL_MAX)
+            self._penalty_disulfide = params.get("penalty_disulfide", _PENALTY_DISULFIDE)
+            self._penalty_aggregation = params.get("penalty_aggregation", _PENALTY_AGGREGATION)
+            self._penalty_charge = params.get("penalty_charge", _PENALTY_CHARGE)
+            self._hallmark_bonus_weight = params.get("hallmark_bonus_weight", _HALLMARK_BONUS_WEIGHT)
+            lw = params.get("legacy_weights", {})
+            self._w_disulfide = lw.get("disulfide", _W_DISULFIDE)
+            self._w_hallmark = lw.get("hallmark", _W_HALLMARK)
+            self._w_aggregation = lw.get("aggregation", _W_AGGREGATION)
+            self._w_charge = lw.get("charge", _W_CHARGE)
+            self._w_hydrophobic = lw.get("hydrophobic", _W_HYDROPHOBIC)
+            self._calibrated = True
+        else:
+            self._pll_slope = _PLL_TO_TM_SLOPE
+            self._pll_intercept = _PLL_TO_TM_INTERCEPT
+            self._tm_min = _TM_IDEAL_MIN
+            self._tm_max = _TM_IDEAL_MAX
+            self._penalty_disulfide = _PENALTY_DISULFIDE
+            self._penalty_aggregation = _PENALTY_AGGREGATION
+            self._penalty_charge = _PENALTY_CHARGE
+            self._hallmark_bonus_weight = _HALLMARK_BONUS_WEIGHT
+            self._w_disulfide = _W_DISULFIDE
+            self._w_hallmark = _W_HALLMARK
+            self._w_aggregation = _W_AGGREGATION
+            self._w_charge = _W_CHARGE
+            self._w_hydrophobic = _W_HYDROPHOBIC
+            self._calibrated = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -133,11 +175,11 @@ class StabilityScorer:
         pi = isoelectric_point(seq)
 
         legacy = (
-            _W_DISULFIDE * disulfide
-            + _W_HALLMARK * hallmark
-            + _W_AGGREGATION * aggregation
-            + _W_CHARGE * charge_balance
-            + _W_HYDROPHOBIC * hydrophobic_core
+            self._w_disulfide * disulfide
+            + self._w_hallmark * hallmark
+            + self._w_aggregation * aggregation
+            + self._w_charge * charge_balance
+            + self._w_hydrophobic * hydrophobic_core
         )
 
         result: dict = {
@@ -157,21 +199,21 @@ class StabilityScorer:
                 pll = self.esm_scorer.score_single(seq)
                 result["esm2_pll"] = pll
 
-                predicted_tm = _pll_to_predicted_tm(pll, len(seq))
+                predicted_tm = self._pll_to_predicted_tm(pll, len(seq))
                 result["predicted_tm"] = predicted_tm
 
-                tm_score = _sigmoid_normalize(predicted_tm, _TM_IDEAL_MIN, _TM_IDEAL_MAX)
+                tm_score = _sigmoid_normalize(predicted_tm, self._tm_min, self._tm_max)
                 result["tm_score"] = tm_score
 
                 penalty = 0.0
                 if disulfide < 1.0:
-                    penalty += _PENALTY_DISULFIDE
+                    penalty += self._penalty_disulfide
                 if aggregation < 0.5:
-                    penalty += _PENALTY_AGGREGATION
+                    penalty += self._penalty_aggregation
                 if charge_balance < 0.5:
-                    penalty += _PENALTY_CHARGE
+                    penalty += self._penalty_charge
 
-                vhh_bonus = _HALLMARK_BONUS_WEIGHT * hallmark
+                vhh_bonus = self._hallmark_bonus_weight * hallmark
 
                 result["composite_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
                 result["scoring_method"] = "esm2"
@@ -184,6 +226,11 @@ class StabilityScorer:
             result["scoring_method"] = "legacy"
 
         return result
+
+    def _pll_to_predicted_tm(self, pll: float, seq_len: int) -> float:
+        """Convert total PLL to an estimated Tm via per-residue normalisation."""
+        per_residue_pll = pll / max(seq_len, 1)
+        return self._pll_slope * per_residue_pll + self._pll_intercept
 
     def predict_mutation_effect(
         self, vhh: VHHSequence, position: int | str, new_aa: str
