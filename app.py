@@ -12,6 +12,15 @@ import matplotlib.pyplot as plt  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
 from vhh_library.barcodes import BarcodeGenerator
+from vhh_library.calibration import (
+    load_calibration as _load_calibration,
+)
+from vhh_library.calibration import (
+    reset_calibration as _reset_calibration,
+)
+from vhh_library.calibration import (
+    run_calibration as _run_calibration,
+)
 from vhh_library.codon_optimizer import CodonOptimizer
 from vhh_library.components.sequence_selector import sequence_selector
 from vhh_library.developability import SurfaceHydrophobicityScorer
@@ -52,6 +61,11 @@ def load_scorers():
     hsc = HumanStringContentScorer()
     cons = ConsensusStabilityScorer()
     return h, s, hydro, hsc, cons
+
+
+def load_calibration_data() -> dict | None:
+    """Load calibration data for display (not cached – reads fresh each time)."""
+    return _load_calibration()
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +250,64 @@ def sidebar():
         )
         if not esm2_available:
             st.info("ESM-2 unavailable (torch / esm not installed). Reinstall with: pip install -e .")
+
+        st.divider()
+
+        # -- Stability Calibration --
+        with st.expander("🔧 Stability Calibration"):
+            cal = load_calibration_data()
+            if cal is not None:
+                n_vhhs = len(cal.get("calibration_vhhs", []))
+                created = cal.get("created_at", "unknown")
+                params = cal.get("parameters", {})
+                slope = params.get("pll_to_tm_slope", "?")
+                intercept = params.get("pll_to_tm_intercept", "?")
+                tm_min = params.get("tm_ideal_min", "?")
+                tm_max = params.get("tm_ideal_max", "?")
+                st.success(f"✅ Calibrated from {n_vhhs} VHHs ({created})")
+                st.markdown(f"**Slope:** {slope}  \n**Intercept:** {intercept}")
+                st.markdown(f"**Tm range:** {tm_min}–{tm_max} °C")
+            else:
+                st.warning(
+                    "⚠️ Using default parameter estimates — upload reference "
+                    "VHHs with known Tm values to calibrate"
+                )
+
+            st.markdown("**Upload calibration CSV** (columns: `name` (optional), `sequence`, `experimental_tm`)")
+            cal_csv = st.file_uploader(
+                "Calibration CSV", type=["csv"], key="calibration_csv",
+                label_visibility="collapsed",
+            )
+
+            if st.button("Run Calibration", key="btn_run_calibration", disabled=cal_csv is None):
+                if cal_csv is not None:
+                    try:
+                        cal_df = pd.read_csv(cal_csv)
+                        required = {"sequence", "experimental_tm"}
+                        if not required.issubset(set(cal_df.columns)):
+                            st.error(f"CSV must contain columns: {required}")
+                        else:
+                            seqs = cal_df["sequence"].tolist()
+                            tms = cal_df["experimental_tm"].astype(float).tolist()
+                            names = cal_df["name"].tolist() if "name" in cal_df.columns else None
+                            with st.spinner("Running calibration…"):
+                                result = _run_calibration(seqs, tms, names)
+                            st.success(
+                                f"Calibration complete! R²={result.r_squared:.3f}, "
+                                f"n={result.n_samples}, slope={result.pll_to_tm_slope:.2f}, "
+                                f"intercept={result.pll_to_tm_intercept:.2f}, "
+                                f"Tm range={result.tm_ideal_min:.1f}–{result.tm_ideal_max:.1f} °C"
+                            )
+                            st.cache_resource.clear()
+                            st.rerun()
+                    except Exception as exc:
+                        st.error(f"Calibration failed: {exc}")
+
+            if st.button("Reset to Defaults", key="btn_reset_calibration"):
+                _reset_calibration()
+                st.cache_resource.clear()
+                st.info("Calibration reset to defaults.")
+                st.rerun()
 
         st.divider()
 
