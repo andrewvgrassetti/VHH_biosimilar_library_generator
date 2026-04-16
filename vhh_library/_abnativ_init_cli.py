@@ -23,9 +23,9 @@ def main() -> None:
 
     from abnativ.__main__ import main as _abnativ_main
 
-    # abnativ's main() reads sys.argv; rewrite argv[0] so help text
-    # still looks correct, then forward all arguments.
-    sys.argv[0] = "abnativ"
+    # abnativ's main() reads sys.argv; rewrite so that the ``init``
+    # subcommand is always present and help text still looks correct.
+    sys.argv = ["abnativ", "init"] + sys.argv[1:]
     _abnativ_main()
 
 

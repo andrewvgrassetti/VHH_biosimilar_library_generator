@@ -104,3 +104,28 @@ class TestAbnativInitCli:
                     main()
 
         assert patch_called
+
+    def test_main_injects_init_subcommand(self) -> None:
+        """vhh-init should inject 'init' as the subcommand into sys.argv."""
+        import sys
+
+        captured_argv = []
+
+        def capture_main() -> None:
+            captured_argv.extend(sys.argv)
+            raise SystemExit(0)
+
+        original_argv = sys.argv[:]
+        try:
+            sys.argv = ["vhh-init", "--force"]
+            with mock.patch("abnativ.__main__.main", side_effect=capture_main):
+                with pytest.raises(SystemExit):
+                    from vhh_library._abnativ_init_cli import main
+
+                    main()
+
+            assert captured_argv[0] == "abnativ"
+            assert captured_argv[1] == "init"
+            assert captured_argv[2] == "--force"
+        finally:
+            sys.argv = original_argv
