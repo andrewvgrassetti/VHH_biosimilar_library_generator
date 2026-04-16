@@ -1,0 +1,24 @@
+name: vhh_biosimilar
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  # Install numba and llvmlite via conda-forge to avoid macOS build failures
+  # with iomp5 and cmake (these are NOT listed in pyproject.toml pip deps).
+  - numba
+  - llvmlite
+  - pip
+  - pip:
+      - pandas>=2.0
+      - matplotlib>=3.7
+      - numpy>=1.24
+      - streamlit>=1.30
+      - scipy>=1.10
+      - anarci>=2026.2
+      - hmmer>=3.4
+      - python-codon-tables>=0.1.10
+      - dnachisel>=3.2
+      - torch>=2.0
+      - fair-esm>=2.0
+      - abnativ

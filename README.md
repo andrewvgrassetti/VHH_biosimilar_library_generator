@@ -31,15 +31,44 @@ Default weights: `w_stability = 0.70`, `w_nativeness = 0.30`. Surface hydrophobi
 
 ## Installation
 
-Create and activate a virtual environment (recommended):
+### Option A — Conda (recommended)
+
+Conda is the recommended installation method. It installs `numba` and `llvmlite`
+via `conda-forge`, which avoids macOS build failures related to `iomp5` and `cmake`.
+
+**Quick start** — run the helper script:
+```bash
+bash setup_conda.sh
+conda activate vhh_biosimilar
+```
+
+**Step-by-step:**
+```bash
+# 1. Create the conda environment
+conda env create -f environment.yml
+
+# 2. Activate it
+conda activate vhh_biosimilar
+
+# 3. Install the package in editable mode
+pip install -e .
+
+# 4. Download AbNatiV model weights
+vhh-init
+```
+
+### Option B — pip / venv
+
+> **macOS users:** this method requires Homebrew dependencies first:
+> ```bash
+> brew install cmake libomp
+> ```
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Linux / macOS
 # .venv\Scripts\activate    # Windows
-```
 
-Install the package in editable mode (includes ESM-2 / PyTorch and AbNatiV by default):
-```bash
 pip install -e .
 vhh-init   # download AbNatiV model weights (cross-platform wrapper)
 ```
@@ -65,6 +94,12 @@ streamlit run app.py
 ## Running Tests
 
 ```bash
+# If using conda:
+conda activate vhh_biosimilar
+pip install -e ".[dev]"
+pytest
+
+# If using pip/venv:
 pip install -e ".[dev]"
 pytest
 ```

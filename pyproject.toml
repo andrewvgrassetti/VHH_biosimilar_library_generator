@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
+    # NOTE: numba and llvmlite are intentionally excluded here — they are
+    # installed via conda-forge in environment.yml to avoid macOS build
+    # failures with iomp5 and cmake.  See the README for details.
     "pandas>=2.0",
     "matplotlib>=3.7",
     "numpy>=1.24",
