@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 def _check_abnativ_deps() -> None:
     """Raise a clear ``ImportError`` when abnativ is missing."""
+    # Apply the Windows compatibility patch *before* importing abnativ,
+    # because ``abnativ.init`` calls ``os.uname()`` at module level.
+    from vhh_library._abnativ_compat import patch_abnativ_platform
+
+    patch_abnativ_platform()
+
     try:
         import abnativ  # noqa: F401
     except ImportError as exc:

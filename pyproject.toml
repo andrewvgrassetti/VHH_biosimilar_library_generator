@@ -24,6 +24,9 @@ dependencies = [
     "abnativ",
 ]
 
+[project.scripts]
+vhh-init = "vhh_library._abnativ_init_cli:main"
+
 [project.optional-dependencies]
 ml = [
     # torch and fair-esm are now core dependencies; this extra is kept only

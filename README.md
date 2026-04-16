@@ -41,8 +41,11 @@ source .venv/bin/activate   # Linux / macOS
 Install the package in editable mode (includes ESM-2 / PyTorch and AbNatiV by default):
 ```bash
 pip install -e .
-abnativ init  # download AbNatiV model weights
+vhh-init   # download AbNatiV model weights (cross-platform wrapper)
 ```
+
+> **Note:** `vhh-init` is a cross-platform wrapper around `abnativ init`.
+> On Linux/macOS, `abnativ init` also works.  On Windows, always use `vhh-init`.
 
 ## Usage
 
