@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import warnings as _warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -108,7 +109,33 @@ class StabilityScorer:
         self,
         esm_scorer: "ESMStabilityScorer | None" = None,
         calibration_path: str | None = None,
+        *,
+        esm2_weight: float | None = None,
+        legacy_weight: float | None = None,
+        # Kept for backward compatibility; silently ignored.
+        use_nanomelt: bool = False,
     ) -> None:
+        if use_nanomelt:
+            _warnings.warn(
+                "NanoMelt support has been removed; the use_nanomelt parameter is ignored "
+                "and will be removed in a future version.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if esm2_weight is not None:
+            _warnings.warn(
+                "esm2_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based "
+                "gating and penalties.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if legacy_weight is not None:
+            _warnings.warn(
+                "legacy_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based "
+                "gating and penalties.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         germline_path = _DATA_DIR / "vhh_germlines.json"
         with open(germline_path) as fh:
             self.germlines: list[dict] = json.load(fh)["germlines"]
