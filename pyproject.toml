@@ -5,11 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vhh-biosimilar-library-generator"
 version = "0.1.0"
-description = "VHH (nanobody) biosimilar variant library generator with humanness scoring, stability prediction, codon optimisation, and LC-MS/MS barcoding."
+description = "VHH (nanobody) biosimilar variant library generator with ESM-2 stability prediction, AbNatiV nativeness scoring, codon optimisation, and LC-MS/MS barcoding."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
+    # NOTE: numba and llvmlite are intentionally excluded here — they are
+    # installed via conda-forge in environment.yml to avoid macOS build
+    # failures with iomp5 and cmake.  See the README for details.
     "pandas>=2.0",
     "matplotlib>=3.7",
     "numpy>=1.24",
@@ -21,20 +24,26 @@ dependencies = [
     "dnachisel>=3.2",
     "torch>=2.0",
     "fair-esm>=2.0",
+    "abnativ",
 ]
+
+[project.scripts]
+vhh-init = "vhh_library._abnativ_init_cli:main"
 
 [project.optional-dependencies]
 ml = [
     # torch and fair-esm are now core dependencies; this extra is kept only
     # so that existing ``pip install ".[ml]"`` commands do not fail.
 ]
-nanomelt = [
-    # NanoMelt support was removed in v0.2.0.
+nativeness = [
+    # abnativ is now a core dependency; this extra is kept only
+    # so that existing ``pip install ".[nativeness]"`` commands do not fail.
 ]
 dev = [
     "pytest>=7.0",
     "ruff>=0.4",
 ]
+all = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

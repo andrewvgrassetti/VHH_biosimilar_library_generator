@@ -71,6 +71,7 @@ class HumAnnotator:
         off_limits: set[int] | set[str],
         forbidden_substitutions: dict[int, set[str]] | dict[str, set[str]] | None = None,
         excluded_target_aas: set[str] | None = None,
+        max_per_position: int = 1,
     ) -> list[dict]:
         cdr_positions = vhh.cdr_positions
         # Normalise off_limits to string keys for consistent comparison.
@@ -91,8 +92,7 @@ class HumAnnotator:
 
             current_freq = freq_dict.get(aa, freq_dict.get("other", 0.0))
 
-            best_aa = ""
-            best_freq = current_freq
+            candidates: list[tuple[str, float]] = []
             for candidate, freq in freq_dict.items():
                 if candidate == "other" or candidate == aa:
                     continue
@@ -104,16 +104,17 @@ class HumAnnotator:
                     and candidate in forbidden_str[pos]
                 ):
                     continue
-                if freq > best_freq:
-                    best_freq = freq
-                    best_aa = candidate
+                if freq > current_freq:
+                    candidates.append((candidate, freq))
 
-            if best_aa:
+            # Sort by frequency descending and take top K
+            candidates.sort(key=lambda c: c[1], reverse=True)
+            for candidate_aa, freq in candidates[:max_per_position]:
                 suggestions.append({
                     "position": pos,
                     "original_aa": aa,
-                    "suggested_aa": best_aa,
-                    "delta_humanness": best_freq - current_freq,
+                    "suggested_aa": candidate_aa,
+                    "delta_humanness": freq - current_freq,
                     "reason": "Higher frequency in human germlines",
                 })
 

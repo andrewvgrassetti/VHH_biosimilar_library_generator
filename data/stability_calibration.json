@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "created_at": null,
+  "description": "Stability calibration derived from reference VHHs with known Tm values",
+  "calibration_vhhs": [],
+  "parameters": {
+    "pll_to_tm_slope": 12.5,
+    "pll_to_tm_intercept": 95.0,
+    "tm_ideal_min": 55.0,
+    "tm_ideal_max": 80.0,
+    "penalty_disulfide": 0.20,
+    "penalty_aggregation": 0.10,
+    "penalty_charge": 0.05,
+    "hallmark_bonus_weight": 0.10,
+    "legacy_weights": {
+      "disulfide": 0.25,
+      "hallmark": 0.20,
+      "aggregation": 0.25,
+      "charge": 0.15,
+      "hydrophobic": 0.15
+    }
+  }
+}

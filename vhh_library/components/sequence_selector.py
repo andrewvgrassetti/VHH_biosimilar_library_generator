@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -25,17 +26,50 @@ _REGION_LABEL_COLORS = {
     "CDR2": "#C62828", "FR3": "#1565C0", "CDR3": "#C62828", "FR4": "#2E7D32",
 }
 
+_IMGT_KEY_INT_RE = re.compile(r"^(\d+)")
+
+
+def imgt_key_int_part(key: str) -> int:
+    """Extract the integer portion of an IMGT position key (e.g. '111A' → 111)."""
+    m = _IMGT_KEY_INT_RE.match(key)
+    return int(m.group(1)) if m else 0
+
 
 def sequence_selector(
     sequence: str,
     imgt_numbered: Dict[str, str],
-    off_limit_positions: Set[int],
-    forbidden_substitutions: Optional[Dict[int, set]] = None,
+    off_limit_positions: Set[str],
+    forbidden_substitutions: Optional[Dict[str, set]] = None,
     key: Optional[str] = None,
-) -> List[int]:
-    """Render the interactive sequence selector and return selected off-limit positions."""
+) -> List[str]:
+    """Render the interactive sequence selector and return selected off-limit positions.
+
+    Parameters
+    ----------
+    sequence:
+        Raw amino-acid string (kept for backward compatibility but no longer
+        used for rendering; the ordered *imgt_numbered* dict drives the display).
+    imgt_numbered:
+        Ordered ``dict[str, str]`` mapping IMGT position keys to amino acids.
+    off_limit_positions:
+        Set of IMGT position **string** keys that are off-limit.
+    forbidden_substitutions:
+        Optional mapping of IMGT position **string** keys to sets of forbidden AAs.
+    key:
+        Streamlit component key.
+
+    Returns
+    -------
+    list[str]
+        Sorted list of IMGT position string keys currently marked off-limit.
+    """
     if forbidden_substitutions is None:
         forbidden_substitutions = {}
+
+    # Build an ordered list of [imgt_key, amino_acid] pairs for the frontend.
+    imgt_positions_list: list[list[str]] = [
+        [k, v] for k, v in imgt_numbered.items()
+    ]
 
     regions = []
     for region_name in ("FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"):
@@ -58,19 +92,19 @@ def sequence_selector(
         if str(pos) in imgt_numbered:
             notable[str(pos)] = {"label": label, "bg": bg, "fg": fg}
 
-    forbidden_pos_list = [int(p) for p in forbidden_substitutions.keys()]
+    forbidden_pos_list = [str(p) for p in forbidden_substitutions.keys()]
 
+    sorted_off_limit = sorted(off_limit_positions, key=lambda k: (imgt_key_int_part(k), k))
     result = _component_func(
-        sequence=sequence,
-        imgtNumbered=dict(imgt_numbered),
+        imgtPositionsList=imgt_positions_list,
         regions=regions,
-        offLimitPositions=sorted(off_limit_positions),
+        offLimitPositions=sorted_off_limit,
         notablePositions=notable,
         forbiddenPositions=forbidden_pos_list,
-        default=sorted(off_limit_positions),
+        default=sorted_off_limit,
         key=key,
     )
 
     if result is None:
-        return sorted(off_limit_positions)
+        return sorted_off_limit
     return result

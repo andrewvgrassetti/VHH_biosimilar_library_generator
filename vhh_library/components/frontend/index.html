@@ -52,8 +52,7 @@ var Streamlit = {
 };
 
 var offLimitSet = new Set();
-var sequence = "";
-var imgtNumbered = {};
+var imgtPositionsList = [];
 var regions = [];
 var notablePositions = {};
 var forbiddenPositions = new Set();
@@ -61,6 +60,12 @@ var seqLen = 0;
 var isDragging = false;
 var dragStart = -1;
 var dragMode = "";
+
+/** Extract the integer portion of an IMGT key, e.g. "111A" → 111. */
+function imgtKeyInt(key) {
+  var m = key.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
 
 function render() {
   var CELL_W = 12;
@@ -71,11 +76,20 @@ function render() {
   annotDiv.innerHTML = ""; seqDiv.innerHTML = ""; tickDiv.innerHTML = "";
 
   annotDiv.style.width = (seqLen * CELL_W) + "px";
+
+  /* --- Region brackets: find first/last cell index for each region --- */
   for (var r = 0; r < regions.length; r++) {
     var reg = regions[r];
-    var rStart = Math.max(1, reg.start), rEnd = Math.min(seqLen, reg.end);
-    if (rStart > seqLen) continue;
-    var x1 = (rStart - 1) * CELL_W, x2 = rEnd * CELL_W, midX = (x1 + x2) / 2;
+    var firstIdx = -1, lastIdx = -1;
+    for (var ci = 0; ci < seqLen; ci++) {
+      var num = imgtKeyInt(imgtPositionsList[ci][0]);
+      if (num >= reg.start && num <= reg.end) {
+        if (firstIdx === -1) firstIdx = ci;
+        lastIdx = ci;
+      }
+    }
+    if (firstIdx === -1) continue;
+    var x1 = firstIdx * CELL_W, x2 = (lastIdx + 1) * CELL_W, midX = (x1 + x2) / 2;
     var lbl = document.createElement("span");
     lbl.className = "region-label"; lbl.style.left = midX + "px"; lbl.style.transform = "translateX(-50%)";
     lbl.style.top = "2px"; lbl.style.color = reg.labelColor; lbl.textContent = reg.name;
@@ -85,16 +99,18 @@ function render() {
     brk.style.borderColor = reg.labelColor; annotDiv.appendChild(brk);
   }
 
+  /* --- Residue cells --- */
   for (var i = 0; i < seqLen; i++) {
-    var pos = i + 1;
-    var aa = imgtNumbered[String(pos)] || "?";
+    var pos = imgtPositionsList[i][0];   /* IMGT string key */
+    var aa  = imgtPositionsList[i][1];   /* amino acid */
+    var posInt = imgtKeyInt(pos);
     var cell = document.createElement("span");
     cell.className = "residue"; cell.dataset.pos = pos; cell.textContent = aa;
     var bgColor = "#F5F5F5";
     for (var r2 = 0; r2 < regions.length; r2++) {
-      if (pos >= regions[r2].start && pos <= regions[r2].end) { bgColor = regions[r2].color; break; }
+      if (posInt >= regions[r2].start && posInt <= regions[r2].end) { bgColor = regions[r2].color; break; }
     }
-    if (notablePositions[String(pos)]) { bgColor = notablePositions[String(pos)].bg; cell.style.color = notablePositions[String(pos)].fg; }
+    if (notablePositions[pos]) { bgColor = notablePositions[pos].bg; cell.style.color = notablePositions[pos].fg; }
     cell.style.backgroundColor = bgColor; cell.style.borderColor = "#CCC";
     if (offLimitSet.has(pos)) cell.classList.add("off-limit");
     if (forbiddenPositions.has(pos) && !offLimitSet.has(pos)) cell.classList.add("forbidden-sub");
@@ -105,10 +121,12 @@ function render() {
     seqDiv.appendChild(cell);
   }
 
+  /* --- Tick marks --- */
   for (var t = 0; t < seqLen; t++) {
-    var tPos = t + 1;
+    var tKey = imgtPositionsList[t][0];
+    var tInt = imgtKeyInt(tKey);
     var tk = document.createElement("span"); tk.className = "tick";
-    if (tPos === 1 || tPos % 10 === 0) tk.textContent = tPos;
+    if (t === 0 || tInt % 10 === 0) tk.textContent = tKey;
     tickDiv.appendChild(tk);
   }
 
@@ -135,7 +153,7 @@ function render() {
 
 function onCellMouseDown(e) {
   e.preventDefault();
-  var pos = parseInt(e.currentTarget.dataset.pos);
+  var pos = e.currentTarget.dataset.pos;
   isDragging = true; dragStart = pos;
   dragMode = offLimitSet.has(pos) ? "remove" : "add";
   applyDragToPos(pos); render();
@@ -143,7 +161,7 @@ function onCellMouseDown(e) {
 
 function onCellMouseEnter(e) {
   if (!isDragging) return;
-  applyDragToPos(parseInt(e.currentTarget.dataset.pos)); render();
+  applyDragToPos(e.currentTarget.dataset.pos); render();
 }
 
 function applyDragToPos(pos) {
@@ -153,20 +171,28 @@ function applyDragToPos(pos) {
 document.addEventListener("mouseup", function() {
   if (isDragging) {
     isDragging = false; dragStart = -1;
-    Streamlit.setComponentValue(Array.from(offLimitSet).sort(function(a, b) { return a - b; }));
+    Streamlit.setComponentValue(Array.from(offLimitSet).sort(function(a, b) {
+      var ai = imgtKeyInt(a), bi = imgtKeyInt(b);
+      if (ai !== bi) return ai - bi;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    }));
   }
 });
 
 function onCellHover(e) {
-  var pos = parseInt(e.currentTarget.dataset.pos);
-  var aa = imgtNumbered[String(pos)] || "?";
+  var pos = e.currentTarget.dataset.pos;
+  var aa = "";
+  for (var k = 0; k < imgtPositionsList.length; k++) {
+    if (imgtPositionsList[k][0] === pos) { aa = imgtPositionsList[k][1]; break; }
+  }
+  var posInt = imgtKeyInt(pos);
   var regionName = "";
   for (var r = 0; r < regions.length; r++) {
-    if (pos >= regions[r].start && pos <= regions[r].end) { regionName = regions[r].name; break; }
+    if (posInt >= regions[r].start && posInt <= regions[r].end) { regionName = regions[r].name; break; }
   }
-  var tip = "Pos " + pos + " (" + regionName + ") \u2014 " + aa;
+  var tip = "IMGT " + pos + " (" + regionName + ") \u2014 " + aa;
   if (offLimitSet.has(pos)) tip += " [OFF-LIMIT]";
-  if (notablePositions[String(pos)]) tip += " \u2022 " + notablePositions[String(pos)].label;
+  if (notablePositions[pos]) tip += " \u2022 " + notablePositions[pos].label;
   var tooltip = document.getElementById("tooltip");
   tooltip.textContent = tip; tooltip.style.display = "block";
   tooltip.style.left = (e.clientX + 10) + "px"; tooltip.style.top = (e.clientY - 28) + "px";
@@ -177,9 +203,9 @@ function onCellOut() { document.getElementById("tooltip").style.display = "none"
 function onStreamlitRender(event) {
   var args = event.detail ? event.detail.args : event.data.args;
   if (!args) return;
-  sequence = args.sequence || ""; imgtNumbered = args.imgtNumbered || {};
+  imgtPositionsList = args.imgtPositionsList || [];
   regions = args.regions || []; notablePositions = args.notablePositions || {};
-  seqLen = sequence.length;
+  seqLen = imgtPositionsList.length;
   offLimitSet = new Set(args.offLimitPositions || []);
   forbiddenPositions = new Set(args.forbiddenPositions || []);
   render();

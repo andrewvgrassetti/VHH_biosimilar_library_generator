@@ -12,49 +12,6 @@ _FR_KEYS = ("fr1", "fr2", "fr3", "fr4")
 _FR_REGION_NAMES = ("FR1", "FR2", "FR3", "FR4")
 
 
-class HumanStringContentScorer:
-    """Scores how much of the VHH sequence matches human germline k-mer content."""
-
-    def __init__(self, kmer_size: int = 9) -> None:
-        self._kmer_size = kmer_size
-
-        data_path = Path(__file__).resolve().parent.parent / "data" / "human_vh_germlines.json"
-        with open(data_path) as fh:
-            data = json.load(fh)
-
-        kmers: set[str] = set()
-        for g in data["germlines"]:
-            fw = g["fr1"] + g["fr2"] + g["fr3"] + g["fr4"]
-            for i in range(len(fw) - kmer_size + 1):
-                kmers.add(fw[i : i + kmer_size])
-
-        self._human_kmers: frozenset[str] = frozenset(kmers)
-
-    def score(self, vhh: VHHSequence) -> dict:
-        seq = vhh.sequence
-        k = self._kmer_size
-        total = max(len(seq) - k + 1, 0)
-        if total == 0:
-            return {"composite_score": 0.0, "total_kmers": 0, "matched_kmers": 0}
-
-        matched = sum(
-            1 for i in range(total) if seq[i : i + k] in self._human_kmers
-        )
-        return {
-            "composite_score": matched / total,
-            "total_kmers": total,
-            "matched_kmers": matched,
-        }
-
-    def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int | str, new_aa: str
-    ) -> float:
-        if vhh.imgt_numbered.get(str(position)) == new_aa:
-            return 0.0
-        mutant = VHHSequence.mutate(vhh, position, new_aa)
-        return self.score(mutant)["composite_score"] - self.score(vhh)["composite_score"]
-
-
 class ConsensusStabilityScorer:
     """Scores framework positions against a VHH germline consensus."""
 

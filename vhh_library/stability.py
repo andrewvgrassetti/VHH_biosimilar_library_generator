@@ -28,11 +28,34 @@ _W_CHARGE: float = 0.15
 _W_HYDROPHOBIC: float = 0.15
 
 # Calibration: per-residue PLL → predicted Tm (°C)
-# Fit from NbThermo database entries (n≈50, R²≈0.65)
+# Starting estimates; replace with empirical fit from NbThermo database.
 _PLL_TO_TM_SLOPE: float = 12.5
 _PLL_TO_TM_INTERCEPT: float = 95.0
+
+# Ideal VHH Tm range for sigmoid normalisation
 _TM_IDEAL_MIN: float = 55.0
 _TM_IDEAL_MAX: float = 80.0
+
+# Hard penalty magnitudes (heuristic gates)
+_PENALTY_DISULFIDE: float = 0.20
+_PENALTY_AGGREGATION: float = 0.10
+_PENALTY_CHARGE: float = 0.05
+
+# VHH hallmark bonus weight
+_HALLMARK_BONUS_WEIGHT: float = 0.10
+
+
+def _pll_to_predicted_tm(pll: float, seq_len: int) -> float:
+    """Convert total PLL to an estimated Tm via per-residue normalisation."""
+    per_residue_pll = pll / max(seq_len, 1)
+    return _PLL_TO_TM_SLOPE * per_residue_pll + _PLL_TO_TM_INTERCEPT
+
+
+def _sigmoid_normalize(tm: float, tm_min: float, tm_max: float) -> float:
+    """Map a Tm value to [0, 1] with a sigmoid centred on the ideal range."""
+    midpoint = (tm_min + tm_max) / 2.0
+    scale = (tm_max - tm_min) / 4.0
+    return 1.0 / (1.0 + math.exp(-(tm - midpoint) / max(scale, 1e-6)))
 
 # ---------------------------------------------------------------------------
 # Optional dependency probes
@@ -73,19 +96,6 @@ def compute_esm2_pll(sequences: list[str]) -> list[float]:
     return scorer.score_batch(sequences)
 
 
-def _pll_to_predicted_tm(pll: float, seq_len: int) -> float:
-    """Convert total PLL to an estimated Tm using per-residue normalization."""
-    per_residue_pll = pll / max(seq_len, 1)
-    return _PLL_TO_TM_SLOPE * per_residue_pll + _PLL_TO_TM_INTERCEPT
-
-
-def _sigmoid_normalize(tm: float, tm_min: float, tm_max: float) -> float:
-    """Map Tm to [0, 1] using a sigmoid centered on the ideal range."""
-    midpoint = (tm_min + tm_max) / 2.0
-    scale = (tm_max - tm_min) / 4.0  # ~95% of sigmoid within ideal range
-    return 1.0 / (1.0 + math.exp(-(tm - midpoint) / max(scale, 1e-6)))
-
-
 # ---------------------------------------------------------------------------
 # Stability scorer
 # ---------------------------------------------------------------------------
@@ -98,6 +108,7 @@ class StabilityScorer:
     def __init__(
         self,
         esm_scorer: "ESMStabilityScorer | None" = None,
+        calibration_path: str | None = None,
         *,
         esm2_weight: float | None = None,
         legacy_weight: float | None = None,
@@ -130,6 +141,47 @@ class StabilityScorer:
             self.germlines: list[dict] = json.load(fh)["germlines"]
         self.esm_scorer: "ESMStabilityScorer | None" = esm_scorer
 
+        # Load calibration parameters (or fall back to module-level defaults)
+        self._load_calibration_params(calibration_path)
+
+    def _load_calibration_params(self, calibration_path: str | None) -> None:
+        """Load calibration from file or fall back to module-level defaults."""
+        from vhh_library.calibration import load_calibration
+
+        cal = load_calibration(calibration_path)
+        if cal is not None:
+            params = cal.get("parameters", {})
+            self._pll_slope = params.get("pll_to_tm_slope", _PLL_TO_TM_SLOPE)
+            self._pll_intercept = params.get("pll_to_tm_intercept", _PLL_TO_TM_INTERCEPT)
+            self._tm_min = params.get("tm_ideal_min", _TM_IDEAL_MIN)
+            self._tm_max = params.get("tm_ideal_max", _TM_IDEAL_MAX)
+            self._penalty_disulfide = params.get("penalty_disulfide", _PENALTY_DISULFIDE)
+            self._penalty_aggregation = params.get("penalty_aggregation", _PENALTY_AGGREGATION)
+            self._penalty_charge = params.get("penalty_charge", _PENALTY_CHARGE)
+            self._hallmark_bonus_weight = params.get("hallmark_bonus_weight", _HALLMARK_BONUS_WEIGHT)
+            lw = params.get("legacy_weights", {})
+            self._w_disulfide = lw.get("disulfide", _W_DISULFIDE)
+            self._w_hallmark = lw.get("hallmark", _W_HALLMARK)
+            self._w_aggregation = lw.get("aggregation", _W_AGGREGATION)
+            self._w_charge = lw.get("charge", _W_CHARGE)
+            self._w_hydrophobic = lw.get("hydrophobic", _W_HYDROPHOBIC)
+            self._calibrated = True
+        else:
+            self._pll_slope = _PLL_TO_TM_SLOPE
+            self._pll_intercept = _PLL_TO_TM_INTERCEPT
+            self._tm_min = _TM_IDEAL_MIN
+            self._tm_max = _TM_IDEAL_MAX
+            self._penalty_disulfide = _PENALTY_DISULFIDE
+            self._penalty_aggregation = _PENALTY_AGGREGATION
+            self._penalty_charge = _PENALTY_CHARGE
+            self._hallmark_bonus_weight = _HALLMARK_BONUS_WEIGHT
+            self._w_disulfide = _W_DISULFIDE
+            self._w_hallmark = _W_HALLMARK
+            self._w_aggregation = _W_AGGREGATION
+            self._w_charge = _W_CHARGE
+            self._w_hydrophobic = _W_HYDROPHOBIC
+            self._calibrated = False
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -150,11 +202,11 @@ class StabilityScorer:
         pi = isoelectric_point(seq)
 
         legacy = (
-            _W_DISULFIDE * disulfide
-            + _W_HALLMARK * hallmark
-            + _W_AGGREGATION * aggregation
-            + _W_CHARGE * charge_balance
-            + _W_HYDROPHOBIC * hydrophobic_core
+            self._w_disulfide * disulfide
+            + self._w_hallmark * hallmark
+            + self._w_aggregation * aggregation
+            + self._w_charge * charge_balance
+            + self._w_hydrophobic * hydrophobic_core
         )
 
         result: dict = {
@@ -169,35 +221,43 @@ class StabilityScorer:
         }
 
         # --- Determine ESM-2 contribution ---
-        tm_score: float | None = None
         if self.esm_scorer is not None:
             try:
                 pll = self.esm_scorer.score_single(seq)
                 result["esm2_pll"] = pll
-                predicted_tm = _pll_to_predicted_tm(pll, len(seq))
-                tm_score = _sigmoid_normalize(predicted_tm, _TM_IDEAL_MIN, _TM_IDEAL_MAX)
+
+                predicted_tm = self._pll_to_predicted_tm(pll, len(seq))
                 result["predicted_tm"] = predicted_tm
+
+                tm_score = _sigmoid_normalize(predicted_tm, self._tm_min, self._tm_max)
                 result["tm_score"] = tm_score
+
+                penalty = 0.0
+                if disulfide < 1.0:
+                    penalty += self._penalty_disulfide
+                if aggregation < 0.5:
+                    penalty += self._penalty_aggregation
+                if charge_balance < 0.5:
+                    penalty += self._penalty_charge
+
+                vhh_bonus = self._hallmark_bonus_weight * hallmark
+
+                result["composite_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
+                result["scoring_method"] = "esm2"
             except Exception:
                 warnings.append("ESM-2 scoring failed; fell back to legacy scoring")
-
-        # --- Compute composite score ---
-        if tm_score is not None:
-            penalty = 0.0
-            if disulfide < 1.0:
-                penalty += 0.20
-            if aggregation < 0.5:
-                penalty += 0.10
-            if charge_balance < 0.5:
-                penalty += 0.05
-            vhh_bonus = 0.1 * hallmark
-            result["composite_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
-            result["scoring_method"] = "esm2"
+                result["composite_score"] = legacy
+                result["scoring_method"] = "legacy"
         else:
             result["composite_score"] = legacy
             result["scoring_method"] = "legacy"
 
         return result
+
+    def _pll_to_predicted_tm(self, pll: float, seq_len: int) -> float:
+        """Convert total PLL to an estimated Tm via per-residue normalisation."""
+        per_residue_pll = pll / max(seq_len, 1)
+        return self._pll_slope * per_residue_pll + self._pll_intercept
 
     def predict_mutation_effect(
         self, vhh: VHHSequence, position: int | str, new_aa: str
