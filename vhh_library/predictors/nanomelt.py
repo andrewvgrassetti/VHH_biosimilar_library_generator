@@ -119,6 +119,7 @@ class NanoMeltPredictor(Predictor):
         self._device = device
         self._batch_size = batch_size
         self._backend: _NanoMeltBackend | None = None  # type: ignore[assignment]
+        self._resolved_device: str = "cpu"  # updated in _ensure_backend
 
     # ------------------------------------------------------------------
     # Lazy loading
