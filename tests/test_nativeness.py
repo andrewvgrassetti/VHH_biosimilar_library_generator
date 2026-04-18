@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -33,17 +35,13 @@ class TestNativenessScorer:
     def test_instantiation(self, scorer: NativenessScorer) -> None:
         assert scorer is not None
 
-    def test_score_returns_dict_with_composite(
-        self, scorer: NativenessScorer, vhh: VHHSequence
-    ) -> None:
+    def test_score_returns_dict_with_composite(self, scorer: NativenessScorer, vhh: VHHSequence) -> None:
         result = scorer.score(vhh)
         assert isinstance(result, dict)
         assert "composite_score" in result
         assert 0.0 <= result["composite_score"] <= 1.0
 
-    def test_predict_mutation_effect_returns_float(
-        self, scorer: NativenessScorer, vhh: VHHSequence
-    ) -> None:
+    def test_predict_mutation_effect_returns_float(self, scorer: NativenessScorer, vhh: VHHSequence) -> None:
         # Pick a framework position to mutate
         pos = list(vhh.imgt_numbered.keys())[0]
         original = vhh.imgt_numbered[pos]
@@ -61,3 +59,12 @@ class TestNativenessScorer:
 
     def test_score_batch_empty(self, scorer: NativenessScorer) -> None:
         assert scorer.score_batch([]) == []
+
+    def test_missing_model_weights_raises_helpful_error(self) -> None:
+        """When model weights are not downloaded, a clear error is raised."""
+        scorer = NativenessScorer(model_type="VHH")
+        scorer._scoring_fn = None  # ensure not cached
+
+        with mock.patch("abnativ.init.PRETRAINED_MODELS_DIR", "/nonexistent/path"):
+            with pytest.raises(FileNotFoundError, match="vhh-init"):
+                scorer._load_scoring_fn()

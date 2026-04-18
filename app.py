@@ -1,6 +1,5 @@
 """Main Streamlit application for VHH Biosimilar Library Generator."""
 
-
 import json
 import logging
 
@@ -67,6 +66,7 @@ st.set_page_config(
 # Cached resources
 # ---------------------------------------------------------------------------
 
+
 def _build_runtime_config() -> RuntimeConfig:
     """Build a :class:`RuntimeConfig` from sidebar session-state values.
 
@@ -81,6 +81,16 @@ def _build_runtime_config() -> RuntimeConfig:
         device=device,
         stability_backend=stability_backend,
         nativeness_backend=nativeness_backend,
+    )
+
+
+def _show_abnativ_weights_error(exc: FileNotFoundError) -> None:
+    """Display a user-friendly Streamlit error for missing AbNatiV weights."""
+    logger.warning("AbNatiV model weights missing: %s", exc)
+    st.error(
+        "⚠️ AbNatiV model weights not found. "
+        "Please run `vhh-init` (or `abnativ init`) to download "
+        "the pre-trained model, then restart the app."
     )
 
 
@@ -122,6 +132,7 @@ def load_calibration_data() -> dict | None:
 # Session state
 # ---------------------------------------------------------------------------
 
+
 def init_state():
     defaults = {
         "vhh_seq": None,
@@ -144,6 +155,7 @@ def init_state():
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
+
 
 def _parse_off_limit_csv(uploaded_file) -> dict[str, set[str]]:
     """Parse CSV with 2 columns: original_aa, forbidden_aas.
@@ -200,6 +212,7 @@ def _library_to_fasta(df: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
+
 
 def sidebar():
     with st.sidebar:
@@ -259,18 +272,34 @@ def sidebar():
         st.subheader("Scoring Weights")
         enable_stability = st.checkbox("Enable stability", value=True, key="enable_stability")
         st.slider(
-            "Stability weight", 0.0, 1.0, 0.70, 0.05,
-            disabled=not enable_stability, key="w_stability",
+            "Stability weight",
+            0.0,
+            1.0,
+            0.70,
+            0.05,
+            disabled=not enable_stability,
+            key="w_stability",
         )
         enable_hydrophobicity = st.checkbox(
-            "Enable surface hydrophobicity", value=False, key="enable_hydrophobicity",
+            "Enable surface hydrophobicity",
+            value=False,
+            key="enable_hydrophobicity",
         )
         st.slider(
-            "Surface hydrophobicity weight", 0.0, 1.0, 0.00, 0.05,
-            disabled=not enable_hydrophobicity, key="w_hydrophobicity",
+            "Surface hydrophobicity weight",
+            0.0,
+            1.0,
+            0.00,
+            0.05,
+            disabled=not enable_hydrophobicity,
+            key="w_hydrophobicity",
         )
         st.slider(
-            "Nativeness weight (AbNatiV)", 0.0, 1.0, 0.30, 0.05,
+            "Nativeness weight (AbNatiV)",
+            0.0,
+            1.0,
+            0.30,
+            0.05,
             key="w_nativeness",
         )
 
@@ -282,7 +311,10 @@ def sidebar():
         st.number_input("Max mutations (n_mutations)", 1, 20, 3, key="n_mutations")
         st.number_input("Max variants", 100, 100_000, 1000, step=100, key="max_variants")
         st.number_input(
-            "Max candidates per position", 1, 5, 3,
+            "Max candidates per position",
+            1,
+            5,
+            3,
             key="max_candidates_per_position",
             help="Number of amino acid options to consider at each IMGT position",
         )
@@ -290,7 +322,10 @@ def sidebar():
         st.slider("Anchor threshold", 0.0, 1.0, 0.6, 0.05, key="anchor_threshold")
         st.number_input("Max rounds", 1, 30, 15, key="max_rounds")
         st.number_input(
-            "Rescore top N (ESM-2 full PLL)", 0, 200, 20,
+            "Rescore top N (ESM-2 full PLL)",
+            0,
+            200,
+            20,
             key="rescore_top_n",
             help="After each iterative round, re-score top N variants with full ESM-2 PLL for accuracy (0 = disabled)",
         )
@@ -301,8 +336,14 @@ def sidebar():
         st.subheader("Codon Optimization")
 
         _organism_options = [
-            "e_coli", "h_sapiens", "s_cerevisiae", "p_pastoris",
-            "b_subtilis", "m_musculus", "d_melanogaster", "c_elegans",
+            "e_coli",
+            "h_sapiens",
+            "s_cerevisiae",
+            "p_pastoris",
+            "b_subtilis",
+            "m_musculus",
+            "d_melanogaster",
+            "c_elegans",
         ]
         organism_choice = st.selectbox(
             "Host organism",
@@ -342,7 +383,10 @@ def sidebar():
         )
         st.slider(
             "Top N variants for advanced re-ranking",
-            1, 100, _ESM2_PLL_DEFAULT_TOP_N, key="esm2_top_n",
+            1,
+            100,
+            _ESM2_PLL_DEFAULT_TOP_N,
+            key="esm2_top_n",
             disabled=not esm2_active,
             help="Number of top variants to re-rank with a larger ESM-2 model (Tab 3 advanced option)",
         )
@@ -365,13 +409,14 @@ def sidebar():
                 st.markdown(f"**Tm range:** {tm_min}–{tm_max} °C")
             else:
                 st.warning(
-                    "⚠️ Using default parameter estimates — upload reference "
-                    "VHHs with known Tm values to calibrate"
+                    "⚠️ Using default parameter estimates — upload reference VHHs with known Tm values to calibrate"
                 )
 
             st.markdown("**Upload calibration CSV** (columns: `name` (optional), `sequence`, `experimental_tm`)")
             cal_csv = st.file_uploader(
-                "Calibration CSV", type=["csv"], key="calibration_csv",
+                "Calibration CSV",
+                type=["csv"],
+                key="calibration_csv",
                 label_visibility="collapsed",
             )
 
@@ -412,8 +457,8 @@ def sidebar():
 # Tab 1 – Input & Analysis
 # ---------------------------------------------------------------------------
 
-def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
-              consensus_scorer, viz):
+
+def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer, consensus_scorer, viz):
     st.header("🔬 Input & Analysis")
 
     raw_seq = st.text_area(
@@ -446,7 +491,11 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
 
         with st.spinner("Scoring…"):
             st.session_state["stability_scores"] = stability_scorer.score(vhh)
-            st.session_state["nativeness_scores"] = nativeness_scorer.score(vhh)
+            try:
+                st.session_state["nativeness_scores"] = nativeness_scorer.score(vhh)
+            except FileNotFoundError as exc:
+                _show_abnativ_weights_error(exc)
+                st.session_state["nativeness_scores"] = None
             st.session_state["hydrophobicity_scores"] = hydrophobicity_scorer.score(vhh)
             st.session_state["orthogonal_stability_scores"] = consensus_scorer.score(vhh)
 
@@ -473,7 +522,9 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
         st.markdown(viz.render_score_bar(nat_composite, "Nativeness (AbNatiV)", "#AB47BC"), unsafe_allow_html=True)
     with col3:
         hydro_bar = viz.render_score_bar(
-            hy_scores["composite_score"], "Surface Hydrophobicity", "#FFA726",
+            hy_scores["composite_score"],
+            "Surface Hydrophobicity",
+            "#FFA726",
         )
         st.markdown(hydro_bar, unsafe_allow_html=True)
 
@@ -488,7 +539,8 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
     # Detailed breakdowns
     with st.expander("Stability Details"):
         detail_cols = [
-            ("pI", "pI"), ("disulfide_score", "Disulfide"),
+            ("pI", "pI"),
+            ("disulfide_score", "Disulfide"),
             ("vhh_hallmark_score", "VHH Hallmark"),
             ("aggregation_score", "Aggregation"),
             ("charge_balance_score", "Charge Balance"),
@@ -518,6 +570,7 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
 # Tab 2 – Mutation Selection
 # ---------------------------------------------------------------------------
 
+
 def tab_mutations(stability_scorer):
     st.header("🎯 Mutation Selection")
 
@@ -542,7 +595,9 @@ def tab_mutations(stability_scorer):
     # -- Forbidden substitutions CSV --
     st.subheader("Forbidden Substitutions")
     uploaded = st.file_uploader(
-        "Upload CSV (original_aa, forbidden_aas)", type=["csv"], key="forbidden_csv",
+        "Upload CSV (original_aa, forbidden_aas)",
+        type=["csv"],
+        key="forbidden_csv",
     )
     aa_forbidden: dict[str, set[str]] = {}
     position_forbidden: dict[str, set[str]] = {}
@@ -623,13 +678,15 @@ def tab_mutations(stability_scorer):
             wt_aa = vhh.imgt_numbered.get(pos_key, "?")
             reason = classifications.get(pos_key)
             reason_str = reason.reason.description if reason else ""
-            rows.append({
-                "IMGT Position": pos_key,
-                "WT AA": wt_aa,
-                "Class": pp.position_class.value,
-                "Allowed AAs": ", ".join(sorted(pp.allowed_aas)) if pp.allowed_aas else "",
-                "Reason": reason_str,
-            })
+            rows.append(
+                {
+                    "IMGT Position": pos_key,
+                    "WT AA": wt_aa,
+                    "Class": pp.position_class.value,
+                    "Allowed AAs": ", ".join(sorted(pp.allowed_aas)) if pp.allowed_aas else "",
+                    "Reason": reason_str,
+                }
+            )
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
@@ -639,7 +696,10 @@ def tab_mutations(stability_scorer):
         with ie1:
             st.markdown("**Export policy**")
             export_fmt = st.radio(
-                "Format", ["JSON", "YAML"], horizontal=True, key="policy_export_fmt",
+                "Format",
+                ["JSON", "YAML"],
+                horizontal=True,
+                key="policy_export_fmt",
             )
             policy_data = policy.to_dict()
             if export_fmt == "JSON":
@@ -736,13 +796,17 @@ def tab_mutations(stability_scorer):
             enabled_metrics=enabled,
         )
         with st.spinner("Ranking mutations…"):
-            ranked = engine.rank_single_mutations(
-                vhh,
-                off_limits=off_limit_positions if off_limit_positions else None,
-                forbidden_substitutions=position_forbidden if position_forbidden else None,
-                excluded_target_aas=excluded_set,
-                max_per_position=st.session_state.get("max_candidates_per_position", 3),
-            )
+            try:
+                ranked = engine.rank_single_mutations(
+                    vhh,
+                    off_limits=off_limit_positions if off_limit_positions else None,
+                    forbidden_substitutions=position_forbidden if position_forbidden else None,
+                    excluded_target_aas=excluded_set,
+                    max_per_position=st.session_state.get("max_candidates_per_position", 3),
+                )
+            except FileNotFoundError as exc:
+                _show_abnativ_weights_error(exc)
+                return
         st.session_state["ranked_mutations"] = ranked
         st.session_state["_mutation_engine"] = engine
         st.success(f"Ranked {len(ranked)} mutations.")
@@ -760,8 +824,11 @@ def tab_mutations(stability_scorer):
         st.dataframe(ranked, use_container_width=True, hide_index=True)
 
         top_n = st.slider(
-            "Top N mutations for library", 1,
-            min(50, len(ranked)), min(10, len(ranked)), key="top_n_muts",
+            "Top N mutations for library",
+            1,
+            min(50, len(ranked)),
+            min(10, len(ranked)),
+            key="top_n_muts",
         )
 
         if st.button("Generate library", type="primary", key="btn_gen_lib"):
@@ -790,18 +857,22 @@ def tab_mutations(stability_scorer):
                 )
 
             with st.spinner("Generating library…"):
-                library = engine.generate_library(
-                    vhh,
-                    ranked.head(top_n),
-                    n_mutations=st.session_state.get("n_mutations", 3),
-                    max_variants=st.session_state.get("max_variants", 1000),
-                    min_mutations=st.session_state.get("min_mutations", 1),
-                    strategy=strategy,
-                    anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
-                    max_rounds=st.session_state.get("max_rounds", 15),
-                    rescore_top_n=st.session_state.get("rescore_top_n", 20),
-                    progress_callback=_on_progress,
-                )
+                try:
+                    library = engine.generate_library(
+                        vhh,
+                        ranked.head(top_n),
+                        n_mutations=st.session_state.get("n_mutations", 3),
+                        max_variants=st.session_state.get("max_variants", 1000),
+                        min_mutations=st.session_state.get("min_mutations", 1),
+                        strategy=strategy,
+                        anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
+                        max_rounds=st.session_state.get("max_rounds", 15),
+                        rescore_top_n=st.session_state.get("rescore_top_n", 20),
+                        progress_callback=_on_progress,
+                    )
+                except FileNotFoundError as exc:
+                    _show_abnativ_weights_error(exc)
+                    return
             progress_bar.progress(1.0, text="Complete!")
             st.session_state["library"] = library
             st.session_state["esm2_pll_scores"] = None
@@ -811,6 +882,7 @@ def tab_mutations(stability_scorer):
 # ---------------------------------------------------------------------------
 # Tab 3 – Library Results
 # ---------------------------------------------------------------------------
+
 
 def tab_library(viz):
     st.header("📚 Library Results")
@@ -834,8 +906,11 @@ def tab_library(viz):
 
     # -- Distribution plots --
     st.subheader("Score Distributions")
-    score_cols = [c for c in ["combined_score", "stability_score",
-                               "nativeness_score", "surface_hydrophobicity_score"] if c in library.columns]
+    score_cols = [
+        c
+        for c in ["combined_score", "stability_score", "nativeness_score", "surface_hydrophobicity_score"]
+        if c in library.columns
+    ]
     if score_cols:
         fig, axes = plt.subplots(1, len(score_cols), figsize=(4 * len(score_cols), 3))
         if len(score_cols) == 1:
@@ -872,12 +947,15 @@ def tab_library(viz):
         # Show existing ESM-2 scores if already computed in the pipeline
         if "esm2_pll" in library.columns:
             st.success("✅ ESM-2 scores are integrated into the library scoring pipeline.")
-            esm_cols = [c for c in ["variant_id", "aa_sequence", "combined_score",
-                                     "esm2_pll", "esm2_delta_pll", "esm2_rank"]
-                        if c in library.columns]
+            esm_cols = [
+                c
+                for c in ["variant_id", "aa_sequence", "combined_score", "esm2_pll", "esm2_delta_pll", "esm2_rank"]
+                if c in library.columns
+            ]
             st.dataframe(
                 library[esm_cols].sort_values("esm2_pll", ascending=False).head(20),
-                use_container_width=True, hide_index=True,
+                use_container_width=True,
+                hide_index=True,
             )
         elif "predicted_tm" in library.columns:
             st.info("ESM-2 is active in the stability scorer. Predicted Tm values are included above.")
@@ -963,6 +1041,7 @@ def tab_library(viz):
 # Tab 4 – Barcoding
 # ---------------------------------------------------------------------------
 
+
 def tab_barcoding():
     st.header("🧬 Barcoding")
 
@@ -1047,6 +1126,7 @@ def tab_barcoding():
 # Tab 5 – Construct Builder
 # ---------------------------------------------------------------------------
 
+
 def tab_construct(optimizer, tag_manager):
     st.header("🔧 Construct Builder")
 
@@ -1112,33 +1192,43 @@ def tab_construct(optimizer, tag_manager):
                     vid = row.get("variant_id", "variant")
                     opt = optimizer.optimize(aa_seq, host=host, strategy=codon_strat, **opt_kwargs)
                     construct = tag_manager.build_construct(
-                        aa_seq, opt["dna_sequence"],
-                        n_tag=n_tag_val, c_tag=c_tag_val, linker=linker,
+                        aa_seq,
+                        opt["dna_sequence"],
+                        n_tag=n_tag_val,
+                        c_tag=c_tag_val,
+                        linker=linker,
                     )
-                    constructs.append({
-                        "variant_id": vid,
-                        "aa_construct": construct["aa_construct"],
-                        "dna_construct": construct["dna_construct"],
-                        "schematic": construct["schematic"],
-                        "gc_content": opt["gc_content"],
-                        "cai": opt["cai"],
-                    })
+                    constructs.append(
+                        {
+                            "variant_id": vid,
+                            "aa_construct": construct["aa_construct"],
+                            "dna_construct": construct["dna_construct"],
+                            "schematic": construct["schematic"],
+                            "gc_content": opt["gc_content"],
+                            "cai": opt["cai"],
+                        }
+                    )
         else:
             # Single sequence mode
             with st.spinner("Optimizing codons…"):
                 opt = optimizer.optimize(vhh.sequence, host=host, strategy=codon_strat, **opt_kwargs)
             construct = tag_manager.build_construct(
-                vhh.sequence, opt["dna_sequence"],
-                n_tag=n_tag_val, c_tag=c_tag_val, linker=linker,
+                vhh.sequence,
+                opt["dna_sequence"],
+                n_tag=n_tag_val,
+                c_tag=c_tag_val,
+                linker=linker,
             )
-            constructs.append({
-                "variant_id": "parent",
-                "aa_construct": construct["aa_construct"],
-                "dna_construct": construct["dna_construct"],
-                "schematic": construct["schematic"],
-                "gc_content": opt["gc_content"],
-                "cai": opt["cai"],
-            })
+            constructs.append(
+                {
+                    "variant_id": "parent",
+                    "aa_construct": construct["aa_construct"],
+                    "dna_construct": construct["dna_construct"],
+                    "schematic": construct["schematic"],
+                    "gc_content": opt["gc_content"],
+                    "cai": opt["cai"],
+                }
+            )
             if opt.get("warnings"):
                 for w in opt["warnings"]:
                     st.warning(w)
@@ -1162,15 +1252,21 @@ def tab_construct(optimizer, tag_manager):
         st.subheader("Construct Details")
         for c in constructs:
             with st.expander(f"{c['variant_id']} — {c['schematic']}"):
-                vid = c['variant_id']
+                vid = c["variant_id"]
                 st.text_area(
-                    "AA construct", c["aa_construct"],
-                    height=80, key=f"aa_{vid}", disabled=True,
+                    "AA construct",
+                    c["aa_construct"],
+                    height=80,
+                    key=f"aa_{vid}",
+                    disabled=True,
                 )
                 if c["dna_construct"]:
                     st.text_area(
-                        "DNA construct", c["dna_construct"],
-                        height=80, key=f"dna_{vid}", disabled=True,
+                        "DNA construct",
+                        c["dna_construct"],
+                        height=80,
+                        key=f"dna_{vid}",
+                        disabled=True,
                     )
                 st.write(f"**GC content:** {c['gc_content']:.2%} | **CAI:** {c['cai']:.3f}")
 
@@ -1204,11 +1300,10 @@ def tab_construct(optimizer, tag_manager):
 # Tab 6 – Validation
 # ---------------------------------------------------------------------------
 
+
 def tab_validation(stability_scorer):
     st.header("📊 Validation & Benchmarking")
-    st.markdown(
-        "Assess whether stability predictions correlate with real VHH thermal stability."
-    )
+    st.markdown("Assess whether stability predictions correlate with real VHH thermal stability.")
 
     from vhh_library.benchmark import (
         compare_scoring_methods,
@@ -1222,9 +1317,7 @@ def tab_validation(stability_scorer):
 
     # --- Section 1: Benchmark on reference VHHs ---
     st.subheader("Benchmark on Reference VHHs")
-    st.caption(
-        "Score the built-in benchmark VHH set and evaluate correlation with known Tm values."
-    )
+    st.caption("Score the built-in benchmark VHH set and evaluate correlation with known Tm values.")
 
     cv_folds = st.slider("Cross-validation folds", min_value=2, max_value=10, value=5, key="bench_cv_folds")
 
@@ -1322,8 +1415,11 @@ def tab_validation(stability_scorer):
             col1, col2 = st.columns(2)
             with col1:
                 fig = plot_correlation_scatter(
-                    pred_for_plot, exp_tms, metrics=m,
-                    xlabel=label, ylabel="Experimental Tm (°C)",
+                    pred_for_plot,
+                    exp_tms,
+                    metrics=m,
+                    xlabel=label,
+                    ylabel="Experimental Tm (°C)",
                 )
                 st.pyplot(fig)
                 plt.close(fig)
@@ -1364,7 +1460,8 @@ def tab_validation(stability_scorer):
         if scoring_results and len(scoring_results) > 1 and exp_tms:
             st.markdown("#### Scoring Method Comparison")
             comparison = compare_scoring_methods(
-                exp_tms, scoring_results,
+                exp_tms,
+                scoring_results,
             )
             if comparison:
                 comp_data = [
@@ -1407,6 +1504,7 @@ def tab_validation(stability_scorer):
         if st.button("Validate predictions", key="btn_validate_lib"):
             try:
                 import io
+
                 exp_csv = io.StringIO(exp_file.getvalue().decode("utf-8"))
                 lib_metrics = validate_library_predictions(library, exp_csv, predicted_col=pred_col)
                 st.session_state["lib_validation_metrics"] = lib_metrics
@@ -1432,12 +1530,14 @@ def tab_validation(stability_scorer):
 def _isnan(value: float) -> bool:
     """Check if a float value is NaN."""
     import math
+
     return math.isnan(value) if isinstance(value, float) else False
 
 
 # ---------------------------------------------------------------------------
 # Tab 7 – Session History
 # ---------------------------------------------------------------------------
+
 
 def tab_history():
     st.header("📁 Session History")
@@ -1448,9 +1548,15 @@ def tab_history():
     st.subheader("Save Current Session")
     if st.button("Save session", key="btn_save_session"):
         data: dict = {}
-        for key in ["vhh_seq", "stability_scores", "nativeness_scores",
-                     "hydrophobicity_scores", "ranked_mutations", "library",
-                     "constructs"]:
+        for key in [
+            "vhh_seq",
+            "stability_scores",
+            "nativeness_scores",
+            "hydrophobicity_scores",
+            "ranked_mutations",
+            "library",
+            "constructs",
+        ]:
             val = st.session_state.get(key)
             if val is not None:
                 if isinstance(val, VHHSequence):
@@ -1488,8 +1594,7 @@ def tab_history():
                         if key in loaded and isinstance(loaded[key], list):
                             st.session_state[key] = pd.DataFrame(loaded[key])
                     # Restore dicts
-                    for key in ["stability_scores", "nativeness_scores",
-                                "hydrophobicity_scores", "constructs"]:
+                    for key in ["stability_scores", "nativeness_scores", "hydrophobicity_scores", "constructs"]:
                         if key in loaded:
                             st.session_state[key] = loaded[key]
                     st.success("Session loaded. Switch to other tabs to view results.")
@@ -1506,6 +1611,7 @@ def tab_history():
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     init_state()
 
@@ -1519,24 +1625,24 @@ def main():
         stability_backend=cfg.stability_backend,
         _model_tier=model_tier,
     )
-    (stability_scorer, hydrophobicity_scorer,
-     consensus_scorer, esm_scorer, nativeness_scorer) = scorers
+    (stability_scorer, hydrophobicity_scorer, consensus_scorer, esm_scorer, nativeness_scorer) = scorers
     optimizer = CodonOptimizer()
     tag_manager = TagManager()
     viz = SequenceVisualizer()
 
-    tabs = st.tabs([
-        "🔬 Input & Analysis",
-        "🎯 Mutation Selection",
-        "📚 Library Results",
-        "🧬 Barcoding",
-        "🔧 Construct Builder",
-        "📊 Validation",
-        "📁 Session History",
-    ])
+    tabs = st.tabs(
+        [
+            "🔬 Input & Analysis",
+            "🎯 Mutation Selection",
+            "📚 Library Results",
+            "🧬 Barcoding",
+            "🔧 Construct Builder",
+            "📊 Validation",
+            "📁 Session History",
+        ]
+    )
     with tabs[0]:
-        tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer,
-                  consensus_scorer, viz)
+        tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer, consensus_scorer, viz)
     with tabs[1]:
         tab_mutations(stability_scorer)
     with tabs[2]:
