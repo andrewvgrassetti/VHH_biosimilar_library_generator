@@ -5,6 +5,7 @@ adapter classes that wrap the existing scoring modules behind it:
 
 * :class:`AbNatiVPredictor` — AbNatiV VQ-VAE nativeness.
 * :class:`ESM2PriorPredictor` — ESM-2 pseudo-log-likelihood (optional prior).
+* :class:`NanoMeltPredictor` — NanoMelt thermal-stability Tm (optional).
 
 Importing from this package is the preferred way for **new** code to
 interact with scoring backends.  Existing code that uses
@@ -28,9 +29,12 @@ from __future__ import annotations
 from vhh_library.predictors.abnativ import AbNatiVPredictor
 from vhh_library.predictors.base import Predictor
 from vhh_library.predictors.esm2_prior import ESM2PriorPredictor
+from vhh_library.predictors.nanomelt import NANOMELT_AVAILABLE, NanoMeltPredictor
 
 __all__ = [
     "AbNatiVPredictor",
     "ESM2PriorPredictor",
+    "NANOMELT_AVAILABLE",
+    "NanoMeltPredictor",
     "Predictor",
 ]
