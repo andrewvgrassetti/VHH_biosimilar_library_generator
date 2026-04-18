@@ -76,8 +76,34 @@ class NativenessScorer:
     # ------------------------------------------------------------------
 
     def _load_scoring_fn(self):
-        """Lazy-load the AbNatiV scoring function."""
+        """Lazy-load the AbNatiV scoring function.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the AbNatiV pre-trained model weights have not been
+            downloaded.  The error message explains how to fix this.
+        """
         if self._scoring_fn is None:
+            # Verify that model weights exist before attempting to load
+            # the scoring function.  This gives a clear, actionable error
+            # instead of an opaque FileNotFoundError deep inside AbNatiV.
+            try:
+                from abnativ.init import PRETRAINED_MODELS_DIR
+            except ImportError:
+                PRETRAINED_MODELS_DIR = None  # pragma: no cover
+
+            if PRETRAINED_MODELS_DIR is not None:
+                import os
+
+                if not os.path.isdir(PRETRAINED_MODELS_DIR):
+                    raise FileNotFoundError(
+                        f"AbNatiV model weights not found at "
+                        f"{PRETRAINED_MODELS_DIR!r}.\n"
+                        "Download them by running:  vhh-init\n"
+                        "(or equivalently:  abnativ init)"
+                    )
+
             from abnativ.model.scoring_functions import abnativ_scoring
 
             self._scoring_fn = abnativ_scoring
@@ -94,10 +120,7 @@ class NativenessScorer:
         from Bio.Seq import Seq
         from Bio.SeqRecord import SeqRecord
 
-        return [
-            SeqRecord(Seq(seq), id=f"seq_{i}", description="")
-            for i, seq in enumerate(sequences)
-        ]
+        return [SeqRecord(Seq(seq), id=f"seq_{i}", description="") for i, seq in enumerate(sequences)]
 
     def _score_sequences(self, sequences: list[str]) -> list[float]:
         """Score a list of amino acid sequences and return nativeness scores.
@@ -155,9 +178,7 @@ class NativenessScorer:
         scores = self._score_sequences([vhh.sequence])
         return {"composite_score": scores[0]}
 
-    def predict_mutation_effect(
-        self, vhh: "VHHSequence", position: int | str, new_aa: str
-    ) -> float:
+    def predict_mutation_effect(self, vhh: "VHHSequence", position: int | str, new_aa: str) -> float:
         """Return the change in nativeness when mutating *position* to *new_aa*.
 
         A positive delta means the mutation *increases* nativeness.
