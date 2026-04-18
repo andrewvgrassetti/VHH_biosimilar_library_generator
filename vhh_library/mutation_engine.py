@@ -18,6 +18,8 @@ from vhh_library.nativeness import NativenessScorer
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
 )
+from vhh_library.position_policy import DesignPolicy, PositionClass
+from vhh_library.predictors.base import Predictor
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
 from vhh_library.utils import AMINO_ACIDS
@@ -94,26 +96,105 @@ class AnchorCandidate:
 
 
 # ---------------------------------------------------------------------------
+# MutationCandidate — rich metadata for a single-point mutation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MutationCandidate:
+    """Rich metadata container for a single-point mutation candidate.
+
+    Carries all scoring axes and policy information so that downstream
+    ranking layers can combine them without re-computing.
+
+    Attributes
+    ----------
+    imgt_pos : str
+        IMGT position string (e.g. ``"27"``, ``"111A"``).  Insertion-coded
+        positions are preserved as-is — never collapsed to integers.
+    original_aa : str
+        Wild-type amino acid at this position.
+    suggested_aa : str
+        Proposed substitution amino acid.
+    position_class : str
+        One of ``"frozen"``, ``"conservative"``, ``"mutable"``.
+    reasons : list[str]
+        Human-readable reasons why this candidate was proposed (or filtered).
+    abnativ_score : float | None
+        Per-axis AbNatiV nativeness score for the mutant (composite_score).
+    abnativ_delta : float | None
+        Delta AbNatiV nativeness (mutant − wild-type).
+    nanomelt_tm : float | None
+        Predicted Tm (°C) from NanoMelt for the single-mutant.
+    nanomelt_delta_tm : float | None
+        Delta Tm (mutant − wild-type) from NanoMelt.
+    esm2_prior_score : float | None
+        ESM-2 PLL-derived score for the mutant (optional).
+    esm2_pll : float | None
+        Raw ESM-2 pseudo-log-likelihood (optional).
+    liability_flags : list[str]
+        PTM liability motifs introduced by this mutation.
+    """
+
+    imgt_pos: str
+    original_aa: str
+    suggested_aa: str
+    position_class: str
+    reasons: list[str] = field(default_factory=list)
+    abnativ_score: float | None = None
+    abnativ_delta: float | None = None
+    nanomelt_tm: float | None = None
+    nanomelt_delta_tm: float | None = None
+    esm2_prior_score: float | None = None
+    esm2_pll: float | None = None
+    liability_flags: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """Serialise to a plain dictionary for DataFrame construction."""
+        return {
+            "imgt_pos": self.imgt_pos,
+            "original_aa": self.original_aa,
+            "suggested_aa": self.suggested_aa,
+            "position_class": self.position_class,
+            "reasons": ", ".join(self.reasons),
+            "abnativ_score": self.abnativ_score,
+            "abnativ_delta": self.abnativ_delta,
+            "nanomelt_tm": self.nanomelt_tm,
+            "nanomelt_delta_tm": self.nanomelt_delta_tm,
+            "esm2_prior_score": self.esm2_prior_score,
+            "esm2_pll": self.esm2_pll,
+            "liability_flags": ", ".join(self.liability_flags) if self.liability_flags else "",
+        }
+
+
+# ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 
 
-def _introduces_ptm_liability(
-    parent_seq: str, mutant_seq: str, position_0idx: int
-) -> bool:
-    """Return True if a new PTM liability appears in a ±3 window around *position_0idx*."""
+def _detect_new_ptm_liabilities(parent_seq: str, mutant_seq: str, position_0idx: int) -> list[str]:
+    """Return a list of PTM liability categories newly introduced by a mutation.
+
+    Checks a ±3 residue window around *position_0idx* for new PTM motif matches.
+    """
     start = max(0, position_0idx - 3)
     end = min(len(mutant_seq), position_0idx + 4)
 
     parent_window = parent_seq[start:end]
     mutant_window = mutant_seq[start:end]
 
-    for pattern, _category in _PTM_LIABILITY_MOTIFS:
+    new_liabilities: list[str] = []
+    for pattern, category in _PTM_LIABILITY_MOTIFS:
         parent_hits = {m.start() for m in pattern.finditer(parent_window)}
         mutant_hits = {m.start() for m in pattern.finditer(mutant_window)}
         if mutant_hits - parent_hits:
-            return True
-    return False
+            new_liabilities.append(category)
+    return new_liabilities
+
+
+def _introduces_ptm_liability(parent_seq: str, mutant_seq: str, position_0idx: int) -> bool:
+    """Return True if a new PTM liability appears in a ±3 window around *position_0idx*."""
+    return bool(_detect_new_ptm_liabilities(parent_seq, mutant_seq, position_0idx))
 
 
 def _parse_mut_str(mut_str: str) -> list[tuple[int, str]]:
@@ -325,9 +406,7 @@ class MutationEngine:
     # ------------------------------------------------------------------
 
     def _active_weights(self) -> dict[str, float]:
-        active = {
-            k: v for k, v in self._weights.items() if self._enabled_metrics.get(k, False)
-        }
+        active = {k: v for k, v in self._weights.items() if self._enabled_metrics.get(k, False)}
         total = sum(active.values())
         if total == 0:
             return active
@@ -401,9 +480,7 @@ class MutationEngine:
             if pos_key in off_limits or pos_key in cdr_positions:
                 continue
 
-            seq_idx = vhh_sequence._pos_to_seq_idx.get(
-                pos_key, _imgt_key_to_int(pos_key) - 1
-            )
+            seq_idx = vhh_sequence._pos_to_seq_idx.get(pos_key, _imgt_key_to_int(pos_key) - 1)
 
             for candidate_aa in AMINO_ACIDS:
                 if candidate_aa == original_aa:
@@ -417,9 +494,7 @@ class MutationEngine:
                 if _introduces_ptm_liability(parent_seq, mutant.sequence, seq_idx):
                     continue
 
-                delta_stab = self._stability_scorer.predict_mutation_effect(
-                    vhh_sequence, pos_key, candidate_aa
-                )
+                delta_stab = self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, candidate_aa)
 
                 candidate_dict: dict = {
                     "position": pos_key,
@@ -429,15 +504,212 @@ class MutationEngine:
                     "reason": "Stability-driven scan",
                 }
 
-                delta_nat = self._nativeness_scorer.predict_mutation_effect(
-                    vhh_sequence, pos_key, candidate_aa
-                )
+                delta_nat = self._nativeness_scorer.predict_mutation_effect(vhh_sequence, pos_key, candidate_aa)
                 candidate_dict["delta_nativeness"] = delta_nat
 
                 candidates.append(candidate_dict)
 
         candidates.sort(key=lambda c: c["delta_stability"], reverse=True)
         return candidates
+
+    # ------------------------------------------------------------------
+    # Policy-aware candidate generation (new path)
+    # ------------------------------------------------------------------
+
+    def generate_policy_aware_candidates(
+        self,
+        vhh_sequence: VHHSequence,
+        policy: DesignPolicy,
+        *,
+        abnativ_predictor: Predictor | None = None,
+        nanomelt_predictor: Predictor | None = None,
+        esm2_predictor: Predictor | None = None,
+        excluded_target_aas: set[str] | None = None,
+    ) -> list[MutationCandidate]:
+        """Generate mutation candidates respecting a :class:`DesignPolicy`.
+
+        For each position in the sequence:
+
+        * **FROZEN** — skipped entirely, no candidates emitted.
+        * **CONSERVATIVE** — only substitutions in ``allowed_aas`` are proposed.
+        * **MUTABLE** — all 19 standard substitutions are proposed.
+
+        Each candidate is scored with AbNatiV and NanoMelt (when provided),
+        and optionally with ESM-2.  PTM liability flags are recorded but do
+        **not** filter candidates — the caller decides how to handle them.
+
+        Parameters
+        ----------
+        vhh_sequence : VHHSequence
+            The wild-type VHH sequence.
+        policy : DesignPolicy
+            Position-level mutation policy.
+        abnativ_predictor : Predictor | None
+            AbNatiV nativeness predictor (wraps NativenessScorer).
+        nanomelt_predictor : Predictor | None
+            NanoMelt thermal-stability predictor.
+        esm2_predictor : Predictor | None
+            ESM-2 prior predictor (optional).
+        excluded_target_aas : set[str] | None
+            Amino acids to exclude globally (e.g. ``{"C"}``).
+
+        Returns
+        -------
+        list[MutationCandidate]
+            Candidates with fully populated metadata.
+        """
+        parent_seq = vhh_sequence.sequence
+        excluded = excluded_target_aas or set()
+
+        # Pre-compute wild-type scores for delta calculations.
+        wt_abnativ: float | None = None
+        wt_nanomelt_tm: float | None = None
+        if abnativ_predictor is not None:
+            wt_result = abnativ_predictor.score_sequence(vhh_sequence)
+            wt_abnativ = wt_result["composite_score"]
+        if nanomelt_predictor is not None:
+            wt_nm_result = nanomelt_predictor.score_sequence(vhh_sequence)
+            wt_nanomelt_tm = wt_nm_result.get("nanomelt_tm")
+
+        candidates: list[MutationCandidate] = []
+
+        for pos_key, original_aa in vhh_sequence.imgt_numbered.items():
+            pos_class = policy.effective_class(pos_key)
+
+            # FROZEN — skip entirely.
+            if pos_class is PositionClass.FROZEN:
+                continue
+
+            # Determine allowed amino acids.
+            if pos_class is PositionClass.CONSERVATIVE:
+                pos_policy = policy.get(pos_key)
+                if pos_policy is not None and pos_policy.allowed_aas is not None:
+                    allowed_aas = pos_policy.allowed_aas - {original_aa} - excluded
+                else:
+                    # Conservative position without explicit allowed_aas — this
+                    # can happen when the position class is inferred from the
+                    # region default without an explicit PositionPolicy entry.
+                    logger.warning(
+                        "CONSERVATIVE position %s has no allowed_aas defined; skipping",
+                        pos_key,
+                    )
+                    continue
+            else:
+                # MUTABLE — all standard AAs except self and excluded.
+                allowed_aas = AMINO_ACIDS - {original_aa} - excluded
+
+            seq_idx = vhh_sequence._pos_to_seq_idx.get(pos_key, _imgt_key_to_int(pos_key) - 1)
+
+            for candidate_aa in sorted(allowed_aas):
+                mutant = VHHSequence.mutate(vhh_sequence, pos_key, candidate_aa)
+
+                # Detect PTM liabilities (recorded, not filtered).
+                liability_flags = _detect_new_ptm_liabilities(parent_seq, mutant.sequence, seq_idx)
+
+                reasons: list[str] = []
+                if pos_class is PositionClass.CONSERVATIVE:
+                    reasons.append(f"Conservative: restricted to allowed_aas at IMGT {pos_key}")
+                else:
+                    reasons.append(f"Mutable: full exploration at IMGT {pos_key}")
+
+                candidate = MutationCandidate(
+                    imgt_pos=pos_key,
+                    original_aa=original_aa,
+                    suggested_aa=candidate_aa,
+                    position_class=pos_class.value,
+                    reasons=reasons,
+                    liability_flags=liability_flags,
+                )
+
+                # Score with AbNatiV.
+                if abnativ_predictor is not None:
+                    mut_result = abnativ_predictor.score_sequence(mutant)
+                    candidate.abnativ_score = mut_result["composite_score"]
+                    if wt_abnativ is not None:
+                        candidate.abnativ_delta = candidate.abnativ_score - wt_abnativ
+
+                # Score with NanoMelt.
+                if nanomelt_predictor is not None:
+                    nm_result = nanomelt_predictor.score_sequence(mutant)
+                    candidate.nanomelt_tm = nm_result.get("nanomelt_tm")
+                    if wt_nanomelt_tm is not None and candidate.nanomelt_tm is not None:
+                        candidate.nanomelt_delta_tm = candidate.nanomelt_tm - wt_nanomelt_tm
+
+                # Score with ESM-2 prior (optional).
+                if esm2_predictor is not None:
+                    esm_result = esm2_predictor.score_sequence(mutant)
+                    candidate.esm2_prior_score = esm_result.get("composite_score")
+                    candidate.esm2_pll = esm_result.get("esm2_pll")
+
+                candidates.append(candidate)
+
+        return candidates
+
+    # ------------------------------------------------------------------
+    # Multi-mutant full-sequence rescoring
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def rescore_multi_mutant(
+        vhh_sequence: VHHSequence,
+        mutations: list[tuple[str, str]],
+        *,
+        abnativ_predictor: Predictor | None = None,
+        nanomelt_predictor: Predictor | None = None,
+        esm2_predictor: Predictor | None = None,
+    ) -> dict[str, float | None]:
+        """Re-score a multi-mutant sequence using full-sequence inference.
+
+        This method applies *all* mutations simultaneously and runs each
+        predictor on the complete mutant sequence.  It does **not**
+        approximate by summing single-mutation deltas.
+
+        Parameters
+        ----------
+        vhh_sequence : VHHSequence
+            The wild-type VHH sequence.
+        mutations : list[tuple[str, str]]
+            List of ``(imgt_pos, new_aa)`` pairs.
+        abnativ_predictor, nanomelt_predictor, esm2_predictor : Predictor | None
+            Predictor instances to use for scoring.
+
+        Returns
+        -------
+        dict[str, float | None]
+            Keys include ``"abnativ_score"``, ``"nanomelt_tm"``,
+            ``"esm2_prior_score"``, ``"esm2_pll"`` — each ``None`` if
+            the corresponding predictor was not provided.
+        """
+        # Build the multi-mutant VHHSequence by applying mutations sequentially
+        # using the fast-path mutate.  Each mutation targets a distinct IMGT
+        # position, so application order does not affect the final sequence.
+        # VHHSequence.mutate copies the parent's numbering and only updates
+        # the changed residue, keeping IMGT alignment intact.
+        current = vhh_sequence
+        for imgt_pos, new_aa in mutations:
+            current = VHHSequence.mutate(current, imgt_pos, new_aa)
+
+        result: dict[str, float | None] = {
+            "abnativ_score": None,
+            "nanomelt_tm": None,
+            "esm2_prior_score": None,
+            "esm2_pll": None,
+        }
+
+        if abnativ_predictor is not None:
+            scores = abnativ_predictor.score_sequence(current)
+            result["abnativ_score"] = scores.get("composite_score")
+
+        if nanomelt_predictor is not None:
+            scores = nanomelt_predictor.score_sequence(current)
+            result["nanomelt_tm"] = scores.get("nanomelt_tm")
+
+        if esm2_predictor is not None:
+            scores = esm2_predictor.score_sequence(current)
+            result["esm2_prior_score"] = scores.get("composite_score")
+            result["esm2_pll"] = scores.get("esm2_pll")
+
+        return result
 
     # ------------------------------------------------------------------
     # Single-mutation ranking
@@ -483,17 +755,13 @@ class MutationEngine:
                 self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa),
             )
             delta_sh = (
-                self.hydrophobicity_scorer.predict_mutation_effect(
-                    vhh_sequence, pos_key, new_aa
-                )
+                self.hydrophobicity_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa)
                 if self._enabled_metrics.get("surface_hydrophobicity", False)
                 else 0.0
             )
             delta_nat = sug.get(
                 "delta_nativeness",
-                self._nativeness_scorer.predict_mutation_effect(
-                    vhh_sequence, pos_key, new_aa
-                ),
+                self._nativeness_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa),
             )
 
             raw_deltas: dict[str, float] = {
@@ -522,11 +790,7 @@ class MutationEngine:
             df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
             # Limit to max_per_position candidates per IMGT position.
             if max_per_position > 0:
-                df = (
-                    df.groupby("imgt_pos", sort=False)
-                    .head(max_per_position)
-                    .reset_index(drop=True)
-                )
+                df = df.groupby("imgt_pos", sort=False).head(max_per_position).reset_index(drop=True)
         return df
 
     # ------------------------------------------------------------------
@@ -609,13 +873,15 @@ class MutationEngine:
 
         if strategy == "exhaustive":
             rows = self._generate_exhaustive(
-                vhh_sequence, mutation_list, k_min, k_max, max_variants,
+                vhh_sequence,
+                mutation_list,
+                k_min,
+                k_max,
+                max_variants,
                 position_groups=position_groups,
             )
         elif strategy == "random":
-            rows = self._generate_sampled(
-                vhh_sequence, mutation_list, k_min, k_max, max_variants
-            )
+            rows = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, max_variants)
         elif strategy == "iterative":
             rows = self._generate_iterative(
                 vhh_sequence,
@@ -637,9 +903,7 @@ class MutationEngine:
 
         # ESM-2 progressive scoring (when scorer is available)
         if self._esm_scorer is not None and not df.empty:
-            df = self._esm_scorer.score_library_progressive(
-                vhh_sequence, df
-            )
+            df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
 
         return df
 
@@ -653,16 +917,10 @@ class MutationEngine:
         selected: list,
         variant_counter: int,
     ) -> dict:
-        mutations: list[tuple[int, str]] = [
-            (int(m.position), m.suggested_aa) for m in selected
-        ]
-        mut_labels = [
-            f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected
-        ]
+        mutations: list[tuple[int, str]] = [(int(m.position), m.suggested_aa) for m in selected]
+        mut_labels = [f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected]
 
-        mutant_seq = self.apply_mutations(
-            vhh_sequence.sequence, mutations, vhh_sequence._pos_to_seq_idx
-        )
+        mutant_seq = self.apply_mutations(vhh_sequence.sequence, mutations, vhh_sequence._pos_to_seq_idx)
         mutant_vhh = VHHSequence(mutant_seq)
         raw = self._score_variant(mutant_vhh)
         combined = self._combined_score(raw)
@@ -719,9 +977,7 @@ class MutationEngine:
                 # For each chosen set of positions, take the product of their AA options.
                 selected_groups = [groups[i] for i in pos_indices]
                 for aa_combo in itertools.product(*selected_groups):
-                    rows.append(
-                        self._build_variant_row(vhh_sequence, list(aa_combo), counter)
-                    )
+                    rows.append(self._build_variant_row(vhh_sequence, list(aa_combo), counter))
                     counter += 1
                     if len(rows) >= max_variants:
                         return rows
@@ -864,11 +1120,7 @@ class MutationEngine:
             if progress_callback is None:
                 return
             best = max((r["combined_score"] for r in all_rows), default=0.0)
-            mean = (
-                sum(r["combined_score"] for r in all_rows) / len(all_rows)
-                if all_rows
-                else 0.0
-            )
+            mean = sum(r["combined_score"] for r in all_rows) / len(all_rows) if all_rows else 0.0
             div = _mutation_entropy(all_rows) if all_rows else 0.0
             progress_callback(
                 IterativeProgress(
@@ -923,9 +1175,7 @@ class MutationEngine:
         logger.info("Phase 1: Broad exploration (%d rounds)", n_explore)
         for _ in range(n_explore):
             global_round += 1
-            new = self._generate_sampled(
-                vhh_sequence, mutation_list, k_min, k_max, per_round_explore
-            )
+            new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_explore)
             new = _esm_score_rows(new)
             _add_rows(new)
             _report("exploration", f"Exploring ({len(all_rows)} variants)")
@@ -942,16 +1192,12 @@ class MutationEngine:
         logger.info("Phase 2: Anchor identification (%d rounds)", n_anchor_id)
         for _ in range(n_anchor_id):
             global_round += 1
-            new = self._generate_sampled(
-                vhh_sequence, mutation_list, k_min, k_max, per_round_explore
-            )
+            new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_explore)
             new = _esm_score_rows(new)
             _add_rows(new)
 
         # Identify anchor candidates
-        anchor_candidates = self._identify_anchors_with_epistasis(
-            all_rows, anchor_threshold
-        )
+        anchor_candidates = self._identify_anchors_with_epistasis(all_rows, anchor_threshold)
         logger.info(
             "Identified %d anchor candidates (top confidence: %.2f)",
             len(anchor_candidates),
@@ -974,14 +1220,10 @@ class MutationEngine:
 
             if anchors:
                 new = self._generate_constrained_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max,
-                    per_round_exploit, anchors
+                    vhh_sequence, mutation_list, k_min, k_max, per_round_exploit, anchors
                 )
             else:
-                new = self._generate_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max,
-                    per_round_exploit
-                )
+                new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_exploit)
 
             new = _esm_score_rows(new)
             _add_rows(new)
@@ -990,35 +1232,32 @@ class MutationEngine:
             diversity = _mutation_entropy(all_rows)
             if diversity < _MIN_DIVERSITY_ENTROPY and mutation_list:
                 inject_n = max(int(per_round_exploit * _DIVERSITY_INJECTION_FRAC), 5)
-                inject = self._generate_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max, inject_n
-                )
+                inject = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, inject_n)
                 inject = _esm_score_rows(inject)
                 _add_rows(inject)
                 logger.debug(
                     "Injected %d random variants for diversity (entropy=%.3f)",
-                    len(inject), diversity,
+                    len(inject),
+                    diversity,
                 )
 
             # ESM-2 full PLL rescore top N each round
             _esm_rescore_full(all_rows, rescore_top_n)
 
             # Convergence check: score stagnation + diversity stabilisation
-            sorted_rows = sorted(
-                all_rows, key=lambda r: r["combined_score"], reverse=True
-            )
+            sorted_rows = sorted(all_rows, key=lambda r: r["combined_score"], reverse=True)
             top_q = sorted_rows[: max(len(sorted_rows) // 4, 1)]
             top_avg = sum(r["combined_score"] for r in top_q) / len(top_q)
             score_stagnant = abs(top_avg - prev_top_avg) < _CONVERGENCE_THRESHOLD
-            diversity_stable = (
-                abs(diversity - prev_diversity) < 0.05 if prev_diversity >= 0 else False
-            )
+            diversity_stable = abs(diversity - prev_diversity) < 0.05 if prev_diversity >= 0 else False
             if score_stagnant and diversity_stable:
                 stagnant_rounds += 1
                 if stagnant_rounds >= 2:
                     logger.info(
                         "Converged at round %d (score=%.4f, entropy=%.3f)",
-                        global_round, top_avg, diversity,
+                        global_round,
+                        top_avg,
+                        diversity,
                     )
                     break
             else:
@@ -1028,14 +1267,11 @@ class MutationEngine:
 
             # Adaptive anchor update: re-assess if new data changes landscape
             if exploit_round > 0 and exploit_round % 2 == 0:
-                anchor_candidates = self._identify_anchors_with_epistasis(
-                    all_rows, anchor_threshold
-                )
+                anchor_candidates = self._identify_anchors_with_epistasis(all_rows, anchor_threshold)
 
             _report(
                 "exploitation",
-                f"Round {global_round}: {len(all_rows)} variants, "
-                f"best={sorted_rows[0]['combined_score']:.4f}",
+                f"Round {global_round}: {len(all_rows)} variants, best={sorted_rows[0]['combined_score']:.4f}",
             )
 
             if len(all_rows) >= max_variants:
@@ -1095,9 +1331,7 @@ class MutationEngine:
         for (pos, aa), count in pa_counts.items():
             freq = count / n_top
             if freq >= freq_threshold:
-                candidates[(pos, aa)] = AnchorCandidate(
-                    position=pos, amino_acid=aa, frequency=freq
-                )
+                candidates[(pos, aa)] = AnchorCandidate(position=pos, amino_acid=aa, frequency=freq)
 
         if not candidates:
             return []
@@ -1117,9 +1351,7 @@ class MutationEngine:
                 median_without = sorted(without_scores)[len(without_scores) // 2]
                 cand.marginal_benefit = median_with - median_without
             elif with_scores:
-                cand.marginal_benefit = (
-                    sorted(with_scores)[len(with_scores) // 2] - median_all
-                )
+                cand.marginal_benefit = sorted(with_scores)[len(with_scores) // 2] - median_all
 
         # 3. Pairwise interaction analysis for top candidates
         top_candidates = sorted(
@@ -1129,7 +1361,7 @@ class MutationEngine:
         )[:_EPISTASIS_PAIR_LIMIT]
 
         for i, ca in enumerate(top_candidates):
-            for cb in top_candidates[i + 1:]:
+            for cb in top_candidates[i + 1 :]:
                 interaction = _compute_epistasis(
                     sorted_rows,
                     (ca.position, ca.amino_acid),
@@ -1156,9 +1388,7 @@ class MutationEngine:
                 0.0,
                 min(cand.marginal_benefit * _MARGINAL_SCALE + _MARGINAL_OFFSET, 1.0),
             )
-            antagonistic_penalty = sum(
-                min(v, 0.0) for v in cand.interactions.values()
-            ) * _ANTAGONISTIC_SCALE
+            antagonistic_penalty = sum(min(v, 0.0) for v in cand.interactions.values()) * _ANTAGONISTIC_SCALE
             cand.confidence = max(
                 0.0,
                 _CONFIDENCE_W_FREQ * freq_score
