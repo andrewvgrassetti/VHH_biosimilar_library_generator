@@ -31,8 +31,8 @@ if TYPE_CHECKING:
 class Predictor(abc.ABC):
     """Abstract base for all VHH scoring backends.
 
-    Subclasses must implement :pymethod:`name` and :pymethod:`score_sequence`.
-    :pymethod:`score_batch` may be overridden for backends that benefit from
+    Subclasses must implement :attr:`name` and :meth:`score_sequence`.
+    :meth:`score_batch` may be overridden for backends that benefit from
     batched inference (GPU models, network calls, etc.).
     """
 
@@ -64,7 +64,7 @@ class Predictor(abc.ABC):
     def score_batch(self, sequences: list["VHHSequence"]) -> list[dict[str, float]]:
         """Score multiple VHH sequences.
 
-        The default implementation calls :pymethod:`score_sequence` in a loop.
+        The default implementation calls :meth:`score_sequence` in a loop.
         Backends that support batched inference should override this for
         throughput.
 

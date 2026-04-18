@@ -74,7 +74,8 @@ class AbNatiVPredictor(Predictor):
     # ------------------------------------------------------------------
 
     @property
-    def name(self) -> str:  # noqa: D401
+    def name(self) -> str:
+        """Return the predictor identifier."""
         return "abnativ"
 
     def score_sequence(self, sequence: "VHHSequence") -> dict[str, float]:

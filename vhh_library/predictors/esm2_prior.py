@@ -118,7 +118,8 @@ class ESM2PriorPredictor(Predictor):
     # ------------------------------------------------------------------
 
     @property
-    def name(self) -> str:  # noqa: D401
+    def name(self) -> str:
+        """Return the predictor identifier."""
         return "esm2_prior"
 
     def score_sequence(self, sequence: "VHHSequence") -> dict[str, float]:
