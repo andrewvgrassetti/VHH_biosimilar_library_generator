@@ -101,7 +101,10 @@ def imgt_base_number(pos_key: str) -> int:
     int
         The numeric (non-insertion) portion.
     """
-    return int("".join(c for c in pos_key if c.isdigit()) or "0")
+    digits = "".join(c for c in pos_key if c.isdigit())
+    if not digits:
+        raise ValueError(f"No numeric portion found in IMGT position key: {pos_key!r}")
+    return int(digits)
 
 
 def imgt_region_for(pos_key: str) -> str | None:
@@ -180,7 +183,10 @@ class PositionPolicy:
                 raise ValueError("CONSERVATIVE positions must specify at least one allowed_aas")
             unknown = self.allowed_aas - AMINO_ACIDS
             if unknown:
-                raise ValueError(f"Unknown amino acid(s) in allowed_aas: {sorted(unknown)}")
+                raise ValueError(
+                    f"Unknown amino acid(s) in allowed_aas: {sorted(unknown)}. "
+                    f"Valid amino acids are: {sorted(AMINO_ACIDS)}"
+                )
 
         if self.position_class is PositionClass.MUTABLE and self.allowed_aas is not None:
             raise ValueError("MUTABLE positions must not specify allowed_aas (all AAs are allowed)")

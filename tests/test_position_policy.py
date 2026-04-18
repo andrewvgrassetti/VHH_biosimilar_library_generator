@@ -391,8 +391,8 @@ class TestDefaultDesignPolicy:
     def test_freeze_conserved_false(self):
         positions = [str(i) for i in range(1, 129)]
         dp = default_design_policy(positions, freeze_conserved=False)
-        # Position 23 should be in CDR1 (26–35)? No, 23 is FR1.
-        # So with freeze_conserved=False, 23 should be MUTABLE
+        # Position 23 is in FR1 (not CDR1 which spans 26–35), so with
+        # freeze_conserved=False it should be MUTABLE.
         assert dp["23"].is_mutable
 
     def test_insertion_positions_handled(self):
