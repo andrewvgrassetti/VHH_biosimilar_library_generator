@@ -1,6 +1,9 @@
 """Main Streamlit application for VHH Biosimilar Library Generator."""
 
 
+import json
+import logging
+
 import matplotlib
 import pandas as pd
 import streamlit as st
@@ -30,6 +33,17 @@ from vhh_library.nativeness import NativenessScorer
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
 )
+from vhh_library.position_classifier import PositionClassifier
+from vhh_library.position_policy import (
+    DesignPolicy,
+)
+from vhh_library.runtime_config import (
+    VALID_DEVICES,
+    VALID_NATIVENESS_BACKENDS,
+    VALID_STABILITY_BACKENDS,
+    RuntimeConfig,
+    resolve_device,
+)
 from vhh_library.sequence import IMGT_REGIONS, VHHSequence
 from vhh_library.stability import (
     StabilityScorer,
@@ -37,6 +51,8 @@ from vhh_library.stability import (
 )
 from vhh_library.tags import TagManager
 from vhh_library.visualization import SequenceVisualizer
+
+logger = logging.getLogger(__name__)
 
 _ESM2_PLL_DEFAULT_TOP_N = 10
 
@@ -51,17 +67,45 @@ st.set_page_config(
 # Cached resources
 # ---------------------------------------------------------------------------
 
+def _build_runtime_config() -> RuntimeConfig:
+    """Build a :class:`RuntimeConfig` from sidebar session-state values.
+
+    Falls back to environment variables, then to hardcoded defaults, so
+    the app works identically to the old behaviour when no sidebar
+    selection has been made yet.
+    """
+    device = st.session_state.get("cfg_device", "auto")
+    stability_backend = st.session_state.get("cfg_stability_backend", "esm2")
+    nativeness_backend = st.session_state.get("cfg_nativeness_backend", "abnativ")
+    return RuntimeConfig(
+        device=device,
+        stability_backend=stability_backend,
+        nativeness_backend=nativeness_backend,
+    )
+
+
 @st.cache_resource
-def load_scorers():
-    """Cache heavy scorer initialization."""
-    # Create ESM-2 scorer if torch/esm are available, and pass to StabilityScorer
+def load_scorers(
+    device: str = "auto",
+    stability_backend: str = "esm2",
+    _model_tier: str = "auto",
+):
+    """Cache heavy scorer initialization.
+
+    Parameters are cache keys so that changing backend/device in the
+    sidebar triggers a fresh load.
+    """
+    resolved = resolve_device(device)
+
+    # Create ESM-2 scorer if needed and available
     esm_scorer = None
-    if _esm2_pll_available():
+    if stability_backend in ("esm2", "both") and _esm2_pll_available():
         try:
             from vhh_library.esm_scorer import ESMStabilityScorer
-            esm_scorer = ESMStabilityScorer(model_tier="auto", device="auto")
-        except Exception:
-            pass
+
+            esm_scorer = ESMStabilityScorer(model_tier=_model_tier, device=resolved)
+        except Exception as exc:
+            logger.warning("ESM-2 scorer could not be initialised: %s", exc)
     s = StabilityScorer(esm_scorer=esm_scorer)
     hydro = SurfaceHydrophobicityScorer()
     cons = ConsensusStabilityScorer()
@@ -161,6 +205,56 @@ def sidebar():
     with st.sidebar:
         st.header("⚙️ Configuration")
 
+        # -- Backend & Device --
+        st.subheader("Backend & Device")
+        st.selectbox(
+            "Stability backend",
+            options=sorted(VALID_STABILITY_BACKENDS),
+            index=sorted(VALID_STABILITY_BACKENDS).index("esm2"),
+            key="cfg_stability_backend",
+            help="esm2 = ESM-2 PLL scoring, nanomelt = NanoMelt Tm predictor, both = ensemble",
+        )
+        st.selectbox(
+            "Nativeness backend",
+            options=sorted(VALID_NATIVENESS_BACKENDS),
+            index=0,
+            key="cfg_nativeness_backend",
+            help="AbNatiV VQ-VAE nativeness scoring",
+        )
+        st.selectbox(
+            "Device",
+            options=sorted(VALID_DEVICES),
+            index=sorted(VALID_DEVICES).index("auto"),
+            key="cfg_device",
+            help="auto = detect CUDA/MPS/CPU; use 'cuda' on AWS GPU instances",
+        )
+
+        # Surface predictor availability
+        resolved = resolve_device(st.session_state.get("cfg_device", "auto"))
+        st.caption(f"Resolved device: **{resolved}**")
+
+        stab_backend = st.session_state.get("cfg_stability_backend", "esm2")
+        if stab_backend in ("esm2", "both"):
+            if _esm2_pll_available():
+                st.success("✅ ESM-2 available")
+            else:
+                st.warning("⚠️ ESM-2 unavailable — install torch + fair-esm. Falling back to heuristic scoring.")
+        if stab_backend in ("nanomelt", "both"):
+            try:
+                import nanomelt  # noqa: F401
+
+                st.success("✅ NanoMelt available")
+            except ImportError:
+                st.warning('⚠️ NanoMelt not installed — pip install ".[nanomelt]". Falling back to ESM-2/heuristic.')
+        try:
+            import abnativ  # noqa: F401
+
+            st.success("✅ AbNatiV available")
+        except ImportError:
+            st.warning("⚠️ AbNatiV unavailable — run vhh-init to download model weights.")
+
+        st.divider()
+
         # -- Scoring Weights --
         st.subheader("Scoring Weights")
         enable_stability = st.checkbox("Enable stability", value=True, key="enable_stability")
@@ -235,24 +329,21 @@ def sidebar():
         st.divider()
 
         # -- ESM-2 PLL --
-        st.subheader("ESM-2 Stability Scoring")
+        st.subheader("ESM-2 Model Settings")
         esm2_available = _esm2_pll_available()
-        if esm2_available:
-            st.success("✅ ESM-2 is active and integrated into the stability scoring pipeline.")
-        else:
-            st.info("ESM-2 unavailable (torch / esm not installed). Reinstall with: pip install -e .")
+        esm2_active = stab_backend in ("esm2", "both") and esm2_available
         st.selectbox(
             "Model tier",
             options=["auto", "t6_8M", "t12_35M", "t33_650M", "t36_3B"],
             index=0,
             key="esm2_model_tier",
-            disabled=not esm2_available,
+            disabled=not esm2_active,
             help="auto = t6_8M on CPU, t33_650M on GPU",
         )
         st.slider(
             "Top N variants for advanced re-ranking",
             1, 100, _ESM2_PLL_DEFAULT_TOP_N, key="esm2_top_n",
-            disabled=not esm2_available,
+            disabled=not esm2_active,
             help="Number of top variants to re-rank with a larger ESM-2 model (Tab 3 advanced option)",
         )
 
@@ -483,6 +574,130 @@ def tab_mutations(stability_scorer):
         off_limit_positions.update(selected_positions)
     st.caption(f"Total off-limit positions: {len(off_limit_positions)}")
 
+    # -- Position Policy Review/Edit (new design system) --
+    with st.expander("📋 Position Policy (Advanced)", expanded=False):
+        st.markdown(
+            "Review and edit the position-level mutation policy. "
+            "Positions are classified as **frozen** (no mutation), "
+            "**conservative** (restricted AAs), or **mutable** (any AA)."
+        )
+
+        # Build the current policy from classifier + legacy controls
+        classifier = PositionClassifier()
+        imgt_keys = list(vhh.imgt_numbered.keys())
+        classifications = classifier.classify(imgt_keys)
+        policy = classifier.to_design_policy(imgt_keys)
+
+        # Apply legacy off-limits on top
+        if off_limit_positions:
+            policy.freeze(off_limit_positions)
+        if position_forbidden:
+            from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
+
+            for pos_key, forbidden_set in position_forbidden.items():
+                allowed = _ALL_AAS - frozenset(forbidden_set)
+                if allowed:
+                    policy.restrict(pos_key, allowed)
+                else:
+                    policy.freeze([pos_key])
+
+        # Store in session state for downstream use
+        st.session_state["_design_policy"] = policy
+
+        # Summary
+        frozen_count = len(policy.frozen_positions())
+        conservative_count = len(policy.conservative_positions())
+        mutable_count = len(policy.mutable_positions())
+        pc1, pc2, pc3 = st.columns(3)
+        with pc1:
+            st.metric("Frozen", frozen_count)
+        with pc2:
+            st.metric("Conservative", conservative_count)
+        with pc3:
+            st.metric("Mutable", mutable_count)
+
+        # Policy detail table
+        rows = []
+        for pos_key in sorted(policy.policies, key=lambda k: (int("".join(c for c in k if c.isdigit()) or "0"), k)):
+            pp = policy.policies[pos_key]
+            wt_aa = vhh.imgt_numbered.get(pos_key, "?")
+            reason = classifications.get(pos_key)
+            reason_str = reason.reason.description if reason else ""
+            rows.append({
+                "IMGT Position": pos_key,
+                "WT AA": wt_aa,
+                "Class": pp.position_class.value,
+                "Allowed AAs": ", ".join(sorted(pp.allowed_aas)) if pp.allowed_aas else "",
+                "Reason": reason_str,
+            })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        # Import / Export
+        st.markdown("---")
+        ie1, ie2 = st.columns(2)
+        with ie1:
+            st.markdown("**Export policy**")
+            export_fmt = st.radio(
+                "Format", ["JSON", "YAML"], horizontal=True, key="policy_export_fmt",
+            )
+            policy_data = policy.to_dict()
+            if export_fmt == "JSON":
+                policy_bytes = json.dumps(policy_data, indent=2).encode("utf-8")
+                st.download_button(
+                    "📥 Download policy JSON",
+                    data=policy_bytes,
+                    file_name="position_policy.json",
+                    mime="application/json",
+                    key="dl_policy_json",
+                )
+            else:
+                try:
+                    import yaml
+
+                    policy_bytes = yaml.dump(policy_data, default_flow_style=False).encode("utf-8")
+                    st.download_button(
+                        "📥 Download policy YAML",
+                        data=policy_bytes,
+                        file_name="position_policy.yaml",
+                        mime="text/yaml",
+                        key="dl_policy_yaml",
+                    )
+                except ImportError:
+                    st.info("Install PyYAML for YAML export: pip install pyyaml")
+
+        with ie2:
+            st.markdown("**Import policy**")
+            policy_file = st.file_uploader(
+                "Upload JSON or YAML policy",
+                type=["json", "yaml", "yml"],
+                key="policy_upload",
+            )
+            if policy_file is not None:
+                try:
+                    content = policy_file.getvalue().decode("utf-8")
+                    name = policy_file.name.lower()
+                    if name.endswith(".json"):
+                        imported_data = json.loads(content)
+                    elif name.endswith((".yaml", ".yml")):
+                        import yaml
+
+                        imported_data = yaml.safe_load(content)
+                    else:
+                        st.error("Unsupported file format.")
+                        imported_data = None
+
+                    if imported_data is not None:
+                        imported_policy = DesignPolicy.from_dict(imported_data)
+                        st.session_state["_design_policy"] = imported_policy
+                        st.success(
+                            f"Imported policy: {len(imported_policy.frozen_positions())} frozen, "
+                            f"{len(imported_policy.conservative_positions())} conservative, "
+                            f"{len(imported_policy.mutable_positions())} mutable positions."
+                        )
+                except Exception as exc:
+                    st.error(f"Failed to import policy: {exc}")
+
     # -- Rank mutations --
     st.subheader("Rank Mutations")
 
@@ -501,7 +716,13 @@ def tab_mutations(stability_scorer):
     weights["nativeness"] = st.session_state.get("w_nativeness", 0.30)
     enabled["nativeness"] = True
 
-    scorers = load_scorers()
+    cfg = _build_runtime_config()
+    model_tier = st.session_state.get("esm2_model_tier", "auto")
+    scorers = load_scorers(
+        device=cfg.device,
+        stability_backend=cfg.stability_backend,
+        _model_tier=model_tier,
+    )
     _, hydrophobicity_scorer, consensus_scorer, esm_scorer, nativeness_scorer = scorers
 
     if st.button("Rank single mutations", type="primary", key="btn_rank"):
@@ -1287,14 +1508,22 @@ def tab_history():
 
 def main():
     init_state()
-    scorers = load_scorers()
+
+    # Sidebar must run first so that cfg_* session-state keys exist.
+    sidebar()
+
+    cfg = _build_runtime_config()
+    model_tier = st.session_state.get("esm2_model_tier", "auto")
+    scorers = load_scorers(
+        device=cfg.device,
+        stability_backend=cfg.stability_backend,
+        _model_tier=model_tier,
+    )
     (stability_scorer, hydrophobicity_scorer,
      consensus_scorer, esm_scorer, nativeness_scorer) = scorers
     optimizer = CodonOptimizer()
     tag_manager = TagManager()
     viz = SequenceVisualizer()
-
-    sidebar()
 
     tabs = st.tabs([
         "🔬 Input & Analysis",

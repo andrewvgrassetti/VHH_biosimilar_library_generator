@@ -76,16 +76,67 @@ vhh-init   # download AbNatiV model weights (cross-platform wrapper)
 > **Note:** `vhh-init` is a cross-platform wrapper around `abnativ init`.
 > On Linux/macOS, `abnativ init` also works.  On Windows, always use `vhh-init`.
 
+### Optional: NanoMelt
+
+[NanoMelt](https://github.com/NanoMelt/nanomelt) is a thermal-stability (Tm)
+predictor that can be used as an alternative or complementary stability backend.
+It is **not** required for the default workflow.
+
+```bash
+pip install ".[nanomelt]"
+```
+
+Once installed, select **nanomelt** or **both** as the stability backend in the
+sidebar (or set the `VHH_STABILITY_BACKEND` environment variable).
+
 ## Usage
 
 ```bash
 streamlit run app.py
 ```
 
+### Backend & Device Selection
+
+The sidebar exposes backend and device controls:
+
+| Control | Options | Default |
+|---------|---------|---------|
+| **Stability backend** | `esm2`, `nanomelt`, `both` | `esm2` |
+| **Nativeness backend** | `abnativ` | `abnativ` |
+| **Device** | `auto`, `cpu`, `cuda` | `auto` |
+
+The resolved device and predictor availability are shown below the controls.
+If a selected backend is not installed, the app falls back gracefully and
+displays a warning.
+
+These can also be set via environment variables for headless / CI use:
+
+```bash
+export VHH_DEVICE=cuda
+export VHH_STABILITY_BACKEND=both
+streamlit run app.py
+```
+
+### GPU-Aware Workflow (AWS / Cloud Workstations)
+
+On an AWS instance with NVIDIA GPU:
+
+1. Install the CUDA-enabled PyTorch build (see [PyTorch docs](https://pytorch.org/get-started/locally/)).
+2. Set `Device = cuda` in the sidebar, or export `VHH_DEVICE=cuda`.
+3. For large libraries, use the `t33_650M` or `t36_3B` ESM-2 model tier in the sidebar.
+
+The app auto-detects CUDA/MPS/CPU when device is set to `auto`.
+
+### Position Policy
+
+The **Mutation Selection** tab now includes a **Position Policy** section where
+you can review the three-class classification (frozen / conservative / mutable)
+for every IMGT position, and import/export policies as JSON or YAML files.
+
 ### Default Workflow
 
 1. **Input & Analysis** — Paste a VHH sequence; the tool scores it for stability, nativeness, and surface hydrophobicity
-2. **Mutation Selection** — Configure off-limit regions and rank single-point mutations by combined stability + nativeness score
+2. **Mutation Selection** — Configure off-limit regions, review position policy, and rank single-point mutations by combined stability + nativeness score
 3. **Library Generation** — Generate a combinatorial variant library from top-ranked mutations
 4. **Library Results** — View, filter, and download the scored library with stability/nativeness/composite scores
 5. **Barcoding** — Optionally assign LC-MS/MS barcodes
@@ -123,6 +174,9 @@ pytest
 │   ├── developability.py           # PTM, clearance risk, surface hydrophobicity
 │   ├── orthogonal_scoring.py       # Consensus stability scorer
 │   ├── mutation_engine.py          # Mutation ranking & library generation
+│   ├── runtime_config.py           # Backend/device configuration
+│   ├── position_policy.py          # Three-class position mutation policy
+│   ├── position_classifier.py      # Rule-based IMGT position classifier
 │   ├── codon_optimizer.py          # Codon optimisation (4 organisms)
 │   ├── tags.py                     # Tag/linker construct assembly
 │   ├── barcodes.py                 # LC-MS/MS peptide barcoding
@@ -145,6 +199,34 @@ Compared to the original implementation, this rewrite addresses several ineffici
 6. **Deduplicated hydrophobicity scale** — Single source of truth in `AA_PROPERTIES` used by both `barcodes.py` and `developability.py`
 7. **Lazy scorer initialisation** — Optional scorers (ESM-2) are only loaded on demand
 8. **`__slots__`** on `VHHSequence` for reduced memory footprint during large library generation
+
+## Backward Compatibility & Migration Notes
+
+The pipeline is being migrated to a new design system with explicit backend
+selection, position-policy controls, and device-aware scoring. The migration is
+**staged** — the legacy workflow continues to work unchanged.
+
+### What changed
+
+- **Sidebar** now includes a **Backend & Device** section. The default values
+  (`esm2` / `abnativ` / `auto`) reproduce the old behaviour exactly.
+- **Position Policy** expander in Tab 2 provides a read-only view of the
+  three-class position classification and supports import/export. The legacy
+  off-limit checkboxes and forbidden-substitution CSV upload still work and
+  feed into the policy.
+- **`RuntimeConfig`** (`vhh_library/runtime_config.py`) centralises device and
+  backend settings.  `VHH_*` environment variables allow headless configuration
+  without code changes.
+- **`combined_score`** is a temporary compatibility output. New downstream code
+  should consume axis scores (`stability_score`, `nativeness_score`) directly.
+
+### What did not change
+
+- All existing session-state keys, CSV/FASTA export columns, and library
+  DataFrame columns are preserved.
+- `pip install -e .` and `vhh-init` remain the only required install steps
+  for the default workflow.
+- `streamlit run app.py` remains the single entry point.
 
 ## Citations
 
