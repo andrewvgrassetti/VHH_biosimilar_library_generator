@@ -262,11 +262,15 @@ class TestAnnotatePareto:
             annotate_pareto_metadata(df, axes=("stability_score", "nativeness_score"))
 
     def test_partial_axes_graceful(self) -> None:
-        """When only some axes are present, use available ones."""
+        """When only some axes are present, use available ones and rank correctly."""
         df = _make_library_df(5)
         df = df.drop(columns=["nativeness_score"])
         result = annotate_pareto_metadata(df, axes=("stability_score", "nativeness_score"))
         assert "pareto_rank" in result.columns
+        # With only stability_score, the highest stability variant should be
+        # rank 1 and dominate all lower ones (1-D Pareto = simple ordering).
+        best_idx = result["stability_score"].idxmax()
+        assert result.at[best_idx, "pareto_rank"] == 1
 
 
 # ---------------------------------------------------------------------------

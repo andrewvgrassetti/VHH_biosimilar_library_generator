@@ -166,6 +166,7 @@ def compute_pareto_ranks(scores: list[list[float]]) -> list[int]:
 
     while remaining:
         front: list[int] = []
+        # Sort once per front for deterministic iteration order.
         remaining_list = sorted(remaining)
         for i in remaining_list:
             dominated_by_any = False
@@ -227,6 +228,7 @@ def _mutation_hash(mutations_str: str, n_buckets: int) -> int:
     int
         Bucket index in ``[0, n_buckets)``.
     """
+    # MD5 is used purely for deterministic, non-cryptographic bucketing.
     digest = hashlib.md5(mutations_str.encode("utf-8")).hexdigest()  # noqa: S324
     return int(digest, 16) % n_buckets
 
