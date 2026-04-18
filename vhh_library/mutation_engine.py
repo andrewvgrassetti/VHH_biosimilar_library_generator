@@ -172,27 +172,10 @@ class MutationCandidate:
 # ---------------------------------------------------------------------------
 
 
-def _introduces_ptm_liability(parent_seq: str, mutant_seq: str, position_0idx: int) -> bool:
-    """Return True if a new PTM liability appears in a ±3 window around *position_0idx*."""
-    start = max(0, position_0idx - 3)
-    end = min(len(mutant_seq), position_0idx + 4)
-
-    parent_window = parent_seq[start:end]
-    mutant_window = mutant_seq[start:end]
-
-    for pattern, _category in _PTM_LIABILITY_MOTIFS:
-        parent_hits = {m.start() for m in pattern.finditer(parent_window)}
-        mutant_hits = {m.start() for m in pattern.finditer(mutant_window)}
-        if mutant_hits - parent_hits:
-            return True
-    return False
-
-
 def _detect_new_ptm_liabilities(parent_seq: str, mutant_seq: str, position_0idx: int) -> list[str]:
     """Return a list of PTM liability categories newly introduced by a mutation.
 
-    Same window logic as :func:`_introduces_ptm_liability` but returns the
-    specific liability types rather than a boolean.
+    Checks a ±3 residue window around *position_0idx* for new PTM motif matches.
     """
     start = max(0, position_0idx - 3)
     end = min(len(mutant_seq), position_0idx + 4)
@@ -207,6 +190,11 @@ def _detect_new_ptm_liabilities(parent_seq: str, mutant_seq: str, position_0idx:
         if mutant_hits - parent_hits:
             new_liabilities.append(category)
     return new_liabilities
+
+
+def _introduces_ptm_liability(parent_seq: str, mutant_seq: str, position_0idx: int) -> bool:
+    """Return True if a new PTM liability appears in a ±3 window around *position_0idx*."""
+    return bool(_detect_new_ptm_liabilities(parent_seq, mutant_seq, position_0idx))
 
 
 def _parse_mut_str(mut_str: str) -> list[tuple[int, str]]:
@@ -598,6 +586,13 @@ class MutationEngine:
                 if pos_policy is not None and pos_policy.allowed_aas is not None:
                     allowed_aas = pos_policy.allowed_aas - {original_aa} - excluded
                 else:
+                    # Conservative position without explicit allowed_aas — this
+                    # can happen when the position class is inferred from the
+                    # region default without an explicit PositionPolicy entry.
+                    logger.warning(
+                        "CONSERVATIVE position %s has no allowed_aas defined; skipping",
+                        pos_key,
+                    )
                     continue
             else:
                 # MUTABLE — all standard AAs except self and excluded.
@@ -686,7 +681,10 @@ class MutationEngine:
             the corresponding predictor was not provided.
         """
         # Build the multi-mutant VHHSequence by applying mutations sequentially
-        # using the fast-path mutate.
+        # using the fast-path mutate.  Each mutation targets a distinct IMGT
+        # position, so application order does not affect the final sequence.
+        # VHHSequence.mutate copies the parent's numbering and only updates
+        # the changed residue, keeping IMGT alignment intact.
         current = vhh_sequence
         for imgt_pos, new_aa in mutations:
             current = VHHSequence.mutate(current, imgt_pos, new_aa)

@@ -190,17 +190,16 @@ class TestDetectNewPTMLiabilities:
     def test_introduces_deamidation(self) -> None:
         # N followed by G/S/H triggers deamidation.
         # NG at pos 4-5 would trigger deamidation:
-        mutant2 = "AAAANGAAA"
-        # Need to set the parent without NG:
-        parent2 = "AAAAAGAAA"
-        flags = _detect_new_ptm_liabilities(parent2, mutant2, 4)
+        parent_without_ng = "AAAAAGAAA"
+        mutant_with_ng = "AAAANGAAA"
+        flags = _detect_new_ptm_liabilities(parent_without_ng, mutant_with_ng, 4)
         assert "deamidation" in flags
 
     def test_returns_specific_categories(self) -> None:
         # DG triggers isomerization.
-        mutant = "AAAADGAAA"
-        parent2 = "AAAAAGAAA"
-        flags = _detect_new_ptm_liabilities(parent2, mutant, 4)
+        parent_without_dg = "AAAAAGAAA"
+        mutant_with_dg = "AAAADGAAA"
+        flags = _detect_new_ptm_liabilities(parent_without_dg, mutant_with_dg, 4)
         assert "isomerization" in flags
 
 
