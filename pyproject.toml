@@ -39,6 +39,11 @@ nativeness = [
     # abnativ is now a core dependency; this extra is kept only
     # so that existing ``pip install ".[nativeness]"`` commands do not fail.
 ]
+nanomelt = [
+    # Placeholder for future NanoMelt thermal-stability predictor.
+    # When the nanomelt package is published, add:  nanomelt>=X.Y
+    # Until then, this extra is a no-op that documents the planned dependency.
+]
 dev = [
     "pytest>=7.0",
     "ruff>=0.4",
