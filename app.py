@@ -104,8 +104,8 @@ def load_scorers(
             from vhh_library.esm_scorer import ESMStabilityScorer
 
             esm_scorer = ESMStabilityScorer(model_tier=_model_tier, device=resolved)
-        except Exception:
-            logger.warning("ESM-2 scorer could not be initialised; continuing without it.")
+        except Exception as exc:
+            logger.warning("ESM-2 scorer could not be initialised: %s", exc)
     s = StabilityScorer(esm_scorer=esm_scorer)
     hydro = SurfaceHydrophobicityScorer()
     cons = ConsensusStabilityScorer()
