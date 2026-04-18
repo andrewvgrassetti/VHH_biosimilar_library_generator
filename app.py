@@ -84,6 +84,16 @@ def _build_runtime_config() -> RuntimeConfig:
     )
 
 
+def _show_abnativ_weights_error(exc: FileNotFoundError) -> None:
+    """Display a user-friendly Streamlit error for missing AbNatiV weights."""
+    logger.warning("AbNatiV model weights missing: %s", exc)
+    st.error(
+        "⚠️ AbNatiV model weights not found. "
+        "Please run `vhh-init` (or `abnativ init`) to download "
+        "the pre-trained model, then restart the app."
+    )
+
+
 @st.cache_resource
 def load_scorers(
     device: str = "auto",
@@ -484,12 +494,7 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer, consen
             try:
                 st.session_state["nativeness_scores"] = nativeness_scorer.score(vhh)
             except FileNotFoundError as exc:
-                logger.warning("AbNatiV model weights missing: %s", exc)
-                st.error(
-                    "⚠️ AbNatiV model weights not found. "
-                    "Please run `vhh-init` (or `abnativ init`) to download "
-                    "the pre-trained model, then restart the app."
-                )
+                _show_abnativ_weights_error(exc)
                 st.session_state["nativeness_scores"] = None
             st.session_state["hydrophobicity_scores"] = hydrophobicity_scorer.score(vhh)
             st.session_state["orthogonal_stability_scores"] = consensus_scorer.score(vhh)
@@ -800,12 +805,7 @@ def tab_mutations(stability_scorer):
                     max_per_position=st.session_state.get("max_candidates_per_position", 3),
                 )
             except FileNotFoundError as exc:
-                logger.warning("AbNatiV model weights missing during mutation ranking: %s", exc)
-                st.error(
-                    "⚠️ AbNatiV model weights not found. "
-                    "Please run `vhh-init` (or `abnativ init`) to download "
-                    "the pre-trained model, then restart the app."
-                )
+                _show_abnativ_weights_error(exc)
                 return
         st.session_state["ranked_mutations"] = ranked
         st.session_state["_mutation_engine"] = engine
@@ -871,12 +871,7 @@ def tab_mutations(stability_scorer):
                         progress_callback=_on_progress,
                     )
                 except FileNotFoundError as exc:
-                    logger.warning("AbNatiV model weights missing during library generation: %s", exc)
-                    st.error(
-                        "⚠️ AbNatiV model weights not found. "
-                        "Please run `vhh-init` (or `abnativ init`) to download "
-                        "the pre-trained model, then restart the app."
-                    )
+                    _show_abnativ_weights_error(exc)
                     return
             progress_bar.progress(1.0, text="Complete!")
             st.session_state["library"] = library

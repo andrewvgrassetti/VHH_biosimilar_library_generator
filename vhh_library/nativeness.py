@@ -17,6 +17,7 @@ The scorer follows the same interface as other scorers in this project
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from typing import TYPE_CHECKING
 
@@ -94,8 +95,6 @@ class NativenessScorer:
                 PRETRAINED_MODELS_DIR = None  # pragma: no cover
 
             if PRETRAINED_MODELS_DIR is not None:
-                import os
-
                 if not os.path.isdir(PRETRAINED_MODELS_DIR):
                     raise FileNotFoundError(
                         f"AbNatiV model weights not found at "
