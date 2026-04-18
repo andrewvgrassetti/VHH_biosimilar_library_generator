@@ -22,5 +22,5 @@ dependencies:
       - torch>=2.0
       - fair-esm>=2.0
       - abnativ
-      # Optional: uncomment below when NanoMelt is available for thermal Tm prediction
+      # Optional: install nanomelt for thermal Tm prediction (stability_backend="nanomelt")
       # - nanomelt
