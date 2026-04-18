@@ -298,12 +298,13 @@ class PositionClassifier:
         )
 
         # Merge overrides: inline first, then file (file entries win).
-        self._raw_overrides: list[dict[str, Any]] = list(overrides or [])
-        self._override_source: str = "inline"
+        # Each entry is a (dict, source_label) pair so that reason metadata
+        # correctly attributes each override to inline or file origin.
+        self._override_entries: list[tuple[dict[str, Any], str]] = [(entry, "inline") for entry in (overrides or [])]
         if override_file is not None:
+            file_source = str(override_file)
             file_overrides = load_overrides(override_file)
-            self._raw_overrides.extend(file_overrides)
-            self._override_source = str(override_file)
+            self._override_entries.extend((entry, file_source) for entry in file_overrides)
 
     # ------------------------------------------------------------------
     # Classification
@@ -426,8 +427,7 @@ class PositionClassifier:
 
     def _apply_overrides(self, classifications: dict[str, PositionClassification]) -> None:
         """Apply user overrides, mutating *classifications* in-place."""
-        for entry in self._raw_overrides:
-            source = self._override_source
+        for entry, source in self._override_entries:
             pos_key, pos_class, allowed_aas, reason_text = _parse_override_entry(entry, source)
             classifications[pos_key] = PositionClassification(
                 imgt_position=pos_key,

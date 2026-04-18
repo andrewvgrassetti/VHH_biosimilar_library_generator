@@ -342,6 +342,18 @@ class TestOverrideLoading:
         result = classifier.classify(["10"])
         assert result["10"].position_class is PositionClass.MUTABLE
 
+    def test_source_attribution_inline_vs_file(self, tmp_path):
+        """Inline overrides have source='inline', file overrides have file path."""
+        inline = [{"position": "1", "class": "frozen"}]
+        file_data = {"overrides": [{"position": "2", "class": "frozen"}]}
+        p = tmp_path / "overrides.json"
+        p.write_text(json.dumps(file_data))
+
+        classifier = PositionClassifier(overrides=inline, override_file=p)
+        result = classifier.classify(["1", "2"])
+        assert result["1"].reason.source == "inline"
+        assert result["2"].reason.source == str(p)
+
 
 # ===========================================================================
 # Override validation
