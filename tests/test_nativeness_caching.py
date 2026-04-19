@@ -125,8 +125,8 @@ class TestScoreBatchBypassesCache:
 class TestCacheMaxsize:
     """Verify cache_maxsize parameter works."""
 
-    def test_cache_maxsize_zero_still_caches(self) -> None:
-        """maxsize=0 means unlimited cache (lru_cache(maxsize=None))."""
+    def test_cache_maxsize_zero_disables_caching(self) -> None:
+        """cache_maxsize=0 disables caching — every call hits _score_sequences."""
         scorer = NativenessScorer(model_type="VHH", cache_maxsize=0)
         scorer._score_sequences = mock.Mock(side_effect=lambda seqs: [0.9] * len(seqs))
 
@@ -134,4 +134,4 @@ class TestCacheMaxsize:
         scorer.score(vhh)
         scorer.score(vhh)
 
-        scorer._score_sequences.assert_called_once()
+        assert scorer._score_sequences.call_count == 2

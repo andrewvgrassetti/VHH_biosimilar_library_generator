@@ -80,10 +80,18 @@ class NativenessScorer:
         # Build a per-instance LRU cache keyed by amino acid sequence string.
         # Using a wrapper + functools.lru_cache on a nested function gives us
         # a proper per-instance cache without making the class unhashable.
-        @functools.lru_cache(maxsize=cache_maxsize if cache_maxsize > 0 else None)
-        def _cached_score(sequence: str) -> dict:
-            scores = self._score_sequences([sequence])
-            return {"composite_score": scores[0]}
+        if cache_maxsize > 0:
+
+            @functools.lru_cache(maxsize=cache_maxsize)
+            def _cached_score(sequence: str) -> dict:
+                scores = self._score_sequences([sequence])
+                return {"composite_score": scores[0]}
+
+        else:
+            # Caching disabled — always score from scratch.
+            def _cached_score(sequence: str) -> dict:
+                scores = self._score_sequences([sequence])
+                return {"composite_score": scores[0]}
 
         self._cached_score = _cached_score
 
