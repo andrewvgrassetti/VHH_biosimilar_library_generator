@@ -20,6 +20,11 @@ IMGT_REGIONS: dict[str, tuple[int, int]] = {
 
 _MIN_LENGTH = 80
 _MAX_LENGTH = 180
+_CDR_LENGTH_RANGES: dict[str, tuple[int, int]] = {
+    "CDR1": (1, 15),
+    "CDR2": (1, 20),
+    "CDR3": (1, 30),
+}
 
 
 class VHHSequence:
@@ -145,10 +150,9 @@ class VHHSequence:
         if self.imgt_numbered.get("41") != "W":
             warnings.append("Missing conserved Trp at IMGT position 41")
 
-        cdr_length_ranges = {"CDR1": (1, 15), "CDR2": (1, 20), "CDR3": (1, 30)}
-        for cdr_name, (min_len, max_len) in cdr_length_ranges.items():
+        for cdr_name, (min_len, max_len) in _CDR_LENGTH_RANGES.items():
             start, end = IMGT_REGIONS[cdr_name]
-            cdr_len = len("".join(self.imgt_numbered.get(str(pos), "") for pos in range(start, end + 1)))
+            cdr_len = sum(1 for pos in range(start, end + 1) if str(pos) in self.imgt_numbered)
             if cdr_len == 0:
                 errors.append(f"{cdr_name} is missing from ANARCI numbering output")
             elif not (min_len <= cdr_len <= max_len):

@@ -5,10 +5,11 @@ from __future__ import annotations
 from tests.conftest import SAMPLE_VHH
 from vhh_library.sequence import VHHSequence
 
+_BASE_VHH = VHHSequence(SAMPLE_VHH)
+
 
 def _sequence_with_imgt_mutation(position: int | str, aa: str) -> str:
-    source = VHHSequence(SAMPLE_VHH)
-    return VHHSequence.mutate(source, position, aa).sequence
+    return VHHSequence.mutate(_BASE_VHH, position, aa).sequence
 
 
 def test_valid_vhh_passes_numbering_validation_gates() -> None:
