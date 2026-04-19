@@ -20,6 +20,11 @@ IMGT_REGIONS: dict[str, tuple[int, int]] = {
 
 _MIN_LENGTH = 80
 _MAX_LENGTH = 180
+_CDR_LENGTH_RANGES: dict[str, tuple[int, int]] = {
+    "CDR1": (1, 15),
+    "CDR2": (1, 20),
+    "CDR3": (1, 30),
+}
 
 
 class VHHSequence:
@@ -35,6 +40,7 @@ class VHHSequence:
     __slots__ = (
         "sequence",
         "length",
+        "strict",
         "imgt_numbered",
         "validation_result",
         "chain_type",
@@ -47,9 +53,10 @@ class VHHSequence:
     # Construction
     # ------------------------------------------------------------------
 
-    def __init__(self, sequence: str) -> None:
+    def __init__(self, sequence: str, strict: bool = True) -> None:
         self.sequence: str = sequence.upper().strip()
         self.length: int = len(self.sequence)
+        self.strict: bool = strict
 
         # ANARCI-based IMGT numbering.
         self.chain_type: str = ""
@@ -91,6 +98,7 @@ class VHHSequence:
         mutated._pos_to_seq_idx = source._pos_to_seq_idx  # shared (read-only)
         mutated.chain_type = source.chain_type
         mutated.species = source.species
+        mutated.strict = source.strict
         mutated.validation_result = source.validation_result  # skip re-validation
         return mutated
 
@@ -128,13 +136,27 @@ class VHHSequence:
             errors.append(str(exc))
             return {"valid": False, "errors": errors, "warnings": warnings}
 
-        # Conserved residue warnings (using real IMGT positions).
+        reconstructed = "".join(self.imgt_numbered.values())
+        if reconstructed != self.sequence:
+            errors.append("ANARCI numbering does not reconstruct the input sequence exactly")
+
+        # Conserved residue checks (using real IMGT positions).
         if self.imgt_numbered.get("23") != "C":
-            warnings.append("Missing conserved Cys at IMGT position 23")
+            msg = "Missing conserved Cys at IMGT position 23"
+            (errors if self.strict else warnings).append(msg)
         if self.imgt_numbered.get("104") != "C":
-            warnings.append("Missing conserved Cys at IMGT position 104")
+            msg = "Missing conserved Cys at IMGT position 104"
+            (errors if self.strict else warnings).append(msg)
         if self.imgt_numbered.get("41") != "W":
             warnings.append("Missing conserved Trp at IMGT position 41")
+
+        for cdr_name, (min_len, max_len) in _CDR_LENGTH_RANGES.items():
+            start, end = IMGT_REGIONS[cdr_name]
+            cdr_len = sum(1 for pos in range(start, end + 1) if str(pos) in self.imgt_numbered)
+            if cdr_len == 0:
+                errors.append(f"{cdr_name} is missing from ANARCI numbering output")
+            elif not (min_len <= cdr_len <= max_len):
+                warnings.append(f"{cdr_name} length {cdr_len} outside plausible range ({min_len}-{max_len})")
 
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
 
