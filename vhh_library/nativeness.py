@@ -157,6 +157,17 @@ class NativenessScorer:
                 logger.warning("Could not find score column in AbNatiV output; defaulting to 0.5")
                 raw_scores = [0.5] * len(sequences)
 
+        # Guard against AbNatiV returning fewer rows than input sequences
+        # (e.g. its internal ANARCI alignment silently rejects a sequence).
+        if len(raw_scores) != len(sequences):
+            logger.warning(
+                "AbNatiV returned %d scores for %d input sequences; missing scores will default to 0.5",
+                len(raw_scores),
+                len(sequences),
+            )
+            # Pad with neutral score for any sequences AbNatiV failed to score
+            raw_scores.extend([0.5] * (len(sequences) - len(raw_scores)))
+
         # AbNatiV scores are already in [0, 1] (approaching 1 for native).
         # Clamp to be safe.
         return [max(0.0, min(1.0, float(s))) for s in raw_scores]
@@ -204,4 +215,14 @@ class NativenessScorer:
         """
         if not sequences:
             return []
-        return self._score_sequences(sequences)
+        scores = self._score_sequences(sequences)
+        # Defense-in-depth: _score_sequences already pads, but callers may
+        # subclass or monkey-patch the method, so guard here too.
+        if len(scores) != len(sequences):
+            logger.warning(
+                "score_batch: expected %d scores but got %d; padding with 0.5",
+                len(sequences),
+                len(scores),
+            )
+            scores.extend([0.5] * (len(sequences) - len(scores)))
+        return scores
