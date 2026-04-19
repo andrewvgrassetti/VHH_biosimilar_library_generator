@@ -9,13 +9,13 @@ from vhh_library.utils import AMINO_ACIDS
 
 # IMGT region boundaries (inclusive start and end positions).
 IMGT_REGIONS: dict[str, tuple[int, int]] = {
-    "FR1": (1, 25),
-    "CDR1": (26, 35),
-    "FR2": (36, 49),
-    "CDR2": (50, 58),
-    "FR3": (59, 90),
-    "CDR3": (91, 110),
-    "FR4": (111, 128),
+    "FR1": (1, 26),
+    "CDR1": (27, 38),
+    "FR2": (39, 55),
+    "CDR2": (56, 65),
+    "FR3": (66, 104),
+    "CDR3": (105, 117),
+    "FR4": (118, 128),
 }
 
 _MIN_LENGTH = 80

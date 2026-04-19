@@ -920,8 +920,12 @@ class MutationEngine:
         mutations: list[tuple[int, str]] = [(int(m.position), m.suggested_aa) for m in selected]
         mut_labels = [f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected]
 
-        mutant_seq = self.apply_mutations(vhh_sequence.sequence, mutations, vhh_sequence._pos_to_seq_idx)
-        mutant_vhh = VHHSequence(mutant_seq)
+        # Use fast-path VHHSequence.mutate() to avoid redundant ANARCI calls.
+        current = vhh_sequence
+        for imgt_pos, new_aa in mutations:
+            current = VHHSequence.mutate(current, str(imgt_pos), new_aa)
+        mutant_vhh = current
+        mutant_seq = current.sequence
         raw = self._score_variant(mutant_vhh)
         combined = self._combined_score(raw)
 
