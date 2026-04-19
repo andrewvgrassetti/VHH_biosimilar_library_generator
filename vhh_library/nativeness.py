@@ -216,7 +216,8 @@ class NativenessScorer:
         if not sequences:
             return []
         scores = self._score_sequences(sequences)
-        # Defensive: ensure we always return exactly len(sequences) scores
+        # Defense-in-depth: _score_sequences already pads, but callers may
+        # subclass or monkey-patch the method, so guard here too.
         if len(scores) != len(sequences):
             logger.warning(
                 "score_batch: expected %d scores but got %d; padding with 0.5",

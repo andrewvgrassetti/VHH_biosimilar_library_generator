@@ -32,13 +32,15 @@ def _make_scorer_with_mock_fn(return_df: pd.DataFrame) -> NativenessScorer:
 class TestScoreSequencesEmptyDataFrame:
     """_score_sequences must handle AbNatiV returning zero rows."""
 
-    def test_returns_correct_count_for_empty_df(self) -> None:
+    def test_returns_correct_count_for_empty_df(self, caplog) -> None:
         empty_df = pd.DataFrame({"score": pd.Series([], dtype=float)})
         scorer = _make_scorer_with_mock_fn(empty_df)
 
-        result = scorer._score_sequences(["AAAA", "BBBB"])
+        with caplog.at_level("WARNING", logger="vhh_library.nativeness"):
+            result = scorer._score_sequences(["AAAA", "BBBB"])
         assert len(result) == 2
         assert all(s == 0.5 for s in result)
+        assert "returned 0 scores for 2 input sequences" in caplog.text
 
     def test_returns_correct_count_for_single_input_empty_df(self) -> None:
         empty_df = pd.DataFrame({"score": pd.Series([], dtype=float)})
@@ -52,15 +54,17 @@ class TestScoreSequencesEmptyDataFrame:
 class TestScoreSequencesFewerRows:
     """_score_sequences must pad when AbNatiV returns fewer rows than inputs."""
 
-    def test_pads_missing_scores(self) -> None:
+    def test_pads_missing_scores(self, caplog) -> None:
         partial_df = pd.DataFrame({"score": [0.9]})
         scorer = _make_scorer_with_mock_fn(partial_df)
 
-        result = scorer._score_sequences(["SEQ1", "SEQ2", "SEQ3"])
+        with caplog.at_level("WARNING", logger="vhh_library.nativeness"):
+            result = scorer._score_sequences(["SEQ1", "SEQ2", "SEQ3"])
         assert len(result) == 3
         assert result[0] == pytest.approx(0.9)
         assert result[1] == 0.5
         assert result[2] == 0.5
+        assert "returned 1 scores for 3 input sequences" in caplog.text
 
 
 class TestScoreWithEmptyAbNatiVResult:
