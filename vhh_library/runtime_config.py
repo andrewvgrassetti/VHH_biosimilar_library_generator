@@ -69,7 +69,15 @@ def resolve_device(device: str = "auto") -> str:
             import torch  # noqa: WPS433
 
             if torch.cuda.is_available():
-                return "cuda"
+                try:
+                    torch.zeros(1, device="cuda")
+                    return "cuda"
+                except Exception:
+                    warnings.warn(
+                        "CUDA reported as available but failed a smoke test; falling back to CPU.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 return "mps"
         except ImportError:
@@ -83,6 +91,15 @@ def resolve_device(device: str = "auto") -> str:
             if not torch.cuda.is_available():
                 warnings.warn(
                     "CUDA requested but not available; falling back to CPU.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return "cpu"
+            try:
+                torch.zeros(1, device="cuda")
+            except Exception:
+                warnings.warn(
+                    "CUDA reported as available but failed a smoke test; falling back to CPU.",
                     RuntimeWarning,
                     stacklevel=2,
                 )

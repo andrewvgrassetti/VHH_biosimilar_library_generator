@@ -346,6 +346,25 @@ class TestResolveDevice:
                 result = resolve_device("mps")
         assert result == "cpu"
 
+    def test_auto_cuda_smoke_test_failure_falls_back_to_cpu(self):
+        mock_torch = mock.MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.zeros.side_effect = RuntimeError("cublasLtCreate")
+        mock_torch.backends.mps.is_available.return_value = False
+        with mock.patch.dict("sys.modules", {"torch": mock_torch}):
+            with pytest.warns(RuntimeWarning, match="failed a smoke test"):
+                result = resolve_device("auto")
+        assert result == "cpu"
+
+    def test_cuda_smoke_test_failure_falls_back_to_cpu(self):
+        mock_torch = mock.MagicMock()
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.zeros.side_effect = RuntimeError("cublasLtCreate")
+        with mock.patch.dict("sys.modules", {"torch": mock_torch}):
+            with pytest.warns(RuntimeWarning, match="failed a smoke test"):
+                result = resolve_device("cuda")
+        assert result == "cpu"
+
     def test_unknown_device_passed_through(self):
         # Unknown strings are passed through — torch will raise if invalid
         assert resolve_device("xla") == "xla"
