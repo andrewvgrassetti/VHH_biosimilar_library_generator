@@ -16,6 +16,7 @@ The scorer follows the same interface as other scorers in this project
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import tempfile
@@ -60,17 +61,39 @@ class NativenessScorer:
         Default is ``"VHH"`` for broad compatibility.
     batch_size : int
         Batch size for AbNatiV inference.
+    cache_maxsize : int
+        Maximum number of single-sequence score results to cache.  Set to
+        0 to disable caching.
     """
 
     def __init__(
         self,
         model_type: str = "VHH",
         batch_size: int = 128,
+        cache_maxsize: int = 128,
     ) -> None:
         _check_abnativ_deps()
         self._model_type = model_type
         self._batch_size = batch_size
         self._scoring_fn = None  # lazy-loaded
+
+        # Build a per-instance LRU cache keyed by amino acid sequence string.
+        # Using a wrapper + functools.lru_cache on a nested function gives us
+        # a proper per-instance cache without making the class unhashable.
+        if cache_maxsize > 0:
+
+            @functools.lru_cache(maxsize=cache_maxsize)
+            def _cached_score(sequence: str) -> dict:
+                scores = self._score_sequences([sequence])
+                return {"composite_score": scores[0]}
+
+        else:
+            # Caching disabled — always score from scratch.
+            def _cached_score(sequence: str) -> dict:
+                scores = self._score_sequences([sequence])
+                return {"composite_score": scores[0]}
+
+        self._cached_score = _cached_score
 
     # ------------------------------------------------------------------
     # Lazy loading
@@ -129,18 +152,26 @@ class NativenessScorer:
         scoring_fn = self._load_scoring_fn()
         seq_records = self._make_seq_records(sequences)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            scores_df, _ = scoring_fn(
-                model_type=self._model_type,
-                seq_records=seq_records,
-                batch_size=self._batch_size,
-                mean_score_only=True,
-                do_align=True,
-                is_VHH=True,
-                output_dir=tmpdir,
-                output_id="nativeness",
-                run_parall_al=1,  # AbNatiV's API parameter name (upstream typo)
-            )
+        # Suppress verbose ANARCI log output that AbNatiV produces during
+        # its internal alignment step.
+        anarci_logger = logging.getLogger("anarci")
+        previous_level = anarci_logger.level
+        anarci_logger.setLevel(logging.WARNING)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scores_df, _ = scoring_fn(
+                    model_type=self._model_type,
+                    seq_records=seq_records,
+                    batch_size=self._batch_size,
+                    mean_score_only=True,
+                    do_align=True,
+                    is_VHH=True,
+                    output_dir=tmpdir,
+                    output_id="nativeness",
+                    run_parall_al=1,  # AbNatiV's API parameter name (upstream typo)
+                )
+        finally:
+            anarci_logger.setLevel(previous_level)
 
         # The scores DataFrame has a 'score' column (or similar).
         # Extract the nativeness score for each sequence.
@@ -179,19 +210,26 @@ class NativenessScorer:
     def score(self, vhh: "VHHSequence") -> dict:
         """Score a single VHH sequence for nativeness.
 
+        Results are cached by amino acid sequence string so repeated calls
+        with the same sequence (e.g. the parent in
+        :meth:`predict_mutation_effect`) are essentially free.
+
         Returns
         -------
         dict
             At least ``{"composite_score": float}`` where the score is in
             [0, 1] (higher = more native).
         """
-        scores = self._score_sequences([vhh.sequence])
-        return {"composite_score": scores[0]}
+        return self._cached_score(vhh.sequence)
 
     def predict_mutation_effect(self, vhh: "VHHSequence", position: int | str, new_aa: str) -> float:
         """Return the change in nativeness when mutating *position* to *new_aa*.
 
         A positive delta means the mutation *increases* nativeness.
+
+        The parent score is cached, so calling this method repeatedly for
+        different mutations on the same parent sequence does not re-invoke
+        AbNatiV for the parent.
         """
         from vhh_library.sequence import VHHSequence as _VHHSequence
 
@@ -202,6 +240,9 @@ class NativenessScorer:
 
     def score_batch(self, sequences: list[str]) -> list[float]:
         """Score multiple amino acid sequences in batch for efficiency.
+
+        This method bypasses the single-sequence cache and sends all
+        sequences to AbNatiV in a single batch call for throughput.
 
         Parameters
         ----------
