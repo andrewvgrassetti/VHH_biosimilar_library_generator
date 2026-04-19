@@ -62,8 +62,8 @@ class TestIMGTNumbering:
         assert "10" not in vhh.imgt_numbered
 
     def test_cdr_boundaries(self, vhh: VHHSequence) -> None:
-        """CDR1 spans IMGT positions 26–35; verify some residues fall in that region."""
-        cdr1_positions = {str(p) for p in range(26, 36)}
+        """CDR1 spans IMGT positions 27–38; verify some residues fall in that region."""
+        cdr1_positions = {str(p) for p in range(27, 39)}
         cdr1_residues = {
             pos: vhh.imgt_numbered[pos]
             for pos in cdr1_positions
@@ -98,7 +98,7 @@ class TestCDRPositions:
         cdr = vhh.cdr_positions
         assert isinstance(cdr, (frozenset, set))
         assert len(cdr) > 0
-        assert "26" in cdr
+        assert "27" in cdr
 
 
 class TestMutate:

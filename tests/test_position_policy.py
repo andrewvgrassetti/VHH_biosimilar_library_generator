@@ -85,18 +85,18 @@ class TestImgtBaseNumber:
 class TestImgtRegionFor:
     def test_framework_positions(self):
         assert imgt_region_for("1") == "FR1"
-        assert imgt_region_for("25") == "FR1"
-        assert imgt_region_for("36") == "FR2"
+        assert imgt_region_for("26") == "FR1"
+        assert imgt_region_for("39") == "FR2"
 
     def test_cdr_positions(self):
-        assert imgt_region_for("26") == "CDR1"
-        assert imgt_region_for("35") == "CDR1"
-        assert imgt_region_for("50") == "CDR2"
+        assert imgt_region_for("27") == "CDR1"
+        assert imgt_region_for("38") == "CDR1"
+        assert imgt_region_for("56") == "CDR2"
 
     def test_insertion_position_uses_base(self):
-        # 111 is in FR4 (111–128)
-        assert imgt_region_for("111A") == "FR4"
-        assert imgt_region_for("111B") == "FR4"
+        # 111 is in CDR3 (105–117) with corrected boundaries
+        assert imgt_region_for("111A") == "CDR3"
+        assert imgt_region_for("111B") == "CDR3"
 
     def test_out_of_range_returns_none(self):
         assert imgt_region_for("200") is None
@@ -328,8 +328,8 @@ class TestDesignPolicy:
 
     def test_effective_class_insertion_position(self):
         dp = DesignPolicy()
-        # 111 is FR4, so default is MUTABLE
-        assert dp.effective_class("111A") == PositionClass.MUTABLE
+        # 111 is CDR3 (105–117), so default is FROZEN
+        assert dp.effective_class("111A") == PositionClass.FROZEN
 
     # -- serialisation ----------------------------------------------------
 
@@ -369,8 +369,8 @@ class TestDefaultDesignPolicy:
     def test_cdr_positions_frozen(self):
         positions = [str(i) for i in range(1, 129)]
         dp = default_design_policy(positions)
-        # CDR1 positions (26–35) should be frozen
-        for pos in range(26, 36):
+        # CDR1 positions (27–38) should be frozen
+        for pos in range(27, 39):
             assert dp[str(pos)].is_frozen, f"CDR1 position {pos} should be frozen"
         # FR1 positions should be mutable (except conserved)
         assert dp["1"].is_mutable
@@ -391,16 +391,16 @@ class TestDefaultDesignPolicy:
     def test_freeze_conserved_false(self):
         positions = [str(i) for i in range(1, 129)]
         dp = default_design_policy(positions, freeze_conserved=False)
-        # Position 23 is in FR1 (not CDR1 which spans 26–35), so with
+        # Position 23 is in FR1 (not CDR1 which spans 27–38), so with
         # freeze_conserved=False it should be MUTABLE.
         assert dp["23"].is_mutable
 
     def test_insertion_positions_handled(self):
         positions = ["110", "111", "111A", "111B", "112"]
         dp = default_design_policy(positions)
-        # 111A and 111B are in FR4 → MUTABLE
-        assert dp["111A"].is_mutable
-        assert dp["111B"].is_mutable
+        # 111A and 111B are in CDR3 (105–117) → FROZEN by default
+        assert dp["111A"].is_frozen
+        assert dp["111B"].is_frozen
 
 
 # ===========================================================================

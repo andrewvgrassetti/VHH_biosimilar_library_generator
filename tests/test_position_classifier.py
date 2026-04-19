@@ -27,9 +27,9 @@ from vhh_library.utils import AMINO_ACIDS
 _ALL_POSITIONS = [str(i) for i in range(1, 129)]
 
 # A subset of CDR positions for quick checks.
-_CDR1_POSITIONS = [str(i) for i in range(26, 36)]
-_CDR2_POSITIONS = [str(i) for i in range(50, 59)]
-_CDR3_POSITIONS = [str(i) for i in range(91, 111)]
+_CDR1_POSITIONS = [str(i) for i in range(27, 39)]
+_CDR2_POSITIONS = [str(i) for i in range(56, 66)]
+_CDR3_POSITIONS = [str(i) for i in range(105, 118)]
 
 # Framework-only positions (not conserved, not conservative).
 _PLAIN_FR_POSITIONS = ["1", "2", "3", "4", "5", "10", "15", "20"]
@@ -179,11 +179,11 @@ class TestConservativePositions:
             assert result[pos].reason.rule == "framework_support"
 
     def test_custom_conservative_positions(self):
-        custom = {"60": frozenset({"A", "G", "S"})}
+        custom = {"45": frozenset({"A", "G", "S"})}
         classifier = PositionClassifier(conservative_positions=custom)
-        result = classifier.classify(["60"])
-        assert result["60"].position_class is PositionClass.CONSERVATIVE
-        assert result["60"].allowed_aas == frozenset({"A", "G", "S"})
+        result = classifier.classify(["45"])
+        assert result["45"].position_class is PositionClass.CONSERVATIVE
+        assert result["45"].allowed_aas == frozenset({"A", "G", "S"})
 
     def test_conservative_produces_valid_policy(self):
         """Conservative classifications produce valid PositionPolicy objects."""
