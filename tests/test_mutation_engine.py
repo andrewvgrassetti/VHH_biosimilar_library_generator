@@ -33,15 +33,21 @@ class _MockNativenessScorer:
 
     _SCORE_MODULO = 20
 
+    def _raw_score(self, sequence: str) -> float:
+        raw = (sum(ord(c) for c in sequence) % self._SCORE_MODULO) / self._SCORE_MODULO
+        return 0.5 + raw * 0.4
+
     def score(self, vhh: VHHSequence) -> dict:
-        raw = (len(vhh.sequence) % self._SCORE_MODULO) / self._SCORE_MODULO
-        return {"composite_score": 0.5 + raw * 0.4}
+        return {"composite_score": self._raw_score(vhh.sequence)}
 
     def predict_mutation_effect(
         self, vhh: VHHSequence, position: int | str, new_aa: str
     ) -> float:
         # Return a small deterministic delta
         return 0.02 if new_aa in "AGILV" else -0.01
+
+    def score_batch(self, sequences: list[str]) -> list[float]:
+        return [self._raw_score(seq) for seq in sequences]
 
 
 @pytest.fixture(scope="module")
@@ -737,3 +743,48 @@ class TestCombinedRanking:
         if len(ranked) >= 2:
             scores = ranked["combined_score"].tolist()
             assert scores == sorted(scores, reverse=True)
+
+
+class TestBatchNativenessScoring:
+    """Tests that nativeness is batch-scored during mutation ranking."""
+
+    def test_score_batch_used_over_predict_mutation_effect(self) -> None:
+        """Ranking should call score_batch instead of per-candidate predict_mutation_effect."""
+        call_log: list[str] = []
+
+        class _TrackingNativenessScorer(_MockNativenessScorer):
+            def predict_mutation_effect(self_, vhh, position, new_aa):
+                call_log.append("predict_mutation_effect")
+                return super().predict_mutation_effect(vhh, position, new_aa)
+
+            def score_batch(self_, sequences):
+                call_log.append("score_batch")
+                return super().score_batch(sequences)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_TrackingNativenessScorer(),
+        )
+        vhh = VHHSequence(SAMPLE_VHH)
+        ranked = engine.rank_single_mutations(vhh)
+        if not ranked.empty:
+            assert "score_batch" in call_log
+            assert "predict_mutation_effect" not in call_log
+
+    def test_batch_nativeness_deltas_are_correct(self) -> None:
+        """Batch-scored nativeness deltas should equal individually computed ones."""
+        scorer = _MockNativenessScorer()
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=scorer,
+        )
+        vhh = VHHSequence(SAMPLE_VHH)
+        ranked = engine.rank_single_mutations(vhh)
+        if ranked.empty:
+            pytest.skip("No mutations ranked")
+
+        parent_nat = scorer.score(vhh)["composite_score"]
+        for _, row in ranked.head(10).iterrows():
+            mutant = VHHSequence.mutate(vhh, row["imgt_pos"], row["suggested_aa"])
+            expected_delta = scorer.score(mutant)["composite_score"] - parent_nat
+            assert abs(row["delta_nativeness"] - expected_delta) < 1e-9

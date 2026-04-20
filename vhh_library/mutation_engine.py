@@ -466,6 +466,10 @@ class MutationEngine:
         substitutions, and excluded AAs), all 19 possible substitutions are
         evaluated using :meth:`StabilityScorer.predict_mutation_effect`.
         Mutations introducing PTM liabilities are filtered out.
+
+        Nativeness scoring is performed in a single batch call rather than
+        per-candidate to avoid repeated ANARCI re-alignment overhead inside
+        AbNatiV.
         """
         cdr_positions = vhh_sequence.cdr_positions
         parent_seq = vhh_sequence.sequence
@@ -475,6 +479,7 @@ class MutationEngine:
         excluded = excluded_target_aas or set()
 
         candidates: list[dict] = []
+        mutant_sequences: list[str] = []
 
         for pos_key, original_aa in vhh_sequence.imgt_numbered.items():
             if pos_key in off_limits or pos_key in cdr_positions:
@@ -504,10 +509,23 @@ class MutationEngine:
                     "reason": "Stability-driven scan",
                 }
 
-                delta_nat = self._nativeness_scorer.predict_mutation_effect(vhh_sequence, pos_key, candidate_aa)
-                candidate_dict["delta_nativeness"] = delta_nat
-
                 candidates.append(candidate_dict)
+                mutant_sequences.append(mutant.sequence)
+
+        # Batch-score nativeness for all mutants in a single call instead of
+        # invoking AbNatiV (and its internal ANARCI alignment) per candidate.
+        if candidates:
+            parent_nat = self._nativeness_scorer.score(vhh_sequence)["composite_score"]
+            if hasattr(self._nativeness_scorer, "score_batch"):
+                mutant_nat_scores = self._nativeness_scorer.score_batch(mutant_sequences)
+                for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
+                    candidate["delta_nativeness"] = mutant_nat - parent_nat
+            else:
+                # Fallback for scorers that lack batch support — use delta directly.
+                for candidate in candidates:
+                    candidate["delta_nativeness"] = self._nativeness_scorer.predict_mutation_effect(
+                        vhh_sequence, candidate["position"], candidate["suggested_aa"]
+                    )
 
         candidates.sort(key=lambda c: c["delta_stability"], reverse=True)
         return candidates
@@ -750,19 +768,17 @@ class MutationEngine:
             new_aa: str = sug["suggested_aa"]
             original_aa: str = sug["original_aa"]
 
-            delta_stab = sug.get(
-                "delta_stability",
-                self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa),
-            )
+            delta_stab = sug.get("delta_stability")
+            if delta_stab is None:
+                delta_stab = self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa)
             delta_sh = (
                 self.hydrophobicity_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa)
                 if self._enabled_metrics.get("surface_hydrophobicity", False)
                 else 0.0
             )
-            delta_nat = sug.get(
-                "delta_nativeness",
-                self._nativeness_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa),
-            )
+            delta_nat = sug.get("delta_nativeness")
+            if delta_nat is None:
+                delta_nat = self._nativeness_scorer.predict_mutation_effect(vhh_sequence, pos_key, new_aa)
 
             raw_deltas: dict[str, float] = {
                 "stability": delta_stab,
