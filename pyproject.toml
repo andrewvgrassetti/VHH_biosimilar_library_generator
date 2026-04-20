@@ -10,16 +10,19 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
-    # NOTE: numba and llvmlite are intentionally excluded here — they are
-    # installed via conda-forge in environment.yml to avoid macOS build
-    # failures with iomp5 and cmake.  See the README for details.
+    # NOTE: numba, llvmlite, and hmmer are intentionally excluded here —
+    # they are installed via conda in environment.yml.  numba/llvmlite
+    # avoid macOS build failures with iomp5 and cmake; hmmer is pinned
+    # to 3.3.x via bioconda because the pip hmmer package has no 3.3.x
+    # release and HMMER 3.4 produces output that BioPython's SearchIO
+    # parser cannot fully handle (None HSP coordinates that break ANARCI).
+    # See the README for details.
     "pandas>=2.0",
     "matplotlib>=3.7",
     "numpy>=1.24",
     "streamlit>=1.30",
     "scipy>=1.10",
     "anarci>=2026.2",
-    "hmmer>=3.3,<3.4",
     "python-codon-tables>=0.1.10",
     "dnachisel>=3.2",
     "torch>=2.0",
