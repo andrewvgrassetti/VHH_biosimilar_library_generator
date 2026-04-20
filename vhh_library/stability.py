@@ -61,6 +61,7 @@ def _sigmoid_normalize(tm: float, tm_min: float, tm_max: float) -> float:
     scale = (tm_max - tm_min) / 4.0
     return 1.0 / (1.0 + math.exp(-(tm - midpoint) / max(scale, 1e-6)))
 
+
 # ---------------------------------------------------------------------------
 # Optional dependency probes
 # ---------------------------------------------------------------------------
@@ -130,15 +131,13 @@ class StabilityScorer:
             )
         if esm2_weight is not None:
             _warnings.warn(
-                "esm2_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based "
-                "gating and penalties.",
+                "esm2_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based gating and penalties.",
                 DeprecationWarning,
                 stacklevel=2,
             )
         if legacy_weight is not None:
             _warnings.warn(
-                "legacy_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based "
-                "gating and penalties.",
+                "legacy_weight is deprecated and ignored; ESM-2 scoring now uses Tm-based gating and penalties.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -278,11 +277,11 @@ class StabilityScorer:
                 logger.warning("NanoMelt scoring failed", exc_info=True)
 
         # --- Combine into composite_score and scoring_method ---
-        if esm2_composite is not None and nanomelt_composite is not None:
-            # "both" — average the two backends
-            result["composite_score"] = (esm2_composite + nanomelt_composite) / 2.0
-            result["scoring_method"] = "both"
-        elif nanomelt_composite is not None:
+        # NanoMelt is the primary stability signal.  When it is available,
+        # composite_score is derived solely from NanoMelt Tm.  ESM-2 scores
+        # are still computed above for diagnostic/informational purposes but
+        # no longer influence composite_score.
+        if nanomelt_composite is not None:
             result["composite_score"] = nanomelt_composite
             result["scoring_method"] = "nanomelt"
         elif esm2_composite is not None:
@@ -299,9 +298,7 @@ class StabilityScorer:
         per_residue_pll = pll / max(seq_len, 1)
         return self._pll_slope * per_residue_pll + self._pll_intercept
 
-    def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int | str, new_aa: str
-    ) -> float:
+    def predict_mutation_effect(self, vhh: VHHSequence, position: int | str, new_aa: str) -> float:
         """Return the change in composite score when mutating *position* to *new_aa*."""
         parent_score = self.score(vhh)["composite_score"]
         mutant = VHHSequence.mutate(vhh, position, new_aa)
@@ -313,12 +310,8 @@ class StabilityScorer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _disulfide_score(
-        numbered: dict[str, str], warnings: list[str]
-    ) -> float:
-        cys_count = sum(
-            1 for pos in _DISULFIDE_POSITIONS if numbered.get(str(pos)) == "C"
-        )
+    def _disulfide_score(numbered: dict[str, str], warnings: list[str]) -> float:
+        cys_count = sum(1 for pos in _DISULFIDE_POSITIONS if numbered.get(str(pos)) == "C")
         if cys_count == 2:
             return 1.0
         if cys_count == 1:
@@ -327,9 +320,7 @@ class StabilityScorer:
         warnings.append("No canonical Cys residues found for disulfide bond")
         return 0.0
 
-    def _hallmark_score(
-        self, numbered: dict[str, str], warnings: list[str]
-    ) -> float:
+    def _hallmark_score(self, numbered: dict[str, str], warnings: list[str]) -> float:
         allowed: dict[int, set[str]] = {}
         for gl in self.germlines:
             hp = gl.get("hallmark_positions", {})
@@ -343,9 +334,7 @@ class StabilityScorer:
             if aa is not None and aa in allowed.get(pos, set()):
                 matches += 1
             else:
-                warnings.append(
-                    f"Non-canonical residue '{aa}' at VHH hallmark position {pos}"
-                )
+                warnings.append(f"Non-canonical residue '{aa}' at VHH hallmark position {pos}")
 
         return matches / len(_HALLMARK_POSITIONS) if _HALLMARK_POSITIONS else 0.0
 
@@ -357,9 +346,7 @@ class StabilityScorer:
         n_patches = 0
         for i in range(len(sequence) - window + 1):
             segment = sequence[i : i + window]
-            avg_hydro = sum(
-                AA_PROPERTIES.get(aa, {}).get("hydrophobicity", 0.0) for aa in segment
-            ) / window
+            avg_hydro = sum(AA_PROPERTIES.get(aa, {}).get("hydrophobicity", 0.0) for aa in segment) / window
             if avg_hydro > 1.5:
                 n_patches += 1
         return max(0.0, 1.0 - n_patches * 0.15)
@@ -376,9 +363,5 @@ class StabilityScorer:
     def _hydrophobic_core_score(numbered: dict[str, str]) -> float:
         if not _HALLMARK_POSITIONS:
             return 0.0
-        hits = sum(
-            1
-            for pos in _HALLMARK_POSITIONS
-            if numbered.get(str(pos), "") in _HYDROPHOBIC_AAS
-        )
+        hits = sum(1 for pos in _HALLMARK_POSITIONS if numbered.get(str(pos), "") in _HYDROPHOBIC_AAS)
         return hits / len(_HALLMARK_POSITIONS)

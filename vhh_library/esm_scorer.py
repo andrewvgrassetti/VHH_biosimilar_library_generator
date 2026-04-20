@@ -11,6 +11,8 @@ large variant libraries:
 * **Progressive funnel** (``score_library_progressive``): a multi-stage filter
   that applies fast legacy heuristics first, then ESM-2 delta scoring, and
   optionally re-scores the survivors with a larger model.
+  **Deprecated** — NanoMelt Tm is now the primary stability ranking signal.
+  Use ESM-2 delta PLL only as an optional prior filter.
 
 Scores are persisted in a lightweight SQLite cache so repeated runs skip
 redundant GPU/CPU work.
@@ -21,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -61,8 +64,7 @@ def _check_ml_deps() -> None:
         import torch  # noqa: F401
     except ImportError as exc:
         raise ImportError(
-            "ESM-2 scoring requires PyTorch and fair-esm. "
-            "Install them with:  pip install torch fair-esm"
+            "ESM-2 scoring requires PyTorch and fair-esm. Install them with:  pip install torch fair-esm"
         ) from exc
 
 
@@ -82,17 +84,12 @@ class _ScoreCache:
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
             self._conn = sqlite3.connect(self._db_path)
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS scores "
-                "(seq_hash TEXT PRIMARY KEY, score REAL)"
-            )
+            self._conn.execute("CREATE TABLE IF NOT EXISTS scores (seq_hash TEXT PRIMARY KEY, score REAL)")
             self._conn.commit()
         return self._conn
 
     def get(self, seq_hash: str) -> float | None:
-        cur = self._connect().execute(
-            "SELECT score FROM scores WHERE seq_hash = ?", (seq_hash,)
-        )
+        cur = self._connect().execute("SELECT score FROM scores WHERE seq_hash = ?", (seq_hash,))
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -152,15 +149,10 @@ class ESMStabilityScorer:
 
         # Model tier selection
         if model_tier == "auto":
-            self._tier = (
-                _GPU_DEFAULT_TIER if self._device_str == "cuda" else _CPU_DEFAULT_TIER
-            )
+            self._tier = _GPU_DEFAULT_TIER if self._device_str == "cuda" else _CPU_DEFAULT_TIER
         else:
             if model_tier not in _MODEL_TIERS:
-                raise ValueError(
-                    f"Unknown model_tier {model_tier!r}. "
-                    f"Choose from: {', '.join(_MODEL_TIERS)}"
-                )
+                raise ValueError(f"Unknown model_tier {model_tier!r}. Choose from: {', '.join(_MODEL_TIERS)}")
             self._tier = model_tier
 
         self._model_name = _MODEL_TIERS[self._tier]
@@ -169,9 +161,7 @@ class ESMStabilityScorer:
         if batch_size is not None:
             self._batch_size = batch_size
         else:
-            self._batch_size = (
-                _GPU_DEFAULT_BATCH if self._device_str == "cuda" else _CPU_DEFAULT_BATCH
-            )
+            self._batch_size = _GPU_DEFAULT_BATCH if self._device_str == "cuda" else _CPU_DEFAULT_BATCH
 
         # Model state (lazy)
         self._model = None
@@ -207,9 +197,7 @@ class ESMStabilityScorer:
         self._model = model
         self._alphabet = alphabet
         self._batch_converter = alphabet.get_batch_converter()
-        logger.info(
-            "Loaded ESM-2 model %s on %s", self._model_name, self._device_str
-        )
+        logger.info("Loaded ESM-2 model %s on %s", self._model_name, self._device_str)
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -358,6 +346,11 @@ class ESMStabilityScorer:
     ) -> pd.DataFrame:
         """Multi-stage progressive filter with ESM-2 scoring.
 
+        .. deprecated::
+            NanoMelt Tm is now the primary stability ranking signal.
+            Use ESM-2 delta PLL only as an optional prior filter.
+            This method will be removed in a future version.
+
         Stage 1: Keep top *stage1_top_frac* by the existing ``combined_score``
         (legacy heuristic + humanness composite).
 
@@ -370,6 +363,13 @@ class ESMStabilityScorer:
         Adds columns ``esm2_pll``, ``esm2_delta_pll``, and ``esm2_rank`` to
         the returned DataFrame.
         """
+        warnings.warn(
+            "score_library_progressive() is deprecated. NanoMelt Tm is now the "
+            "primary stability ranking signal. Use ESM-2 delta PLL only as an "
+            "optional prior filter. This method will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if library_df.empty:
             library_df["esm2_pll"] = pd.Series(dtype=float)
             library_df["esm2_delta_pll"] = pd.Series(dtype=float)

@@ -78,9 +78,9 @@ The pipeline is migrating toward three scoring axes:
 
 | Axis | Backend | Status |
 |------|---------|--------|
-| **Stability** | NanoMelt (thermal Tm predictor) | Planned — will replace heuristic sub-scores |
+| **Stability** | NanoMelt (thermal Tm predictor) | Active — primary stability backend |
 | **Nativeness** | AbNatiV VQ-VAE | Active — `nativeness.py` |
-| **Prior / Language-model** | ESM-2 pseudo-log-likelihood | Active — `esm_scorer.py`; will become optional prior |
+| **Prior / Language-model** | ESM-2 pseudo-log-likelihood | Active — optional prior (demoted); `esm_scorer.py` / `predictors/esm2_prior.py` |
 
 `combined_score` is a **temporary compatibility output**.  It exists so that the
 current Streamlit UI and downstream CSV exports continue to work.  It is *not*

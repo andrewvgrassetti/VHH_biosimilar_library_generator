@@ -1083,8 +1083,13 @@ def tab_library(viz):
             st.pyplot(fig2)
             plt.close(fig2)
 
-    # -- ESM-2 Stability Scores --
-    st.subheader("ESM-2 Stability Scoring")
+    # -- ESM-2 Prior (Supplementary) --
+    st.subheader("ESM-2 Prior (Supplementary)")
+    st.caption(
+        "ESM-2 PLL is an optional language-model plausibility check. "
+        "NanoMelt Tm is the primary stability ranking signal. "
+        "Scores below are for diagnostic purposes only and do not affect the primary ranking."
+    )
     if _esm2_pll_available():
         # Show existing ESM-2 scores if already computed in the pipeline
         if "esm2_pll" in library.columns:
@@ -1103,10 +1108,10 @@ def tab_library(viz):
             st.info("ESM-2 is active in the stability scorer. Predicted Tm values are included above.")
 
         # Advanced: re-rank with a specific (potentially larger) model tier
-        with st.expander("Advanced: Re-rank top variants with a specific ESM-2 model"):
+        with st.expander("Advanced: Re-rank top variants with ESM-2 (supplementary)"):
             model_tier = st.session_state.get("esm2_model_tier", "auto")
             top_n_esm = st.session_state.get("esm2_top_n", _ESM2_PLL_DEFAULT_TOP_N)
-            if st.button("Re-rank with ESM-2", key="btn_esm2"):
+            if st.button("Re-rank with ESM-2 (supplementary)", key="btn_esm2"):
                 from vhh_library.esm_scorer import ESMStabilityScorer
 
                 subset = library.nlargest(top_n_esm, "combined_score")
