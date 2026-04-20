@@ -622,9 +622,9 @@ def tab_mutations(stability_scorer):
         st.info("Please analyse a sequence first (Tab 1).")
         return
 
-    # -- Off-limit regions --
+    # -- Off-limit regions (checkboxes provide the INITIAL defaults only) --
     st.subheader("Off-Limit Regions")
-    off_limit_positions: set[str] = set()
+    checkbox_off_limits: set[str] = set()
     region_cols = st.columns(len(IMGT_REGIONS))
     for idx, (region_name, (start, end)) in enumerate(IMGT_REGIONS.items()):
         with region_cols[idx]:
@@ -633,7 +633,24 @@ def tab_mutations(stability_scorer):
                 # Collect all IMGT keys (including insertion codes) within this region.
                 for imgt_key in vhh.imgt_numbered:
                     if start <= imgt_key_int_part(imgt_key) <= end:
-                        off_limit_positions.add(imgt_key)
+                        checkbox_off_limits.add(imgt_key)
+
+    # Use session state to persist the selector's output across reruns.
+    # The checkboxes only seed the initial value; after that, the selector owns it.
+    _state_key = "_off_limit_positions"
+    _checkbox_key = "_last_checkbox_off_limits"
+
+    # Detect if checkboxes changed (user toggled a region checkbox)
+    prev_checkbox = st.session_state.get(_checkbox_key)
+    checkboxes_changed = prev_checkbox is not None and prev_checkbox != checkbox_off_limits
+    st.session_state[_checkbox_key] = checkbox_off_limits
+
+    if _state_key not in st.session_state or checkboxes_changed:
+        # First render or user toggled a checkbox → reset to checkbox state
+        st.session_state[_state_key] = checkbox_off_limits
+
+    # The stable off-limit set passed to the component (from session state)
+    off_limit_positions: set[str] = st.session_state[_state_key]
 
     # -- Forbidden substitutions CSV --
     st.subheader("Forbidden Substitutions")
@@ -668,10 +685,14 @@ def tab_mutations(stability_scorer):
         forbidden_substitutions=position_forbidden if position_forbidden else None,
         key="seq_selector",
     )
-    # The selector returns the full set of currently off-limit positions
-    # (including region-checkbox defaults). This is the authoritative source.
+    # The selector returns the authoritative set when the user interacts.
+    # On non-interaction reruns it returns the default (which matches session state).
     if selected_positions is not None:
-        off_limit_positions = set(selected_positions)
+        new_set = set(selected_positions)
+        if new_set != off_limit_positions:
+            # User made a change in the selector
+            st.session_state[_state_key] = new_set
+            off_limit_positions = new_set
     st.caption(f"Total off-limit positions: {len(off_limit_positions)}")
 
     # -- Position Policy Review/Edit (new design system) --
