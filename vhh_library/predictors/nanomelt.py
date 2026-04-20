@@ -1,9 +1,10 @@
 """NanoMelt thermal-stability predictor — optional local Tm backend.
 
 This module wraps the `nanomelt <https://pypi.org/project/nanomelt/>`_
-package behind the unified :class:`~vhh_library.predictors.base.Predictor`
-protocol.  NanoMelt predicts an apparent melting temperature (Tm, °C) for
-nanobody sequences using an ensemble ML model backed by ESM embeddings.
+package (v1.3.0+) behind the unified
+:class:`~vhh_library.predictors.base.Predictor` protocol.  NanoMelt
+predicts an apparent melting temperature (Tm, °C) for nanobody sequences
+using an ensemble ML model backed by ESM embeddings.
 
 Optional dependency
 ~~~~~~~~~~~~~~~~~~~
@@ -17,15 +18,19 @@ This lets the rest of the library and its test suite run without NanoMelt.
 
 Lazy loading
 ~~~~~~~~~~~~
-The underlying ``NanoMeltPredictor`` from the ``nanomelt`` package is
-instantiated on first inference — not at import time or ``__init__`` time
-— following the project's model-loading policy.
+NanoMelt v1.3.0 loads ESM model weights at **import** time (when
+``from nanomelt.predict import NanoMeltPredPipe`` is executed).  To
+honour the project's lazy-loading policy the import is deferred to
+first inference inside :meth:`NanoMeltPredictor._ensure_backend`.
+The availability check (:data:`NANOMELT_AVAILABLE`) uses
+:func:`importlib.util.find_spec` so it never triggers the heavy import.
 
-Device-aware
-~~~~~~~~~~~~
-Accepts a ``device`` parameter (default ``"auto"``).  Resolution is
-delegated to :func:`~vhh_library.runtime_config.resolve_device`.
-NanoMelt uses ESM embeddings internally and may run on CPU, CUDA, or MPS.
+Device handling
+~~~~~~~~~~~~~~~
+NanoMelt v1.3.0 manages GPU transfer internally — there is no
+``device`` parameter.  The constructor still accepts ``device`` for
+API compatibility but it is unused.  A warning is logged if a value
+other than ``"auto"`` or ``"cpu"`` is supplied.
 
 Local only
 ~~~~~~~~~~
@@ -34,28 +39,27 @@ All inference happens locally.  No calls are made to external web servers.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
-from typing import TYPE_CHECKING
+import warnings
+from typing import TYPE_CHECKING, Any
 
 from vhh_library.predictors.base import Predictor
-from vhh_library.runtime_config import resolve_device
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pandas as pd
+
     from vhh_library.sequence import VHHSequence
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Optional import guard
+# Optional import guard — lightweight, never triggers ESM model loading
 # ---------------------------------------------------------------------------
 
-try:
-    from nanomelt.nanomelt_predictor import NanoMeltPredictor as _NanoMeltBackend  # type: ignore[import-untyped]
-
-    NANOMELT_AVAILABLE: bool = True
-except ImportError:
-    _NanoMeltBackend = None  # type: ignore[assignment, misc]
-    NANOMELT_AVAILABLE = False
+NANOMELT_AVAILABLE: bool = importlib.util.find_spec("nanomelt") is not None
 
 # ---------------------------------------------------------------------------
 # Tm → [0, 1] normalisation
@@ -83,22 +87,57 @@ def _sigmoid_normalize_tm(tm: float, tm_min: float = _TM_IDEAL_MIN, tm_max: floa
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_TM_COLUMN: str = "NanoMelt Tm (C)"
+
+
+def _vhh_to_seqrecord(vhh: VHHSequence, record_id: str | None = None) -> Any:
+    """Convert a :class:`VHHSequence` to a BioPython ``SeqRecord``.
+
+    Parameters
+    ----------
+    vhh : VHHSequence
+        The nanobody sequence to convert.
+    record_id : str | None
+        Optional identifier for the ``SeqRecord``.  Falls back to
+        ``getattr(vhh, "name", "seq")``.
+
+    Returns
+    -------
+    Bio.SeqRecord.SeqRecord
+    """
+    from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
+
+    rid = record_id or getattr(vhh, "name", "seq")
+    return SeqRecord(Seq(vhh.sequence), id=str(rid))
+
+
+# ---------------------------------------------------------------------------
 # NanoMeltPredictor
 # ---------------------------------------------------------------------------
 
 
 class NanoMeltPredictor(Predictor):
-    """Predictor adapter for the NanoMelt thermal-stability backend.
+    """Predictor adapter for the NanoMelt (v1.3.0+) thermal-stability backend.
 
     Parameters
     ----------
     device : str
-        PyTorch device for ESM embedding generation (``"auto"``, ``"cpu"``,
-        ``"cuda"``, ``"mps"``).  Resolved via
-        :func:`~vhh_library.runtime_config.resolve_device`.
+        Retained for API compatibility.  NanoMelt v1.3.0 handles device
+        selection internally.  If a value other than ``"auto"`` or
+        ``"cpu"`` is passed, a :class:`UserWarning` is emitted.
     batch_size : int | None
-        Optional batch-size override forwarded to the NanoMelt backend.
-        ``None`` uses the backend default.
+        Optional batch-size override forwarded to ``NanoMeltPredPipe``.
+        ``None`` uses the backend default (420).
+    do_align : bool
+        Whether NanoMelt should align sequences via ANARCI before
+        prediction.  Defaults to ``True``.
+    ncpus : int
+        Number of CPUs for alignment and embedding parallelisation.
+        Defaults to ``1``.
 
     Raises
     ------
@@ -110,29 +149,66 @@ class NanoMeltPredictor(Predictor):
         self,
         device: str = "auto",
         batch_size: int | None = None,
+        *,
+        do_align: bool = True,
+        ncpus: int = 1,
     ) -> None:
         if not NANOMELT_AVAILABLE:
             raise ImportError(
                 "The 'nanomelt' package is required for NanoMeltPredictor but is not installed. "
                 "Install it with:  pip install nanomelt"
             )
+
+        # Device is no longer forwarded — NanoMelt v1.3.0 manages GPU
+        # transfer internally.  Keep the parameter for API compatibility.
         self._device = device
+        if device not in ("auto", "cpu"):
+            warnings.warn(
+                f"NanoMelt v1.3.0 handles device selection internally; the "
+                f"requested device={device!r} will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         self._batch_size = batch_size
-        self._backend: _NanoMeltBackend | None = None  # type: ignore[assignment]
-        self._resolved_device: str = "cpu"  # updated in _ensure_backend
+        self._do_align = do_align
+        self._ncpus = ncpus
+
+        # The callable is loaded lazily in _ensure_backend.
+        self._backend: Callable[..., pd.DataFrame] | None = None
 
     # ------------------------------------------------------------------
     # Lazy loading
     # ------------------------------------------------------------------
 
-    def _ensure_backend(self) -> _NanoMeltBackend:  # type: ignore[return, valid-type]
-        """Lazily instantiate the NanoMelt backend on first use."""
+    def _ensure_backend(self) -> Callable[..., pd.DataFrame]:
+        """Lazily import ``NanoMeltPredPipe`` on first use.
+
+        NanoMelt v1.3.0 loads ESM weights at import time, so the import
+        is deferred to this method.
+        """
         if self._backend is None:
-            resolved = resolve_device(self._device)
-            self._backend = _NanoMeltBackend()
-            logger.info("NanoMeltPredictor: lazily created NanoMelt backend on %s", resolved)
-            self._resolved_device = resolved
-        return self._backend  # type: ignore[return-value]
+            from nanomelt.predict import NanoMeltPredPipe  # type: ignore[import-untyped]
+
+            self._backend = NanoMeltPredPipe
+            logger.info("NanoMeltPredictor: lazily imported NanoMeltPredPipe")
+        return self._backend
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _predict_tm_for_records(self, seq_records: list[Any]) -> pd.DataFrame:
+        """Run the NanoMelt pipeline on a list of BioPython ``SeqRecord`` objects."""
+        backend = self._ensure_backend()
+        kwargs: dict[str, Any] = {
+            "seq_records": seq_records,
+            "do_align": self._do_align,
+            "ncpus": self._ncpus,
+        }
+        if self._batch_size is not None:
+            kwargs["batch_size"] = self._batch_size
+        return backend(**kwargs)
 
     # ------------------------------------------------------------------
     # Public helpers (exposed per requirements)
@@ -143,10 +219,9 @@ class NanoMeltPredictor(Predictor):
 
         This is the raw NanoMelt output — **not** normalised to [0, 1].
         """
-        backend = self._ensure_backend()
-        results = backend.predict_tm([sequence.sequence], device=self._resolved_device)
-        # predict_tm returns a list of floats; take the first element.
-        return float(results[0])
+        record = _vhh_to_seqrecord(sequence, record_id="query")
+        df = self._predict_tm_for_records([record])
+        return float(df[_TM_COLUMN].iloc[0])
 
     def delta_nanomelt_tm(
         self,
@@ -158,13 +233,13 @@ class NanoMeltPredictor(Predictor):
         A positive value indicates the mutant is predicted to be *more*
         thermostable than the wild-type.
         """
-        backend = self._ensure_backend()
-        tms = backend.predict_tm(
-            [wild_type.sequence, mutant.sequence],
-            device=self._resolved_device,
-        )
-        wt_tm = float(tms[0])
-        mut_tm = float(tms[1])
+        records = [
+            _vhh_to_seqrecord(wild_type, record_id="wild_type"),
+            _vhh_to_seqrecord(mutant, record_id="mutant"),
+        ]
+        df = self._predict_tm_for_records(records)
+        wt_tm = float(df[_TM_COLUMN].iloc[0])
+        mut_tm = float(df[_TM_COLUMN].iloc[1])
         return mut_tm - wt_tm
 
     # ------------------------------------------------------------------
@@ -194,9 +269,6 @@ class NanoMeltPredictor(Predictor):
     def score_batch(self, sequences: list[VHHSequence]) -> list[dict[str, float]]:
         """Score multiple VHH sequences using NanoMelt batch inference.
 
-        Falls back to the serial :meth:`score_sequence` loop from the
-        base class if the batch is empty.
-
         Returns
         -------
         list[dict[str, float]]
@@ -205,17 +277,14 @@ class NanoMeltPredictor(Predictor):
         if not sequences:
             return []
 
-        backend = self._ensure_backend()
-        raw_seqs = [s.sequence for s in sequences]
-
-        kwargs: dict = {"device": self._resolved_device}
-        if self._batch_size is not None:
-            kwargs["batch_size"] = self._batch_size
-
-        tms = backend.predict_tm(raw_seqs, **kwargs)
+        records = [
+            _vhh_to_seqrecord(seq, record_id=f"seq_{i}")
+            for i, seq in enumerate(sequences)
+        ]
+        df = self._predict_tm_for_records(records)
 
         results: list[dict[str, float]] = []
-        for tm_val in tms:
+        for tm_val in df[_TM_COLUMN]:
             tm = float(tm_val)
             results.append(
                 {
