@@ -1,9 +1,13 @@
-"""ESM-2 pseudo-log-likelihood predictor — adapter over :class:`~vhh_library.esm_scorer.ESMStabilityScorer`.
+"""ESM-2 pseudo-log-likelihood predictor — optional diagnostic prior.
 
-In the target architecture, ESM-2 PLL becomes an **optional prior** — a
-language-model plausibility check that can re-weight variants but is not
-required for ranking.  This adapter wraps the existing ``ESMStabilityScorer``
-behind the unified :class:`~vhh_library.predictors.base.Predictor` protocol.
+.. note::
+    ESM-2 PLL is an **optional diagnostic prior** and does **not** contribute
+    to the primary ``combined_score`` ranking.  NanoMelt Tm is the primary
+    stability backend.  ESM-2 scores are computed for informational purposes
+    only and can be used as a supplementary language-model plausibility check.
+
+This adapter wraps the existing ``ESMStabilityScorer`` behind the unified
+:class:`~vhh_library.predictors.base.Predictor` protocol.
 
 The raw PLL is normalised to a [0, 1] score via the same sigmoid mapping
 used by :class:`~vhh_library.stability.StabilityScorer` so that the
@@ -145,8 +149,10 @@ class ESM2PriorPredictor(Predictor):
         plls = scorer.score_batch(raw_seqs)
         results: list[dict[str, float]] = []
         for seq, pll in zip(sequences, plls):
-            results.append({
-                "composite_score": self._pll_to_score(pll, seq.length),
-                "esm2_pll": pll,
-            })
+            results.append(
+                {
+                    "composite_score": self._pll_to_score(pll, seq.length),
+                    "esm2_pll": pll,
+                }
+            )
         return results

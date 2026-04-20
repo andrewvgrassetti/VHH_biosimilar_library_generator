@@ -245,9 +245,10 @@ class TestProgressiveFunnel:
         parent = MagicMock()
         parent.sequence = SAMPLE_VHH
 
-        result = scorer.score_library_progressive(
-            parent, df, stage1_top_frac=0.2, stage2_top_frac=0.25, stage3=False
-        )
+        with pytest.warns(DeprecationWarning, match="score_library_progressive.*deprecated"):
+            result = scorer.score_library_progressive(
+                parent, df, stage1_top_frac=0.2, stage2_top_frac=0.25, stage3=False
+            )
 
         # Stage 1 keeps 200, stage 2 keeps 25% of 200 = 50
         assert len(result) == 50
@@ -261,11 +262,22 @@ class TestProgressiveFunnel:
         parent = MagicMock()
         parent.sequence = SAMPLE_VHH
 
-        result = scorer.score_library_progressive(parent, df)
+        with pytest.warns(DeprecationWarning, match="score_library_progressive.*deprecated"):
+            result = scorer.score_library_progressive(parent, df)
         assert len(result) == 0
         assert "esm2_pll" in result.columns
         assert "esm2_delta_pll" in result.columns
         assert "esm2_rank" in result.columns
+
+    def test_deprecation_warning_emitted(self, mock_esm_env) -> None:
+        """score_library_progressive() must emit a DeprecationWarning."""
+        scorer, _, _ = mock_esm_env
+        df = pd.DataFrame(columns=["variant_id", "aa_sequence", "combined_score"])
+        parent = MagicMock()
+        parent.sequence = SAMPLE_VHH
+
+        with pytest.warns(DeprecationWarning, match="NanoMelt Tm is now the primary"):
+            scorer.score_library_progressive(parent, df)
 
 
 class TestCaching:
@@ -284,6 +296,4 @@ class TestCaching:
         _ = scorer.score_single(SAMPLE_VHH)
         calls_after_second = fake_model.call_count
 
-        assert calls_after_second == calls_after_first, (
-            "Model was called again on a cached sequence"
-        )
+        assert calls_after_second == calls_after_first, "Model was called again on a cached sequence"

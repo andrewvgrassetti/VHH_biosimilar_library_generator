@@ -123,7 +123,7 @@ class TestMutationEffect:
 class TestScoringMethod:
     def test_scoring_method_present(self, scorer: StabilityScorer, vhh: VHHSequence) -> None:
         result = scorer.score(vhh)
-        assert result["scoring_method"] in ("legacy", "esm2", "nanomelt", "both")
+        assert result["scoring_method"] in ("legacy", "esm2", "nanomelt")
 
     def test_legacy_fallback(self, vhh: VHHSequence) -> None:
         scorer = StabilityScorer()
@@ -268,42 +268,47 @@ class TestNanoMeltScoring:
         assert isinstance(result["nanomelt_tm_score"], float)
 
     def test_both_backends(self, vhh: VHHSequence) -> None:
-        """StabilityScorer with ESM-2 + NanoMelt should use 'both' method."""
+        """StabilityScorer with ESM-2 + NanoMelt should use 'nanomelt' (NanoMelt is primary)."""
         mock_esm = MagicMock()
         mock_esm.score_single.return_value = -100.0
         mock_nm = self._make_mock_nanomelt(70.0)
         scorer = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
         result = scorer.score(vhh)
-        assert result["scoring_method"] == "both"
+        assert result["scoring_method"] == "nanomelt"
         assert "predicted_tm" in result
         assert "nanomelt_tm" in result
         assert 0.0 <= result["composite_score"] <= 1.0
 
-    def test_both_is_average_of_backends(self, vhh: VHHSequence) -> None:
-        """'both' composite should be the average of ESM-2 and NanoMelt composites."""
+    def test_both_backends_composite_equals_nanomelt_only(self, vhh: VHHSequence) -> None:
+        """When both backends are present, composite_score equals the NanoMelt-only composite."""
         mock_esm = MagicMock()
         mock_esm.score_single.return_value = -100.0
         mock_nm = self._make_mock_nanomelt(70.0)
 
-        # Get ESM-2-only score
-        esm_only = StabilityScorer(esm_scorer=mock_esm)
-        esm_result = esm_only.score(vhh)
-        esm_composite = esm_result["composite_score"]
-
         # Get NanoMelt-only score
-        nm_only = StabilityScorer(nanomelt_predictor=mock_nm)
+        nm_only = StabilityScorer(nanomelt_predictor=self._make_mock_nanomelt(70.0))
         nm_result = nm_only.score(vhh)
         nm_composite = nm_result["composite_score"]
 
-        # Get both score
-        mock_esm2 = MagicMock()
-        mock_esm2.score_single.return_value = -100.0
-        mock_nm2 = self._make_mock_nanomelt(70.0)
-        both = StabilityScorer(esm_scorer=mock_esm2, nanomelt_predictor=mock_nm2)
+        # Get both score — should match NanoMelt-only
+        both = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
         both_result = both.score(vhh)
 
-        expected = (esm_composite + nm_composite) / 2.0
-        assert both_result["composite_score"] == pytest.approx(expected, abs=1e-9)
+        assert both_result["composite_score"] == pytest.approx(nm_composite, abs=1e-9)
+
+    def test_esm2_diagnostic_keys_present_with_both(self, vhh: VHHSequence) -> None:
+        """When both backends are present, ESM-2 diagnostic keys should still be populated."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        # ESM-2 diagnostic keys must still be present
+        assert "esm2_pll" in result
+        assert "predicted_tm" in result
+        assert "tm_score" in result
+        # But the scoring method is nanomelt
+        assert result["scoring_method"] == "nanomelt"
 
     def test_nanomelt_failure_falls_back(self, vhh: VHHSequence) -> None:
         """If NanoMelt raises, scoring should fall back to legacy."""
