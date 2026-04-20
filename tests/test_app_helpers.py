@@ -223,3 +223,186 @@ class TestPolicyOverrides:
         pp = policy["10"]
         assert pp.position_class is PositionClass.CONSERVATIVE
         assert pp.allowed_aas == frozenset({"A", "G"})
+
+
+# ---------------------------------------------------------------------------
+# Policy building from interactive selector (reproduces app.py logic)
+# ---------------------------------------------------------------------------
+
+
+def _build_policy_from_selector(
+    imgt_keys: list[str],
+    off_limit_positions: set[str],
+) -> DesignPolicy:
+    """Reproduce the policy-building logic from app.py's tab_mutations.
+
+    This is the exact sequence of operations the app performs:
+    1. Build policy from classifier
+    2. Freeze off-limit positions
+    3. Un-freeze CDR positions the user removed from off-limits
+
+    Returns
+    -------
+    DesignPolicy
+        The combined policy reflecting classifier defaults overlaid with
+        interactive-selector overrides.
+    """
+    classifier = PositionClassifier()
+    classifications = classifier.classify(imgt_keys)
+    policy = classifier.to_design_policy(imgt_keys)
+
+    if off_limit_positions:
+        policy.freeze(off_limit_positions)
+
+    user_mutable = set(imgt_keys) - off_limit_positions
+    to_unfreeze = [
+        pos_key
+        for pos_key in user_mutable
+        if (pp := policy.policies.get(pos_key)) is not None
+        and pp.is_frozen
+        and (clf := classifications.get(pos_key)) is not None
+        and clf.reason.rule == "cdr_freeze"
+    ]
+    if to_unfreeze:
+        policy.make_mutable(to_unfreeze)
+
+    return policy
+
+
+class TestPolicyFromInteractiveSelector:
+    """Verify that the policy-building logic in app.py correctly maps
+    interactive selector outputs to frozen/conservative/mutable positions.
+
+    These tests reproduce the exact logic from ``tab_mutations()`` to
+    prevent regressions like the one where conserved Cys/Trp positions
+    were incorrectly unfrozen (see PR #26 follow-up).
+    """
+
+    @pytest.fixture()
+    def imgt_keys(self) -> list[str]:
+        """Positions spanning all regions including conserved residues."""
+        return [
+            "1",
+            "2",
+            "3",
+            "6",
+            "7",
+            "10",
+            "20",  # FR1
+            "23",  # conserved Cys (FR1)
+            "27",
+            "28",
+            "29",
+            "30",
+            "31",
+            "32",
+            "33",  # CDR1
+            "41",  # conserved Trp (FR2)
+            "42",
+            "49",  # FR2 hallmarks
+            "56",
+            "57",
+            "58",  # CDR2
+            "69",
+            "78",
+            "80",  # FR3 core
+            "104",  # conserved Cys (FR3)
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",  # CDR3
+            "118",  # FR4
+        ]
+
+    @pytest.fixture()
+    def cdr_off_limits(self, imgt_keys: list[str]) -> set[str]:
+        """Default off-limit set: CDR positions only."""
+        from vhh_library.components.sequence_selector import imgt_key_int_part
+        from vhh_library.sequence import IMGT_REGIONS
+
+        result: set[str] = set()
+        for region_name, (start, end) in IMGT_REGIONS.items():
+            if region_name.startswith("CDR"):
+                for key in imgt_keys:
+                    if start <= imgt_key_int_part(key) <= end:
+                        result.add(key)
+        return result
+
+    def test_conserved_positions_stay_frozen_with_default_off_limits(
+        self, imgt_keys: list[str], cdr_off_limits: set[str]
+    ):
+        """Conserved Cys-23, Trp-41, Cys-104 must remain frozen even though
+        they are not in the CDR-based off-limit set."""
+        policy = _build_policy_from_selector(imgt_keys, cdr_off_limits)
+        assert policy.effective_class("23") is PositionClass.FROZEN
+        assert policy.effective_class("41") is PositionClass.FROZEN
+        assert policy.effective_class("104") is PositionClass.FROZEN
+
+    def test_cdr_positions_frozen_when_in_off_limits(self, imgt_keys: list[str], cdr_off_limits: set[str]):
+        """CDR positions should be frozen when present in off_limit_positions."""
+        policy = _build_policy_from_selector(imgt_keys, cdr_off_limits)
+        for pos in ["27", "28", "29", "30", "31", "32", "33"]:
+            assert policy.effective_class(pos) is PositionClass.FROZEN, f"CDR1 position {pos} should be frozen"
+
+    def test_cdr_position_unfrozen_when_removed_from_off_limits(self, imgt_keys: list[str], cdr_off_limits: set[str]):
+        """Removing a CDR position from off-limits should make it mutable."""
+        reduced = cdr_off_limits - {"30"}
+        policy = _build_policy_from_selector(imgt_keys, reduced)
+        assert policy.effective_class("30") is PositionClass.MUTABLE
+        # Other CDR1 positions remain frozen
+        assert policy.effective_class("27") is PositionClass.FROZEN
+        assert policy.effective_class("33") is PositionClass.FROZEN
+
+    def test_conserved_stay_frozen_after_cdr_unfreeze(self, imgt_keys: list[str], cdr_off_limits: set[str]):
+        """Unfreezing a CDR position must not affect conserved positions."""
+        reduced = cdr_off_limits - {"30"}
+        policy = _build_policy_from_selector(imgt_keys, reduced)
+        assert policy.effective_class("23") is PositionClass.FROZEN
+        assert policy.effective_class("41") is PositionClass.FROZEN
+        assert policy.effective_class("104") is PositionClass.FROZEN
+
+    def test_conservative_positions_preserved(self, imgt_keys: list[str], cdr_off_limits: set[str]):
+        """Conservative framework positions should not be altered by off-limits."""
+        policy = _build_policy_from_selector(imgt_keys, cdr_off_limits)
+        assert policy.effective_class("42") is PositionClass.CONSERVATIVE
+        assert policy.effective_class("49") is PositionClass.CONSERVATIVE
+        assert policy.effective_class("118") is PositionClass.CONSERVATIVE
+
+    def test_framework_mutable_stays_mutable(self, imgt_keys: list[str], cdr_off_limits: set[str]):
+        """Regular framework positions remain mutable."""
+        policy = _build_policy_from_selector(imgt_keys, cdr_off_limits)
+        assert policy.effective_class("1") is PositionClass.MUTABLE
+        assert policy.effective_class("10") is PositionClass.MUTABLE
+
+    def test_framework_position_added_to_off_limits_becomes_frozen(
+        self, imgt_keys: list[str], cdr_off_limits: set[str]
+    ):
+        """User can freeze a framework position via the interactive selector."""
+        expanded = cdr_off_limits | {"10"}
+        policy = _build_policy_from_selector(imgt_keys, expanded)
+        assert policy.effective_class("10") is PositionClass.FROZEN
+
+    def test_empty_off_limits_preserves_classifier_defaults(self, imgt_keys: list[str]):
+        """With no off-limits, conserved positions must remain frozen."""
+        policy = _build_policy_from_selector(imgt_keys, set())
+        assert policy.effective_class("23") is PositionClass.FROZEN
+        assert policy.effective_class("41") is PositionClass.FROZEN
+        assert policy.effective_class("104") is PositionClass.FROZEN
+        # With empty off-limits, CDR positions become mutable because the
+        # user has deselected all region-based freezes.
+        for pos in ["27", "30", "33"]:
+            assert policy.effective_class(pos) is PositionClass.MUTABLE
+
+    def test_all_cdrs_unchecked_unfreezes_cdr_keeps_conserved(self, imgt_keys: list[str]):
+        """Unchecking all CDR checkboxes should unfreeze CDR positions
+        but keep conserved structural positions frozen."""
+        policy = _build_policy_from_selector(imgt_keys, set())
+        # CDR positions unfrozen
+        assert policy.effective_class("56") is PositionClass.MUTABLE  # CDR2
+        assert policy.effective_class("105") is PositionClass.MUTABLE  # CDR3
+        # Conserved still frozen
+        assert policy.effective_class("23") is PositionClass.FROZEN
+        assert policy.effective_class("104") is PositionClass.FROZEN
