@@ -507,7 +507,7 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer, consen
     raw_seq = st.text_area(
         "Paste your VHH amino acid sequence",
         height=120,
-        placeholder="EVQLVESGGGLVQPGGSLRLSCAASGFTF...",
+        placeholder="Paste VHH sequence here...",
         key="raw_seq_input",
     )
 
