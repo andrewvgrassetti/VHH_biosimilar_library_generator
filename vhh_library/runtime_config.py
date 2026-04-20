@@ -9,8 +9,8 @@ helper referenced by the predictor instruction set
 (``vhh_library.device_utils.resolve_device`` — aliased here until a
 dedicated ``device_utils`` module is warranted).
 
-**Default behaviour is unchanged.**  ``RuntimeConfig()`` yields NanoMelt stability on auto-detected device
-with AbNatiV nativeness.
+**Default stability backend is now NanoMelt.**  ``RuntimeConfig()`` yields
+NanoMelt stability on auto-detected device with AbNatiV nativeness.
 
 Environment-variable construction (``RuntimeConfig.from_env()``) enables
 headless / AWS workstation use without touching Python code.
