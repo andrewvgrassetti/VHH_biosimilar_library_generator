@@ -18,20 +18,29 @@ import importlib
 from typing import NamedTuple
 
 # ---------------------------------------------------------------------------
-# ANARCI / BioPython compatibility patch
+# ANARCI / BioPython compatibility patch (defensive safety net)
 # ---------------------------------------------------------------------------
-# BioPython >= 1.83 sometimes returns ``None`` for ``query_start`` /
-# ``query_end`` on HMMER 3.4 HSP objects, which crashes ANARCI's
-# ``_domains_are_same`` and ``_parse_hmmer_query``.
+# **Root cause:** HMMER 3.4 (Aug 2023) changed its output format in a way
+# that BioPython's ``SearchIO`` HMMER parser cannot fully handle.  The
+# parser returns ``None`` for ``hit_start``, ``hit_end``, ``query_start``,
+# and ``query_end`` on HSP fragments.  This is triggered by HMMER 3.4's
+# output — *not* by BioPython's version (tested with BioPython 1.82 and
+# 1.87; both produce ``None`` coordinates when HMMER 3.4 is installed).
 #
-# BioPython 1.87 additionally returns ``None`` for ``hit_start`` /
-# ``hit_end`` on HSP fragments.  Python slicing tolerates ``None``
-# (``list[None:None]`` gives the full slice), so most of ANARCI is
-# unaffected.  However, the forward-extension branch in
-# ``_hmm_alignment_to_states`` compares ``_hmm_end`` (from
-# ``hsp.hit_end``) against integer constants, which raises ``TypeError``
-# when the value is ``None``.  The same comparison also uses
-# ``_hmm_length`` from ``get_hmm_length()``, which may return ``None``.
+# The project pins HMMER to 3.3.x (``hmmer>=3.3,<3.4``) in
+# ``pyproject.toml`` and ``environment.yml``, which fully resolves the
+# issue.  The monkey-patches below are retained as a **defensive safety
+# net** in case someone upgrades HMMER past 3.3.x despite the pin.  They
+# are harmless when running with HMMER 3.3.x.
+#
+# Patches applied:
+# 1. ``_domains_are_same`` — guards ``query_start`` / ``query_end``
+#    being ``None`` (falls back to ``env_start`` / ``env_end``).
+# 2. ``_parse_hmmer_query`` — back-fills ``None`` ``query_start`` /
+#    ``query_end`` on HSP fragments using envelope coordinates.
+# 3. ``_hmm_alignment_to_states`` — guards the forward-extension branch
+#    against ``_hmm_end`` or ``_hmm_length`` being ``None`` (avoids
+#    ``TypeError`` from ``123 < _hmm_end < _hmm_length``).
 #
 # We apply a targeted monkey-patch **before** the first ``anarci()`` call.
 

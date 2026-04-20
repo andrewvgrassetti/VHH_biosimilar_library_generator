@@ -16,7 +16,7 @@ dependencies:
       - streamlit>=1.30
       - scipy>=1.10
       - anarci>=2026.2
-      - hmmer>=3.4
+      - hmmer>=3.3,<3.4
       - python-codon-tables>=0.1.10
       - dnachisel>=3.2
       - torch>=2.0
