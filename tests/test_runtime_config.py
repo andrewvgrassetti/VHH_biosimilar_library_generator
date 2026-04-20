@@ -21,7 +21,7 @@ from vhh_library.runtime_config import (
 
 
 class TestRuntimeConfigDefaults:
-    """The default config must match today's behaviour (ESM-2 + AbNatiV, auto device)."""
+    """The default config uses NanoMelt stability + AbNatiV nativeness on auto device."""
 
     def test_default_device(self):
         cfg = RuntimeConfig()
@@ -29,7 +29,7 @@ class TestRuntimeConfigDefaults:
 
     def test_default_stability_backend(self):
         cfg = RuntimeConfig()
-        assert cfg.stability_backend == "esm2"
+        assert cfg.stability_backend == "nanomelt"
 
     def test_default_nativeness_backend(self):
         cfg = RuntimeConfig()
@@ -213,7 +213,7 @@ class TestFromDict:
         cfg = RuntimeConfig.from_dict({"device": "cpu", "batch_size": 16})
         assert cfg.device == "cpu"
         assert cfg.batch_size == 16
-        assert cfg.stability_backend == "esm2"  # default
+        assert cfg.stability_backend == "nanomelt"  # default
 
     def test_unknown_keys_ignored(self):
         cfg = RuntimeConfig.from_dict({"device": "cpu", "unknown_key": 42})

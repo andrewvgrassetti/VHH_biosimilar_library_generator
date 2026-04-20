@@ -9,9 +9,8 @@ helper referenced by the predictor instruction set
 (``vhh_library.device_utils.resolve_device`` — aliased here until a
 dedicated ``device_utils`` module is warranted).
 
-**Default behaviour is unchanged.**  ``RuntimeConfig()`` yields the same
-scorer wiring that exists today (ESM-2 stability on auto-detected device,
-AbNatiV nativeness).
+**Default behaviour is unchanged.**  ``RuntimeConfig()`` yields NanoMelt stability on auto-detected device
+with AbNatiV nativeness.
 
 Environment-variable construction (``RuntimeConfig.from_env()``) enables
 headless / AWS workstation use without touching Python code.
@@ -167,7 +166,7 @@ class RuntimeConfig:
     """
 
     device: str = "auto"
-    stability_backend: str = "esm2"
+    stability_backend: str = "nanomelt"
     nativeness_backend: str = "abnativ"
     batch_size: int | None = None
     cache_dir: str | None = None
@@ -180,13 +179,10 @@ class RuntimeConfig:
 
     def __post_init__(self) -> None:
         if self.device not in VALID_DEVICES:
-            raise ValueError(
-                f"Invalid device {self.device!r}; choose from {sorted(VALID_DEVICES)}"
-            )
+            raise ValueError(f"Invalid device {self.device!r}; choose from {sorted(VALID_DEVICES)}")
         if self.stability_backend not in VALID_STABILITY_BACKENDS:
             raise ValueError(
-                f"Invalid stability_backend {self.stability_backend!r}; "
-                f"choose from {sorted(VALID_STABILITY_BACKENDS)}"
+                f"Invalid stability_backend {self.stability_backend!r}; choose from {sorted(VALID_STABILITY_BACKENDS)}"
             )
         if self.nativeness_backend not in VALID_NATIVENESS_BACKENDS:
             raise ValueError(
