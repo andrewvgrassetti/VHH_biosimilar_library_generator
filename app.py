@@ -668,8 +668,10 @@ def tab_mutations(stability_scorer):
         forbidden_substitutions=position_forbidden if position_forbidden else None,
         key="seq_selector",
     )
-    if selected_positions:
-        off_limit_positions.update(selected_positions)
+    # The selector returns the full set of currently off-limit positions
+    # (including region-checkbox defaults). This is the authoritative source.
+    if selected_positions is not None:
+        off_limit_positions = set(selected_positions)
     st.caption(f"Total off-limit positions: {len(off_limit_positions)}")
 
     # -- Position Policy Review/Edit (new design system) --
@@ -689,6 +691,17 @@ def tab_mutations(stability_scorer):
         # Apply legacy off-limits on top
         if off_limit_positions:
             policy.freeze(off_limit_positions)
+
+        # Un-freeze positions that the user explicitly removed from off-limits
+        # (i.e., positions that the classifier froze but the user deselected).
+        user_mutable = set(vhh.imgt_numbered.keys()) - off_limit_positions
+        # Only override classifier's FROZEN positions, not CONSERVATIVE ones
+        to_unfreeze = [
+            pos_key for pos_key in user_mutable if (pp := policy.policies.get(pos_key)) is not None and pp.is_frozen
+        ]
+        if to_unfreeze:
+            policy.make_mutable(to_unfreeze)
+
         if position_forbidden:
             from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
 
