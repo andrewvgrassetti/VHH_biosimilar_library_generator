@@ -856,3 +856,63 @@ class TestPositionAwareSampling:
         with caplog.at_level(logging.WARNING):
             engine.generate_library(vhh, top5, n_mutations=n_positions, min_mutations=n_positions + 5, max_variants=10)
         assert any("clamping" in msg.lower() for msg in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# NanoMelt propagation through the scoring pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestNanoMeltPropagation:
+    """Verify that nanomelt_tm flows through _score_variant and _build_variant_row."""
+
+    @staticmethod
+    def _make_mock_nanomelt(tm: float = 70.0):
+        from unittest.mock import MagicMock
+
+        mock = MagicMock()
+        mock.score_sequence.return_value = {
+            "composite_score": 0.6,
+            "nanomelt_tm": tm,
+        }
+        return mock
+
+    def test_score_variant_includes_nanomelt_tm(self) -> None:
+        """_score_variant should include nanomelt_tm when NanoMelt is configured."""
+        mock_nm = self._make_mock_nanomelt(72.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        vhh = VHHSequence(SAMPLE_VHH)
+        raw = engine._score_variant(vhh)
+        assert "nanomelt_tm" in raw
+        assert raw["nanomelt_tm"] == 72.0
+
+    def test_build_variant_row_includes_nanomelt_tm(self) -> None:
+        """Generated library rows should include nanomelt_tm when NanoMelt is configured."""
+        mock_nm = self._make_mock_nanomelt(72.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        vhh = VHHSequence(SAMPLE_VHH)
+        ranked = engine.rank_single_mutations(vhh)
+        if ranked.empty:
+            pytest.skip("No mutations ranked")
+        lib = engine.generate_library(vhh, ranked.head(3), n_mutations=1)
+        if not lib.empty:
+            assert "nanomelt_tm" in lib.columns
+
+    def test_no_nanomelt_tm_without_predictor(self) -> None:
+        """Without NanoMelt, nanomelt_tm should not appear in scores."""
+        scorer = StabilityScorer()
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        vhh = VHHSequence(SAMPLE_VHH)
+        raw = engine._score_variant(vhh)
+        assert "nanomelt_tm" not in raw

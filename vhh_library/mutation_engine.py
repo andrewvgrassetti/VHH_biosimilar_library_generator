@@ -432,6 +432,9 @@ class MutationEngine:
         if "predicted_tm" in stab:
             scores["predicted_tm"] = stab["predicted_tm"]
 
+        if "nanomelt_tm" in stab:
+            scores["nanomelt_tm"] = stab["nanomelt_tm"]
+
         if self._enabled_metrics.get("surface_hydrophobicity", False):
             sh = self.hydrophobicity_scorer.score(vhh)
             scores["surface_hydrophobicity"] = sh["composite_score"]
@@ -988,6 +991,9 @@ class MutationEngine:
 
         if "predicted_tm" in raw:
             row["predicted_tm"] = raw["predicted_tm"]
+
+        if "nanomelt_tm" in raw:
+            row["nanomelt_tm"] = raw["nanomelt_tm"]
 
         return row
 
