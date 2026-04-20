@@ -186,8 +186,16 @@ class NanoMeltPredictor(Predictor):
 
         NanoMelt v1.3.0 loads ESM weights at import time, so the import
         is deferred to this method.
+
+        The ANARCI compatibility patch is applied before the import so
+        that NanoMelt's internal ANARCI calls (with ``do_align=True``)
+        are protected against ``None`` coordinates from BioPython >= 1.83.
         """
         if self._backend is None:
+            from vhh_library.numbering import _apply_anarci_compat_patch
+
+            _apply_anarci_compat_patch()
+
             from nanomelt.predict import NanoMeltPredPipe  # type: ignore[import-untyped]
 
             self._backend = NanoMeltPredPipe
@@ -277,10 +285,7 @@ class NanoMeltPredictor(Predictor):
         if not sequences:
             return []
 
-        records = [
-            _vhh_to_seqrecord(seq, record_id=f"seq_{i}")
-            for i, seq in enumerate(sequences)
-        ]
+        records = [_vhh_to_seqrecord(seq, record_id=f"seq_{i}") for i, seq in enumerate(sequences)]
         df = self._predict_tm_for_records(records)
 
         results: list[dict[str, float]] = []
