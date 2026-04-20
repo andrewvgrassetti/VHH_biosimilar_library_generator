@@ -429,7 +429,7 @@ class MutationEngine:
 
         Nativeness scoring via AbNatiV is expensive (ANARCI alignment per
         call) so library-generation strategies batch it separately using
-        :pymethod:`_batch_fill_nativeness`.  This helper provides the
+        :meth:`_batch_fill_nativeness`.  This helper provides the
         remaining cheap/moderate scores.
         """
         stab = self._stability_scorer.score(vhh)
@@ -1045,10 +1045,12 @@ class MutationEngine:
             nat_scores = self._nativeness_scorer.score_batch(sequences)
         else:
             # Fallback: score individually through the cached scorer interface.
+            # This path is only reached when the scorer lacks score_batch()
+            # (NativenessScorer always has it; custom/mock scorers might not).
+            # The dummy object is intentionally minimal — NativenessScorer.score()
+            # only reads vhh.sequence via _cached_score(vhh.sequence).
             nat_scores = []
             for seq in sequences:
-                # Build a minimal VHHSequence-like object for the scorer.
-                # The NativenessScorer.score() only reads vhh.sequence.
                 dummy = object.__new__(VHHSequence)
                 dummy.sequence = seq
                 nat_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
