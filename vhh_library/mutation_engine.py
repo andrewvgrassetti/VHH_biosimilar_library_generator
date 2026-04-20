@@ -417,6 +417,21 @@ class MutationEngine:
     # ------------------------------------------------------------------
 
     def _score_variant(self, vhh: VHHSequence) -> dict[str, float]:
+        scores = self._score_variant_without_nativeness(vhh)
+
+        nat = self._nativeness_scorer.score(vhh)
+        scores["nativeness"] = nat["composite_score"]
+
+        return scores
+
+    def _score_variant_without_nativeness(self, vhh: VHHSequence) -> dict[str, float]:
+        """Score a variant on all axes *except* nativeness.
+
+        Nativeness scoring via AbNatiV is expensive (ANARCI alignment per
+        call) so library-generation strategies batch it separately using
+        :meth:`_batch_fill_nativeness`.  This helper provides the
+        remaining cheap/moderate scores.
+        """
         stab = self._stability_scorer.score(vhh)
 
         scores: dict[str, float] = {
@@ -440,9 +455,6 @@ class MutationEngine:
             scores["surface_hydrophobicity"] = sh["composite_score"]
         else:
             scores["surface_hydrophobicity"] = 0.0
-
-        nat = self._nativeness_scorer.score(vhh)
-        scores["nativeness"] = nat["composite_score"]
 
         scores["orthogonal_stability"] = self.consensus_scorer.score(vhh)["composite_score"]
 
@@ -958,7 +970,19 @@ class MutationEngine:
         vhh_sequence: VHHSequence,
         selected: list,
         variant_counter: int,
+        *,
+        nativeness_score: float | None = None,
     ) -> dict:
+        """Build a single library-variant row.
+
+        Parameters
+        ----------
+        nativeness_score : float | None
+            Pre-computed nativeness score for the variant.  When provided
+            the expensive per-variant AbNatiV call is skipped — callers
+            should supply this from a batch :meth:`score_batch` call.
+            When *None*, nativeness is scored individually (legacy path).
+        """
         mutations: list[tuple[int, str]] = [(int(m.position), m.suggested_aa) for m in selected]
         mut_labels = [f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected]
 
@@ -966,9 +990,14 @@ class MutationEngine:
         current = vhh_sequence
         for imgt_pos, new_aa in mutations:
             current = VHHSequence.mutate(current, str(imgt_pos), new_aa)
-        mutant_vhh = current
         mutant_seq = current.sequence
-        raw = self._score_variant(mutant_vhh)
+
+        if nativeness_score is not None:
+            raw = self._score_variant_without_nativeness(current)
+            raw["nativeness"] = nativeness_score
+        else:
+            raw = self._score_variant(current)
+
         combined = self._combined_score(raw)
 
         row: dict = {
@@ -998,6 +1027,48 @@ class MutationEngine:
         return row
 
     # ------------------------------------------------------------------
+    # Private: batch nativeness scoring for library rows
+    # ------------------------------------------------------------------
+
+    def _batch_fill_nativeness(self, rows: list[dict]) -> list[dict]:
+        """Batch-score nativeness for library rows and recompute combined scores.
+
+        This replaces per-variant AbNatiV calls with a single batch call,
+        avoiding repeated ANARCI alignment overhead that caused Streamlit
+        timeouts during library generation.
+        """
+        if not rows:
+            return rows
+
+        sequences = [r["aa_sequence"] for r in rows]
+        if hasattr(self._nativeness_scorer, "score_batch"):
+            nat_scores = self._nativeness_scorer.score_batch(sequences)
+        else:
+            # Fallback: score individually through the cached scorer interface.
+            # This path is only reached when the scorer lacks score_batch()
+            # (NativenessScorer always has it; custom/mock scorers might not).
+            # The dummy object is intentionally minimal — NativenessScorer.score()
+            # only reads vhh.sequence via _cached_score(vhh.sequence).
+            nat_scores = []
+            for seq in sequences:
+                dummy = object.__new__(VHHSequence)
+                dummy.sequence = seq
+                nat_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
+
+        for row, nat in zip(rows, nat_scores):
+            row["nativeness_score"] = nat
+            # Recompute combined_score with the actual nativeness value.
+            raw_scores: dict[str, float] = {
+                "stability": row["stability_score"],
+                "surface_hydrophobicity": row["surface_hydrophobicity_score"],
+                "nativeness": nat,
+                "orthogonal_stability": row["orthogonal_stability_score"],
+            }
+            row["combined_score"] = self._combined_score(raw_scores)
+
+        return rows
+
+    # ------------------------------------------------------------------
     # Private: exhaustive enumeration
     # ------------------------------------------------------------------
 
@@ -1019,6 +1090,7 @@ class MutationEngine:
         positions = list(position_groups.keys())
         groups = [position_groups[p] for p in positions]
 
+        # Build rows without nativeness (cheap/moderate scoring only).
         rows: list[dict] = []
         counter = 1
         for k in range(k_min, k_max + 1):
@@ -1026,11 +1098,18 @@ class MutationEngine:
                 # For each chosen set of positions, take the product of their AA options.
                 selected_groups = [groups[i] for i in pos_indices]
                 for aa_combo in itertools.product(*selected_groups):
-                    rows.append(self._build_variant_row(vhh_sequence, list(aa_combo), counter))
+                    rows.append(
+                        self._build_variant_row(
+                            vhh_sequence,
+                            list(aa_combo),
+                            counter,
+                            nativeness_score=0.0,
+                        )
+                    )
                     counter += 1
                     if len(rows) >= max_variants:
-                        return rows
-        return rows
+                        return self._batch_fill_nativeness(rows)
+        return self._batch_fill_nativeness(rows)
 
     # ------------------------------------------------------------------
     # Private: random sampling (position-deduplicated)
@@ -1074,10 +1153,10 @@ class MutationEngine:
                 continue
             seen.add(key)
 
-            rows.append(self._build_variant_row(vhh_sequence, sample, counter))
+            rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0))
             counter += 1
 
-        return rows
+        return self._batch_fill_nativeness(rows)
 
     # ------------------------------------------------------------------
     # Private: constrained sampling (anchor-fixed)
@@ -1128,10 +1207,10 @@ class MutationEngine:
                 continue
             seen.add(key)
 
-            rows.append(self._build_variant_row(vhh_sequence, combined, counter))
+            rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0))
             counter += 1
 
-        return rows
+        return self._batch_fill_nativeness(rows)
 
     # ------------------------------------------------------------------
     # Private: iterative anchor-and-explore (Evolutionary Stability
