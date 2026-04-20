@@ -956,7 +956,7 @@ def tab_mutations(stability_scorer):
             with st.expander("📈 Search space vs. Top N"):
                 ns = []
                 combos = []
-                groups: dict = {}
+                groups: dict[int, list] = {}
                 for i, row in enumerate(ranked.itertuples(index=False), 1):
                     groups.setdefault(int(row.position), []).append(row)
                     n_pos = len(groups)
