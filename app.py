@@ -27,7 +27,7 @@ from vhh_library.codon_optimizer import CodonOptimizer
 from vhh_library.components.sequence_selector import imgt_key_int_part, sequence_selector
 from vhh_library.developability import SurfaceHydrophobicityScorer
 from vhh_library.library_manager import LibraryManager
-from vhh_library.mutation_engine import MutationEngine
+from vhh_library.mutation_engine import MutationEngine, _total_grouped_combinations
 from vhh_library.nativeness import NativenessScorer
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
@@ -889,19 +889,11 @@ def tab_mutations(stability_scorer):
                     icon="⚠️",
                 )
 
-            # Estimate search space size.
+            # Estimate search space size using the shared utility.
             _position_groups: dict = {}
             for row in selected_top.itertuples(index=False):
                 _position_groups.setdefault(int(row.position), []).append(row)
-            _sizes = [len(v) for v in _position_groups.values()]
-            _search_space = 0
-            for _k in range(effective_k_min, effective_k_max + 1):
-                _e = [0] * (_k + 1)
-                _e[0] = 1
-                for _sz in _sizes:
-                    for _j in range(_k, 0, -1):
-                        _e[_j] += _e[_j - 1] * _sz
-                _search_space += _e[_k]
+            _search_space = _total_grouped_combinations(_position_groups, effective_k_min, effective_k_max)
 
             if _search_space < user_max_variants:
                 st.info(
