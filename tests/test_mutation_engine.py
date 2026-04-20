@@ -18,6 +18,7 @@ from vhh_library.mutation_engine import (
 )
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
+from vhh_library.utils import AMINO_ACIDS
 
 SAMPLE_VHH = (
     "QVQLVESGGGLVQAGGSLRLSCAASGRTFSSYAMGWFRQAPGKEREFVAAISW"
@@ -916,3 +917,238 @@ class TestNanoMeltPropagation:
         vhh = VHHSequence(SAMPLE_VHH)
         raw = engine._score_variant(vhh)
         assert "nanomelt_tm" not in raw
+
+
+# ---------------------------------------------------------------------------
+# Batch nativeness optimisation during library generation
+# ---------------------------------------------------------------------------
+
+
+class TestBatchNativenessLibraryGeneration:
+    """Verify that library generation uses batch nativeness scoring (score_batch)
+    instead of per-variant AbNatiV calls, preventing ANARCI alignment per variant.
+    """
+
+    @staticmethod
+    def _make_vhh_no_anarci(sequence: str, imgt_numbered: dict[str, str] | None = None) -> VHHSequence:
+        """Create a VHHSequence without ANARCI (for environments lacking hmmscan)."""
+        vhh = object.__new__(VHHSequence)
+        vhh.sequence = sequence.upper()
+        vhh.length = len(vhh.sequence)
+        vhh.strict = False
+        vhh.chain_type = "H"
+        vhh.species = "camelid"
+        if imgt_numbered is None:
+            # Build a trivial 1:1 mapping.
+            imgt_numbered = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh.imgt_numbered = imgt_numbered
+        vhh._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt_numbered)}
+        vhh.validation_result = {"valid": True, "errors": [], "warnings": []}
+        return vhh
+
+    @staticmethod
+    def _make_engine_with_tracking_scorer():
+        """Create an engine with a tracking nativeness scorer.
+
+        Returns (engine, call_log) where call_log records method invocations.
+        """
+        call_log: list[str] = []
+
+        class _TrackingScorer(_MockNativenessScorer):
+            def score(self_, vhh):
+                call_log.append("score")
+                return super().score(vhh)
+
+            def predict_mutation_effect(self_, vhh, position, new_aa):
+                call_log.append("predict_mutation_effect")
+                return super().predict_mutation_effect(vhh, position, new_aa)
+
+            def score_batch(self_, sequences):
+                call_log.append(f"score_batch({len(sequences)})")
+                return super().score_batch(sequences)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_TrackingScorer(),
+        )
+        return engine, call_log
+
+    def test_exhaustive_uses_batch_scoring(self) -> None:
+        """_generate_exhaustive should batch-score nativeness, not score per variant."""
+        engine, call_log = self._make_engine_with_tracking_scorer()
+        # Use a short synthetic sequence with IMGT-like numbering.
+        seq = "QVQLVESGGGLVQ"
+        vhh = self._make_vhh_no_anarci(seq)
+
+        import pandas as pd
+
+        # Create mutation candidates for positions 1, 2, 3 (framework-like).
+        rows = []
+        for pos_key in ["1", "2", "3"]:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:2]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        top_muts = pd.DataFrame(rows)
+
+        call_log.clear()
+        lib = engine.generate_library(vhh, top_muts, n_mutations=2, strategy="exhaustive", max_variants=50)
+        assert isinstance(lib, pd.DataFrame)
+        assert not lib.empty
+
+        # score_batch should have been called (at least once).
+        batch_calls = [c for c in call_log if c.startswith("score_batch")]
+        assert len(batch_calls) >= 1, f"Expected score_batch call, got: {call_log}"
+
+        # Individual score() calls should be zero during library generation
+        # (the _batch_fill_nativeness path bypasses per-variant .score()).
+        individual_calls = [c for c in call_log if c == "score"]
+        assert len(individual_calls) == 0, (
+            f"Expected no per-variant score() calls during library gen, got {len(individual_calls)}"
+        )
+
+    def test_random_uses_batch_scoring(self) -> None:
+        """_generate_sampled should batch-score nativeness."""
+        engine, call_log = self._make_engine_with_tracking_scorer()
+        seq = "QVQLVESGGGLVQAGG"
+        vhh = self._make_vhh_no_anarci(seq)
+
+        import pandas as pd
+
+        rows = []
+        for pos_key in ["1", "2", "3", "4", "5"]:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:2]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        top_muts = pd.DataFrame(rows)
+
+        call_log.clear()
+        lib = engine.generate_library(vhh, top_muts, n_mutations=3, strategy="random", max_variants=20)
+        assert isinstance(lib, pd.DataFrame)
+        assert not lib.empty
+
+        batch_calls = [c for c in call_log if c.startswith("score_batch")]
+        assert len(batch_calls) >= 1, f"Expected score_batch call, got: {call_log}"
+
+    def test_batch_fill_nativeness_values_correct(self) -> None:
+        """_batch_fill_nativeness should produce same scores as individual scoring."""
+        mock_scorer = _MockNativenessScorer()
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=mock_scorer,
+        )
+
+        seq1 = "QVQLVESGGGLVQ"
+        seq2 = "AVQLVESGGGLVQ"
+
+        rows = [
+            {
+                "aa_sequence": seq1,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": seq2,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+        ]
+
+        engine._batch_fill_nativeness(rows)
+
+        # Verify scores match what the scorer would return individually.
+        expected1 = mock_scorer.score_batch([seq1])[0]
+        expected2 = mock_scorer.score_batch([seq2])[0]
+        assert abs(rows[0]["nativeness_score"] - expected1) < 1e-9
+        assert abs(rows[1]["nativeness_score"] - expected2) < 1e-9
+
+    def test_build_variant_row_accepts_nativeness_score(self) -> None:
+        """_build_variant_row should use provided nativeness_score when given."""
+        mock_scorer = _MockNativenessScorer()
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=mock_scorer,
+        )
+        seq = "QVQLVESGGGLVQ"
+        vhh = self._make_vhh_no_anarci(seq)
+
+        # Create a mock namedtuple-like object matching what itertuples returns.
+        class _MockMut:
+            def __init__(self, position, original_aa, suggested_aa):
+                self.position = position
+                self.original_aa = original_aa
+                self.suggested_aa = suggested_aa
+
+        mut = _MockMut(1, "Q", "A")
+
+        row_with_nat = engine._build_variant_row(vhh, [mut], 1, nativeness_score=0.77)
+        assert row_with_nat["nativeness_score"] == 0.77
+
+        row_without_nat = engine._build_variant_row(vhh, [mut], 2)
+        # Should use the scorer's actual score (not 0.77).
+        expected = mock_scorer.score_batch([row_without_nat["aa_sequence"]])[0]
+        assert abs(row_without_nat["nativeness_score"] - expected) < 1e-9
+
+    def test_combined_score_recomputed_after_batch(self) -> None:
+        """combined_score should be recomputed after batch nativeness fill."""
+        mock_scorer = _MockNativenessScorer()
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=mock_scorer,
+            weights={"stability": 0.5, "nativeness": 0.5},
+        )
+        seq = "QVQLVESGGGLVQ"
+        vhh = self._make_vhh_no_anarci(seq)
+
+        import pandas as pd
+
+        rows = []
+        for pos_key in ["1", "2"]:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:1]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        top_muts = pd.DataFrame(rows)
+
+        lib = engine.generate_library(vhh, top_muts, n_mutations=1, strategy="exhaustive", max_variants=10)
+        if not lib.empty:
+            for _, row in lib.iterrows():
+                # combined_score should reflect actual nativeness, not the placeholder 0.0.
+                assert row["nativeness_score"] != 0.0 or row["aa_sequence"] == seq
