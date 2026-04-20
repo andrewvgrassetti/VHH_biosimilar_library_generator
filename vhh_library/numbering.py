@@ -109,7 +109,9 @@ def _apply_anarci_compat_patch() -> None:
     def _patched_hmm_alignment_to_states(hsp, n, seq_length):  # type: ignore[no-untyped-def]
         try:
             return _original_hmm_align(hsp, n, seq_length)
-        except TypeError:
+        except TypeError as exc:
+            if "NoneType" not in str(exc):
+                raise
             # Disable both n-terminal and c-terminal extension branches by
             # making ``_seq_end < seq_length`` always ``False``.
             return _original_hmm_align(hsp, n, 0)

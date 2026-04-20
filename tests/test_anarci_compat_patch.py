@@ -114,12 +114,12 @@ class TestPatchedParseQueryCoords:
         )
         query = _make_query([hsp])
 
-        def capturing_original(query, bit_score_threshold=80, hmmer_species=None):
+        def noop_original(query, bit_score_threshold=80, hmmer_species=None):
             return []
 
         # Re-apply the patch with a controlled original
         numbering_mod._PATCHED = False
-        with mock.patch.object(anarci_mod, "_parse_hmmer_query", capturing_original):
+        with mock.patch.object(anarci_mod, "_parse_hmmer_query", noop_original):
             numbering_mod._apply_anarci_compat_patch()
             anarci_mod._parse_hmmer_query(query)
 
@@ -141,11 +141,11 @@ class TestPatchedParseQueryCoords:
         )
         query = _make_query([hsp])
 
-        def capturing_original(query, bit_score_threshold=80, hmmer_species=None):
+        def noop_original(query, bit_score_threshold=80, hmmer_species=None):
             return []
 
         numbering_mod._PATCHED = False
-        with mock.patch.object(anarci_mod, "_parse_hmmer_query", capturing_original):
+        with mock.patch.object(anarci_mod, "_parse_hmmer_query", noop_original):
             numbering_mod._apply_anarci_compat_patch()
             anarci_mod._parse_hmmer_query(query)
 
@@ -198,6 +198,20 @@ class TestPatchedHmmAlignmentToStates:
         with mock.patch.object(anarci_mod, "_hmm_alignment_to_states", raising_original):
             numbering_mod._apply_anarci_compat_patch()
             with pytest.raises(ValueError, match="some other error"):
+                anarci_mod._hmm_alignment_to_states("hsp", 1, 118)
+
+    def test_non_nonetype_typeerror_propagates(self):
+        """TypeError not involving NoneType should still propagate."""
+        numbering_mod._apply_anarci_compat_patch()
+        anarci_mod = importlib.import_module("anarci.anarci")
+
+        def raising_original(hsp, n, seq_length):
+            raise TypeError("unsupported operand type(s) for +: 'str' and 'int'")
+
+        numbering_mod._PATCHED = False
+        with mock.patch.object(anarci_mod, "_hmm_alignment_to_states", raising_original):
+            numbering_mod._apply_anarci_compat_patch()
+            with pytest.raises(TypeError, match="unsupported operand"):
                 anarci_mod._hmm_alignment_to_states("hsp", 1, 118)
 
     def test_normal_return_passes_through(self):
