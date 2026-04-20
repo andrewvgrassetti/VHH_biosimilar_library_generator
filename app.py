@@ -800,6 +800,7 @@ def tab_mutations(stability_scorer):
         # Build the policy from the selector's authoritative state.
         # The classifier is used only for allowed-AA sets and reason metadata.
         from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
+        from vhh_library.utils import DEFAULT_CONSERVATIVE_FALLBACK as _CONSERVATIVE_FALLBACK
         from vhh_library.utils import SIMILAR_AA_GROUPS as _SIMILAR_AA_GROUPS
 
         policy = DesignPolicy()
@@ -814,7 +815,7 @@ def tab_mutations(stability_scorer):
                     policy.restrict(pos_key, clf.allowed_aas)
                 else:
                     wt_aa = vhh.imgt_numbered.get(pos_key, "A")
-                    similar = _SIMILAR_AA_GROUPS.get(wt_aa, frozenset({"A", "G", "S", "T", "V"}))
+                    similar = _SIMILAR_AA_GROUPS.get(wt_aa, _CONSERVATIVE_FALLBACK)
                     policy.restrict(pos_key, similar)
             else:
                 policy.make_mutable([pos_key])

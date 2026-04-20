@@ -443,7 +443,7 @@ def _build_policy_from_three_state(
     -------
     DesignPolicy
     """
-    from vhh_library.utils import SIMILAR_AA_GROUPS
+    from vhh_library.utils import DEFAULT_CONSERVATIVE_FALLBACK, SIMILAR_AA_GROUPS
 
     classifier = PositionClassifier()
     classifications = classifier.classify(imgt_keys)
@@ -458,7 +458,7 @@ def _build_policy_from_three_state(
                 policy.restrict(pos_key, clf.allowed_aas)
             else:
                 wt_aa = (imgt_numbered or {}).get(pos_key, "A")
-                similar = SIMILAR_AA_GROUPS.get(wt_aa, frozenset({"A", "G", "S", "T", "V"}))
+                similar = SIMILAR_AA_GROUPS.get(wt_aa, DEFAULT_CONSERVATIVE_FALLBACK)
                 policy.restrict(pos_key, similar)
         else:
             policy.make_mutable([pos_key])
@@ -475,15 +475,38 @@ class TestThreeStatePolicyFromSelector:
     @pytest.fixture()
     def imgt_keys(self) -> list[str]:
         return [
-            "1", "2", "3", "6", "7", "10", "20",  # FR1
+            "1",
+            "2",
+            "3",
+            "6",
+            "7",
+            "10",
+            "20",  # FR1
             "23",  # conserved Cys
-            "27", "28", "29", "30", "31", "32", "33",  # CDR1
+            "27",
+            "28",
+            "29",
+            "30",
+            "31",
+            "32",
+            "33",  # CDR1
             "41",  # conserved Trp
-            "42", "49",  # FR2 hallmarks
-            "56", "57", "58",  # CDR2
-            "69", "78", "80",  # FR3 core
+            "42",
+            "49",  # FR2 hallmarks
+            "56",
+            "57",
+            "58",  # CDR2
+            "69",
+            "78",
+            "80",  # FR3 core
             "104",  # conserved Cys
-            "105", "106", "107", "108", "109", "110", "111",  # CDR3
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",  # CDR3
             "118",  # FR4
         ]
 
@@ -566,9 +589,7 @@ class TestThreeStatePolicyFromSelector:
         expanded_conservative = default_conservative | {"10"}
         # We need to give it a WT residue context
         imgt_numbered = {k: "A" for k in imgt_keys}
-        policy = _build_policy_from_three_state(
-            imgt_keys, default_frozen, expanded_conservative, imgt_numbered
-        )
+        policy = _build_policy_from_three_state(imgt_keys, default_frozen, expanded_conservative, imgt_numbered)
         pp = policy["10"]
         assert pp.is_conservative
         assert pp.allowed_aas == SIMILAR_AA_GROUPS["A"]

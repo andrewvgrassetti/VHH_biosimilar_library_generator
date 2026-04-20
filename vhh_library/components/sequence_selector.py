@@ -18,12 +18,22 @@ _component_func = components.declare_component(
 )
 
 _REGION_COLORS = {
-    "FR1": "#E3F2FD", "CDR1": "#FFCDD2", "FR2": "#E8F5E9",
-    "CDR2": "#FFCDD2", "FR3": "#E3F2FD", "CDR3": "#FFCDD2", "FR4": "#E8F5E9",
+    "FR1": "#E3F2FD",
+    "CDR1": "#FFCDD2",
+    "FR2": "#E8F5E9",
+    "CDR2": "#FFCDD2",
+    "FR3": "#E3F2FD",
+    "CDR3": "#FFCDD2",
+    "FR4": "#E8F5E9",
 }
 _REGION_LABEL_COLORS = {
-    "FR1": "#1565C0", "CDR1": "#C62828", "FR2": "#2E7D32",
-    "CDR2": "#C62828", "FR3": "#1565C0", "CDR3": "#C62828", "FR4": "#2E7D32",
+    "FR1": "#1565C0",
+    "CDR1": "#C62828",
+    "FR2": "#2E7D32",
+    "CDR2": "#C62828",
+    "FR3": "#1565C0",
+    "CDR3": "#C62828",
+    "FR4": "#2E7D32",
 }
 
 _IMGT_KEY_INT_RE = re.compile(r"^(\d+)")
@@ -90,7 +100,7 @@ def sequence_selector(
     # Merge legacy parameters with new parameters
     merged_frozen: set[str] = set(frozen_positions) if frozen_positions else set()
     if off_limit_positions:
-        merged_frozen |= off_limit_positions
+        merged_frozen |= set(off_limit_positions)
 
     merged_conservative: set[str] = set(conservative_positions) if conservative_positions else set()
     if forbidden_substitutions:
@@ -103,20 +113,20 @@ def sequence_selector(
     merged_conservative -= merged_frozen
 
     # Build an ordered list of [imgt_key, amino_acid] pairs for the frontend.
-    imgt_positions_list: list[list[str]] = [
-        [k, v] for k, v in imgt_numbered.items()
-    ]
+    imgt_positions_list: list[list[str]] = [[k, v] for k, v in imgt_numbered.items()]
 
     regions = []
     for region_name in ("FR1", "CDR1", "FR2", "CDR2", "FR3", "CDR3", "FR4"):
         start, end = IMGT_REGIONS[region_name]
-        regions.append({
-            "name": region_name,
-            "start": start,
-            "end": end,
-            "color": _REGION_COLORS[region_name],
-            "labelColor": _REGION_LABEL_COLORS[region_name],
-        })
+        regions.append(
+            {
+                "name": region_name,
+                "start": start,
+                "end": end,
+                "color": _REGION_COLORS[region_name],
+                "labelColor": _REGION_LABEL_COLORS[region_name],
+            }
+        )
 
     notable = {}
     for pos, label, bg, fg in [
