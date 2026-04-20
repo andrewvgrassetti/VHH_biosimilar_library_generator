@@ -786,5 +786,5 @@ class TestBatchNativenessScoring:
         parent_nat = scorer.score(vhh)["composite_score"]
         for _, row in ranked.head(10).iterrows():
             mutant = VHHSequence.mutate(vhh, row["imgt_pos"], row["suggested_aa"])
-            expected_delta = scorer._raw_score(mutant.sequence) - parent_nat
+            expected_delta = scorer.score(mutant)["composite_score"] - parent_nat
             assert abs(row["delta_nativeness"] - expected_delta) < 1e-9

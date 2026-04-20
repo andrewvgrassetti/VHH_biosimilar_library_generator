@@ -518,15 +518,14 @@ class MutationEngine:
             parent_nat = self._nativeness_scorer.score(vhh_sequence)["composite_score"]
             if hasattr(self._nativeness_scorer, "score_batch"):
                 mutant_nat_scores = self._nativeness_scorer.score_batch(mutant_sequences)
+                for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
+                    candidate["delta_nativeness"] = mutant_nat - parent_nat
             else:
-                # Fallback for scorers that lack batch support.
-                mutant_nat_scores = [
-                    self._nativeness_scorer.predict_mutation_effect(vhh_sequence, c["position"], c["suggested_aa"])
-                    + parent_nat
-                    for c in candidates
-                ]
-            for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
-                candidate["delta_nativeness"] = mutant_nat - parent_nat
+                # Fallback for scorers that lack batch support — use delta directly.
+                for candidate in candidates:
+                    candidate["delta_nativeness"] = self._nativeness_scorer.predict_mutation_effect(
+                        vhh_sequence, candidate["position"], candidate["suggested_aa"]
+                    )
 
         candidates.sort(key=lambda c: c["delta_stability"], reverse=True)
         return candidates
