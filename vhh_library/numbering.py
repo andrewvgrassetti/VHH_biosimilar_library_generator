@@ -20,16 +20,40 @@ from typing import NamedTuple
 # ---------------------------------------------------------------------------
 # ANARCI / BioPython compatibility patch
 # ---------------------------------------------------------------------------
-# BioPython ≥ 1.83 sometimes returns ``None`` for ``query_start`` /
+# BioPython >= 1.83 sometimes returns ``None`` for ``query_start`` /
 # ``query_end`` on HMMER 3.4 HSP objects, which crashes ANARCI's
-# ``_domains_are_same`` and ``_parse_hmmer_query``.  We apply a targeted
-# monkey-patch **before** the first ``anarci()`` call.
+# ``_domains_are_same`` and ``_parse_hmmer_query``.
+#
+# BioPython 1.87 additionally returns ``None`` for ``hit_start`` /
+# ``hit_end`` on HSP fragments.  Python slicing tolerates ``None``
+# (``list[None:None]`` gives the full slice), so most of ANARCI is
+# unaffected.  However, the forward-extension branch in
+# ``_hmm_alignment_to_states`` compares ``_hmm_end`` (from
+# ``hsp.hit_end``) against integer constants, which raises ``TypeError``
+# when the value is ``None``.  The same comparison also uses
+# ``_hmm_length`` from ``get_hmm_length()``, which may return ``None``.
+#
+# We apply a targeted monkey-patch **before** the first ``anarci()`` call.
 
 _PATCHED = False
 
 
 def _apply_anarci_compat_patch() -> None:
-    """Patch ANARCI internals to tolerate ``None`` query coordinates."""
+    """Patch ANARCI internals to tolerate ``None`` coordinates from BioPython.
+
+    Fixes applied:
+
+    1. ``_domains_are_same`` -- guards ``query_start`` / ``query_end``
+       being ``None`` (falls back to ``env_start`` / ``env_end``).
+    2. ``_parse_hmmer_query`` -- back-fills ``None`` ``query_start`` /
+       ``query_end`` on HSP fragments using the envelope coordinates.
+    3. ``_hmm_alignment_to_states`` -- guards the forward-extension branch
+       (line ~420) against ``_hmm_end`` or ``_hmm_length`` being ``None``
+       (avoids ``TypeError`` from ``123 < _hmm_end < _hmm_length``).
+       ``hit_start`` / ``hit_end`` are intentionally left as ``None``
+       because Python slicing handles them correctly and they carry
+       different semantics to the envelope coordinates.
+    """
     global _PATCHED  # noqa: PLW0603
     if _PATCHED:
         return
@@ -70,6 +94,29 @@ def _apply_anarci_compat_patch() -> None:
         )
 
     anarci_mod._parse_hmmer_query = _patched_parse  # type: ignore[attr-defined]
+
+    # --- patch _hmm_alignment_to_states ------------------------------------
+    # Guard the forward-extension branch (line ~420) against ``_hmm_end``
+    # or ``_hmm_length`` being ``None``.  The comparison
+    #     ``123 < _hmm_end < _hmm_length``
+    # raises ``TypeError`` when either value is ``None``.  When that
+    # happens the extension is simply not applicable, so we catch the
+    # ``TypeError`` and re-invoke the original with a ``seq_length`` of 0
+    # to disable both extension branches (they require
+    # ``_seq_end < seq_length``).
+    _original_hmm_align = anarci_mod._hmm_alignment_to_states  # type: ignore[attr-defined]
+
+    def _patched_hmm_alignment_to_states(hsp, n, seq_length):  # type: ignore[no-untyped-def]
+        try:
+            return _original_hmm_align(hsp, n, seq_length)
+        except TypeError as exc:
+            if "NoneType" not in str(exc):
+                raise
+            # Disable both n-terminal and c-terminal extension branches by
+            # making ``_seq_end < seq_length`` always ``False``.
+            return _original_hmm_align(hsp, n, 0)
+
+    anarci_mod._hmm_alignment_to_states = _patched_hmm_alignment_to_states  # type: ignore[attr-defined]
 
     _PATCHED = True
 
