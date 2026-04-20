@@ -49,6 +49,33 @@ CODON_TABLE: dict[str, str] = {
 }
 
 
+# Chemically similar amino acid groups for conservative substitution.
+# When a position is set to CONSERVATIVE without a pre-defined allowed set,
+# these groups provide a sensible default based on the wild-type residue.
+SIMILAR_AA_GROUPS: dict[str, frozenset[str]] = {
+    "A": frozenset({"A", "G", "S", "T", "V"}),
+    "G": frozenset({"G", "A", "S"}),
+    "S": frozenset({"S", "T", "A", "G", "N"}),
+    "T": frozenset({"T", "S", "A", "V"}),
+    "V": frozenset({"V", "I", "L", "A", "M"}),
+    "I": frozenset({"I", "V", "L", "M"}),
+    "L": frozenset({"L", "I", "V", "M", "F"}),
+    "M": frozenset({"M", "L", "I", "V"}),
+    "F": frozenset({"F", "Y", "W", "L"}),
+    "Y": frozenset({"Y", "F", "W", "H"}),
+    "W": frozenset({"W", "F", "Y"}),
+    "P": frozenset({"P", "A"}),
+    "D": frozenset({"D", "E", "N", "Q"}),
+    "E": frozenset({"E", "D", "Q", "N"}),
+    "N": frozenset({"N", "D", "Q", "S", "T"}),
+    "Q": frozenset({"Q", "E", "N", "K"}),
+    "K": frozenset({"K", "R", "Q", "H"}),
+    "R": frozenset({"R", "K", "Q", "H"}),
+    "H": frozenset({"H", "K", "R", "N", "Q"}),
+    "C": frozenset({"C", "S", "A"}),
+}
+
+
 def translate(dna_sequence: str) -> str:
     """Translate a DNA sequence to an amino acid sequence."""
     seq = dna_sequence.upper()

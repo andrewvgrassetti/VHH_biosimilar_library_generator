@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional, Set
 
 import streamlit.components.v1 as components
 
@@ -38,11 +38,23 @@ def imgt_key_int_part(key: str) -> int:
 def sequence_selector(
     sequence: str,
     imgt_numbered: Dict[str, str],
-    off_limit_positions: Set[str],
+    off_limit_positions: Set[str] | None = None,
     forbidden_substitutions: Optional[Dict[str, set]] = None,
+    frozen_positions: Set[str] | None = None,
+    conservative_positions: Set[str] | None = None,
     key: Optional[str] = None,
-) -> List[str]:
-    """Render the interactive sequence selector and return selected off-limit positions.
+) -> dict[str, list[str]] | None:
+    """Render the interactive sequence selector and return position classes.
+
+    The selector supports three states per position:
+
+    * **frozen** — position must not be mutated (dark overlay).
+    * **conservative** — only restricted amino acids allowed (orange dot).
+    * **mutable** — any standard amino acid substitution may be proposed
+      (default, no indicator).
+
+    Clicking a residue cycles through: mutable → frozen → conservative → mutable.
+    Dragging applies the same target class to all touched residues.
 
     Parameters
     ----------
@@ -52,19 +64,43 @@ def sequence_selector(
     imgt_numbered:
         Ordered ``dict[str, str]`` mapping IMGT position keys to amino acids.
     off_limit_positions:
-        Set of IMGT position **string** keys that are off-limit.
+        **Deprecated** — use *frozen_positions* instead.  Set of IMGT position
+        **string** keys that are frozen.  When both *off_limit_positions* and
+        *frozen_positions* are provided, they are merged (union).
     forbidden_substitutions:
-        Optional mapping of IMGT position **string** keys to sets of forbidden AAs.
+        **Deprecated** — use *conservative_positions* instead.  Optional
+        mapping of IMGT position **string** keys to sets of forbidden AAs.
+        Positions listed here are shown as conservative.  When both
+        *forbidden_substitutions* and *conservative_positions* are provided,
+        they are merged.
+    frozen_positions:
+        Set of IMGT position **string** keys that are frozen.
+    conservative_positions:
+        Set of IMGT position **string** keys that are conservative.
     key:
         Streamlit component key.
 
     Returns
     -------
-    list[str]
-        Sorted list of IMGT position string keys currently marked off-limit.
+    dict[str, list[str]] | None
+        A dict with ``"frozen"`` and ``"conservative"`` keys, each mapping to
+        a sorted list of IMGT position string keys.  Positions not listed are
+        mutable.  Returns ``None`` on the first render before user interaction.
     """
-    if forbidden_substitutions is None:
-        forbidden_substitutions = {}
+    # Merge legacy parameters with new parameters
+    merged_frozen: set[str] = set(frozen_positions) if frozen_positions else set()
+    if off_limit_positions:
+        merged_frozen |= off_limit_positions
+
+    merged_conservative: set[str] = set(conservative_positions) if conservative_positions else set()
+    if forbidden_substitutions:
+        for p in forbidden_substitutions:
+            str_p = str(p)
+            if str_p not in merged_frozen:
+                merged_conservative.add(str_p)
+
+    # Frozen takes precedence over conservative
+    merged_conservative -= merged_frozen
 
     # Build an ordered list of [imgt_key, amino_acid] pairs for the frontend.
     imgt_positions_list: list[list[str]] = [
@@ -92,19 +128,21 @@ def sequence_selector(
         if str(pos) in imgt_numbered:
             notable[str(pos)] = {"label": label, "bg": bg, "fg": fg}
 
-    forbidden_pos_list = [str(p) for p in forbidden_substitutions.keys()]
+    sorted_frozen = sorted(merged_frozen, key=lambda k: (imgt_key_int_part(k), k))
+    sorted_conservative = sorted(merged_conservative, key=lambda k: (imgt_key_int_part(k), k))
 
-    sorted_off_limit = sorted(off_limit_positions, key=lambda k: (imgt_key_int_part(k), k))
+    default_value = {"frozen": sorted_frozen, "conservative": sorted_conservative}
+
     result = _component_func(
         imgtPositionsList=imgt_positions_list,
         regions=regions,
-        offLimitPositions=sorted_off_limit,
+        frozenPositions=sorted_frozen,
+        conservativePositions=sorted_conservative,
         notablePositions=notable,
-        forbiddenPositions=forbidden_pos_list,
-        default=sorted_off_limit,
+        default=default_value,
         key=key,
     )
 
     if result is None:
-        return sorted_off_limit
+        return default_value
     return result

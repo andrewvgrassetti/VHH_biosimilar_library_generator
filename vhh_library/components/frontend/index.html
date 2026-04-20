@@ -13,18 +13,18 @@
   #sequence-row { display: flex; white-space: nowrap; cursor: pointer; }
   .residue { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 22px; font-family: "Courier New", monospace; font-size: 10px; font-weight: 600; border: 0.5px solid #ccc; transition: opacity 0.1s; position: relative; flex-shrink: 0; }
   .residue:hover { outline: 2px solid #1976D2; outline-offset: -2px; z-index: 2; }
-  .residue.off-limit { opacity: 1; }
-  .residue.off-limit::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.40); pointer-events: none; }
-  .residue.forbidden-sub::before { content: ""; position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: #FF6F00; pointer-events: none; z-index: 3; }
+  .residue.frozen { opacity: 1; }
+  .residue.frozen::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0.40); pointer-events: none; }
+  .residue.conservative::before { content: ""; position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: #FF6F00; pointer-events: none; z-index: 3; }
   #ticks { display: flex; white-space: nowrap; height: 14px; position: relative; }
   .tick { display: inline-flex; align-items: flex-start; justify-content: center; width: 12px; font-size: 7px; color: #999; flex-shrink: 0; }
   #legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 9px; color: #555; }
   .legend-item { display: flex; align-items: center; gap: 3px; }
   .legend-swatch { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #bbb; flex-shrink: 0; }
-  .legend-swatch.off-limit-swatch { position: relative; overflow: hidden; background: #E3F2FD; }
-  .legend-swatch.off-limit-swatch::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,0.40); }
-  .legend-swatch.forbidden-swatch { position: relative; background: #FFF3E0; border-color: #FF6F00; }
-  .legend-swatch.forbidden-swatch::after { content: ""; position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: #FF6F00; }
+  .legend-swatch.frozen-swatch { position: relative; overflow: hidden; background: #E3F2FD; }
+  .legend-swatch.frozen-swatch::after { content: ""; position: absolute; inset: 0; background: rgba(0,0,0,0.40); }
+  .legend-swatch.conservative-swatch { position: relative; background: #FFF3E0; border-color: #FF6F00; }
+  .legend-swatch.conservative-swatch::after { content: ""; position: absolute; bottom: 1px; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: #FF6F00; }
   #tooltip { display: none; position: fixed; background: #333; color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 4px; pointer-events: none; z-index: 100; white-space: nowrap; }
 </style>
 </head>
@@ -51,21 +51,36 @@ var Streamlit = {
   setComponentValue: function(value) { sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value}); }
 };
 
-var offLimitSet = new Set();
+/* positionClassMap: position string → "frozen" | "conservative" | "mutable" */
+var positionClassMap = {};
 var imgtPositionsList = [];
 var regions = [];
 var notablePositions = {};
-var forbiddenPositions = new Set();
 var seqLen = 0;
 var isDragging = false;
 var dragStart = -1;
-var dragMode = "";
+var dragTargetClass = "";
 var pendingUpdate = false;
+
+/* Three-state cycle order: mutable → frozen → conservative → mutable */
+var CLASS_CYCLE = {"mutable": "frozen", "frozen": "conservative", "conservative": "mutable"};
 
 /** Extract the integer portion of an IMGT key, e.g. "111A" → 111. */
 function imgtKeyInt(key) {
   var m = key.match(/^(\d+)/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+function getPosClass(pos) {
+  return positionClassMap[pos] || "mutable";
+}
+
+function setPosClass(pos, cls) {
+  if (cls === "mutable") {
+    delete positionClassMap[pos];
+  } else {
+    positionClassMap[pos] = cls;
+  }
 }
 
 function render() {
@@ -113,8 +128,9 @@ function render() {
     }
     if (notablePositions[pos]) { bgColor = notablePositions[pos].bg; cell.style.color = notablePositions[pos].fg; }
     cell.style.backgroundColor = bgColor; cell.style.borderColor = "#CCC";
-    if (offLimitSet.has(pos)) cell.classList.add("off-limit");
-    if (forbiddenPositions.has(pos) && !offLimitSet.has(pos)) cell.classList.add("forbidden-sub");
+    var cls = getPosClass(pos);
+    if (cls === "frozen") cell.classList.add("frozen");
+    if (cls === "conservative") cell.classList.add("conservative");
     cell.addEventListener("mousedown", onCellMouseDown);
     cell.addEventListener("mouseenter", onCellMouseEnter);
     cell.addEventListener("mouseover", onCellHover);
@@ -137,8 +153,8 @@ function render() {
     {label: "CDR region", color: "#FFCDD2", border: "#EF9A9A"},
     {label: "Cys (disulfide)", color: "#FFD600", border: "#FFD600"},
     {label: "Trp (VHH hallmark)", color: "#AB47BC", border: "#AB47BC"},
-    {label: "Off-limit", cls: "off-limit-swatch"},
-    {label: "Partial restriction", cls: "forbidden-swatch"},
+    {label: "Frozen", cls: "frozen-swatch"},
+    {label: "Conservative", cls: "conservative-swatch"},
   ];
   for (var li = 0; li < items.length; li++) {
     var it = items[li];
@@ -155,29 +171,40 @@ function render() {
 function onCellMouseDown(e) {
   e.preventDefault();
   var pos = e.currentTarget.dataset.pos;
+  var currentClass = getPosClass(pos);
+  var nextClass = CLASS_CYCLE[currentClass] || "frozen";
   isDragging = true; dragStart = pos;
-  dragMode = offLimitSet.has(pos) ? "remove" : "add";
-  applyDragToPos(pos); render();
+  dragTargetClass = nextClass;
+  setPosClass(pos, nextClass);
+  render();
 }
 
 function onCellMouseEnter(e) {
   if (!isDragging) return;
-  applyDragToPos(e.currentTarget.dataset.pos); render();
-}
-
-function applyDragToPos(pos) {
-  if (dragMode === "add") offLimitSet.add(pos); else offLimitSet.delete(pos);
+  var pos = e.currentTarget.dataset.pos;
+  setPosClass(pos, dragTargetClass);
+  render();
 }
 
 document.addEventListener("mouseup", function() {
   if (isDragging) {
     isDragging = false; dragStart = -1;
     pendingUpdate = true;
-    Streamlit.setComponentValue(Array.from(offLimitSet).sort(function(a, b) {
+    /* Build sorted arrays for frozen and conservative positions */
+    var frozen = [];
+    var conservative = [];
+    for (var key in positionClassMap) {
+      if (positionClassMap[key] === "frozen") frozen.push(key);
+      else if (positionClassMap[key] === "conservative") conservative.push(key);
+    }
+    var sortFn = function(a, b) {
       var ai = imgtKeyInt(a), bi = imgtKeyInt(b);
       if (ai !== bi) return ai - bi;
       return a < b ? -1 : (a > b ? 1 : 0);
-    }));
+    };
+    frozen.sort(sortFn);
+    conservative.sort(sortFn);
+    Streamlit.setComponentValue({frozen: frozen, conservative: conservative});
   }
 });
 
@@ -192,8 +219,10 @@ function onCellHover(e) {
   for (var r = 0; r < regions.length; r++) {
     if (posInt >= regions[r].start && posInt <= regions[r].end) { regionName = regions[r].name; break; }
   }
+  var cls = getPosClass(pos);
   var tip = "IMGT " + pos + " (" + regionName + ") \u2014 " + aa;
-  if (offLimitSet.has(pos)) tip += " [OFF-LIMIT]";
+  if (cls === "frozen") tip += " [FROZEN]";
+  else if (cls === "conservative") tip += " [CONSERVATIVE]";
   if (notablePositions[pos]) tip += " \u2022 " + notablePositions[pos].label;
   var tooltip = document.getElementById("tooltip");
   tooltip.textContent = tip; tooltip.style.display = "block";
@@ -208,15 +237,21 @@ function onStreamlitRender(event) {
   imgtPositionsList = args.imgtPositionsList || [];
   regions = args.regions || []; notablePositions = args.notablePositions || {};
   seqLen = imgtPositionsList.length;
-  forbiddenPositions = new Set(args.forbiddenPositions || []);
 
   if (pendingUpdate) {
-    // User just made a change — keep local offLimitSet, don't reset from args.
-    // The args on this render still reflect the old state; our local state is correct.
+    /* User just made a change — keep local positionClassMap, don't reset from args. */
     pendingUpdate = false;
   } else {
-    // No pending local changes — sync from Python's authoritative state.
-    offLimitSet = new Set(args.offLimitPositions || []);
+    /* No pending local changes — sync from Python's authoritative state. */
+    positionClassMap = {};
+    var frozenList = args.frozenPositions || [];
+    var conservativeList = args.conservativePositions || [];
+    for (var i = 0; i < frozenList.length; i++) {
+      positionClassMap[frozenList[i]] = "frozen";
+    }
+    for (var j = 0; j < conservativeList.length; j++) {
+      positionClassMap[conservativeList[j]] = "conservative";
+    }
   }
   render();
 }
