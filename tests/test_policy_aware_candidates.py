@@ -88,6 +88,9 @@ class _MockNativenessScorer:
     def predict_mutation_effect(self, vhh: VHHSequence, position: int | str, new_aa: str) -> float:
         return 0.01
 
+    def score_batch(self, sequences: list[str]) -> list[float]:
+        return [0.7] * len(sequences)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
