@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import warnings as _warnings
 from pathlib import Path
@@ -13,6 +14,9 @@ from vhh_library.utils import AA_PROPERTIES, isoelectric_point, net_charge
 
 if TYPE_CHECKING:
     from vhh_library.esm_scorer import ESMStabilityScorer
+    from vhh_library.predictors.nanomelt import NanoMeltPredictor
+
+logger = logging.getLogger(__name__)
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -110,15 +114,17 @@ class StabilityScorer:
         esm_scorer: "ESMStabilityScorer | None" = None,
         calibration_path: str | None = None,
         *,
+        nanomelt_predictor: "NanoMeltPredictor | None" = None,
         esm2_weight: float | None = None,
         legacy_weight: float | None = None,
-        # Kept for backward compatibility; silently ignored.
+        # Kept for backward compatibility; ignored — use nanomelt_predictor instead.
         use_nanomelt: bool = False,
     ) -> None:
         if use_nanomelt:
             _warnings.warn(
-                "NanoMelt support has been removed; the use_nanomelt parameter is ignored "
-                "and will be removed in a future version.",
+                "use_nanomelt is deprecated; pass a NanoMeltPredictor instance via "
+                "nanomelt_predictor= instead.  This parameter will be removed in a "
+                "future version.",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -140,6 +146,7 @@ class StabilityScorer:
         with open(germline_path) as fh:
             self.germlines: list[dict] = json.load(fh)["germlines"]
         self.esm_scorer: "ESMStabilityScorer | None" = esm_scorer
+        self.nanomelt_predictor: "NanoMeltPredictor | None" = nanomelt_predictor
 
         # Load calibration parameters (or fall back to module-level defaults)
         self._load_calibration_params(calibration_path)
@@ -220,8 +227,26 @@ class StabilityScorer:
             "warnings": warnings,
         }
 
-        # --- Determine ESM-2 contribution ---
-        if self.esm_scorer is not None:
+        # --- Compute shared penalty / bonus terms ---
+        penalty = 0.0
+        if disulfide < 1.0:
+            penalty += self._penalty_disulfide
+        if aggregation < 0.5:
+            penalty += self._penalty_aggregation
+        if charge_balance < 0.5:
+            penalty += self._penalty_charge
+
+        vhh_bonus = self._hallmark_bonus_weight * hallmark
+
+        # --- Determine which backends to use ---
+        has_esm = self.esm_scorer is not None
+        has_nanomelt = self.nanomelt_predictor is not None
+
+        esm2_composite: float | None = None
+        nanomelt_composite: float | None = None
+
+        # --- ESM-2 branch ---
+        if has_esm:
             try:
                 pll = self.esm_scorer.score_single(seq)
                 result["esm2_pll"] = pll
@@ -232,22 +257,37 @@ class StabilityScorer:
                 tm_score = _sigmoid_normalize(predicted_tm, self._tm_min, self._tm_max)
                 result["tm_score"] = tm_score
 
-                penalty = 0.0
-                if disulfide < 1.0:
-                    penalty += self._penalty_disulfide
-                if aggregation < 0.5:
-                    penalty += self._penalty_aggregation
-                if charge_balance < 0.5:
-                    penalty += self._penalty_charge
-
-                vhh_bonus = self._hallmark_bonus_weight * hallmark
-
-                result["composite_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
-                result["scoring_method"] = "esm2"
+                esm2_composite = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
             except Exception:
                 warnings.append("ESM-2 scoring failed; fell back to legacy scoring")
-                result["composite_score"] = legacy
-                result["scoring_method"] = "legacy"
+                logger.warning("ESM-2 scoring failed", exc_info=True)
+
+        # --- NanoMelt branch ---
+        if has_nanomelt:
+            try:
+                nm_result = self.nanomelt_predictor.score_sequence(vhh)
+                nanomelt_tm = nm_result["nanomelt_tm"]
+                result["nanomelt_tm"] = nanomelt_tm
+
+                nm_tm_score = _sigmoid_normalize(nanomelt_tm, self._tm_min, self._tm_max)
+                result["nanomelt_tm_score"] = nm_tm_score
+
+                nanomelt_composite = max(0.0, min(1.0, nm_tm_score + vhh_bonus - penalty))
+            except Exception:
+                warnings.append("NanoMelt scoring failed; ignoring NanoMelt contribution")
+                logger.warning("NanoMelt scoring failed", exc_info=True)
+
+        # --- Combine into composite_score and scoring_method ---
+        if esm2_composite is not None and nanomelt_composite is not None:
+            # "both" — average the two backends
+            result["composite_score"] = (esm2_composite + nanomelt_composite) / 2.0
+            result["scoring_method"] = "both"
+        elif nanomelt_composite is not None:
+            result["composite_score"] = nanomelt_composite
+            result["scoring_method"] = "nanomelt"
+        elif esm2_composite is not None:
+            result["composite_score"] = esm2_composite
+            result["scoring_method"] = "esm2"
         else:
             result["composite_score"] = legacy
             result["scoring_method"] = "legacy"

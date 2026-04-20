@@ -116,7 +116,20 @@ def load_scorers(
             esm_scorer = ESMStabilityScorer(model_tier=_model_tier, device=resolved)
         except Exception as exc:
             logger.warning("ESM-2 scorer could not be initialised: %s", exc)
-    s = StabilityScorer(esm_scorer=esm_scorer)
+
+    # Create NanoMelt predictor if needed and available
+    nanomelt_predictor = None
+    if stability_backend in ("nanomelt", "both"):
+        try:
+            from vhh_library.predictors.nanomelt import NanoMeltPredictor
+
+            nanomelt_predictor = NanoMeltPredictor(device=resolved)
+        except ImportError:
+            logger.warning("NanoMelt is not installed; falling back to ESM-2/heuristic scoring.")
+        except Exception as exc:
+            logger.warning("NanoMelt scorer could not be initialised: %s", exc)
+
+    s = StabilityScorer(esm_scorer=esm_scorer, nanomelt_predictor=nanomelt_predictor)
     hydro = SurfaceHydrophobicityScorer()
     cons = ConsensusStabilityScorer()
     nativeness_scorer = NativenessScorer()
@@ -975,7 +988,7 @@ def tab_library(viz):
         return
 
     st.subheader("Library Overview")
-    mc1, mc2, mc3 = st.columns(3)
+    mc1, mc2, mc3, mc4 = st.columns(4)
     with mc1:
         st.metric("Total Variants", len(library))
     with mc2:
@@ -983,6 +996,11 @@ def tab_library(viz):
     with mc3:
         if "stability_score" in library.columns:
             st.metric("Mean Stability", f"{library['stability_score'].mean():.3f}")
+    with mc4:
+        if "nanomelt_tm" in library.columns and library["nanomelt_tm"].notna().any():
+            st.metric("Mean NanoMelt Tm", f"{library['nanomelt_tm'].mean():.1f} °C")
+        elif "predicted_tm" in library.columns and library["predicted_tm"].notna().any():
+            st.metric("Mean Predicted Tm", f"{library['predicted_tm'].mean():.1f} °C")
 
     st.dataframe(library, use_container_width=True, hide_index=True)
 
@@ -990,8 +1008,15 @@ def tab_library(viz):
     st.subheader("Score Distributions")
     score_cols = [
         c
-        for c in ["combined_score", "stability_score", "nativeness_score", "surface_hydrophobicity_score"]
-        if c in library.columns
+        for c in [
+            "combined_score",
+            "stability_score",
+            "nativeness_score",
+            "surface_hydrophobicity_score",
+            "predicted_tm",
+            "nanomelt_tm",
+        ]
+        if c in library.columns and library[c].notna().any()
     ]
     if score_cols:
         fig, axes = plt.subplots(1, len(score_cols), figsize=(4 * len(score_cols), 3))

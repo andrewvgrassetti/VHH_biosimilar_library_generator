@@ -123,7 +123,7 @@ class TestMutationEffect:
 class TestScoringMethod:
     def test_scoring_method_present(self, scorer: StabilityScorer, vhh: VHHSequence) -> None:
         result = scorer.score(vhh)
-        assert result["scoring_method"] in ("legacy", "esm2")
+        assert result["scoring_method"] in ("legacy", "esm2", "nanomelt", "both")
 
     def test_legacy_fallback(self, vhh: VHHSequence) -> None:
         scorer = StabilityScorer()
@@ -221,3 +221,127 @@ class TestCalibrationIntegration:
         result = scorer.score(vhh)
         assert "composite_score" in result
         assert 0.0 <= result["composite_score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# NanoMelt integration in StabilityScorer
+# ---------------------------------------------------------------------------
+
+
+class TestNanoMeltScoring:
+    """Tests for the NanoMelt branch in StabilityScorer.score()."""
+
+    @staticmethod
+    def _make_mock_nanomelt(tm: float = 70.0) -> MagicMock:
+        """Return a mock NanoMeltPredictor that returns a fixed Tm."""
+        mock = MagicMock()
+        mock.score_sequence.return_value = {
+            "composite_score": 0.6,
+            "nanomelt_tm": tm,
+        }
+        return mock
+
+    def test_nanomelt_only(self, vhh: VHHSequence) -> None:
+        """StabilityScorer with only NanoMelt should use 'nanomelt' method."""
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert result["scoring_method"] == "nanomelt"
+        assert "nanomelt_tm" in result
+        assert result["nanomelt_tm"] == 70.0
+        assert 0.0 <= result["composite_score"] <= 1.0
+        mock_nm.score_sequence.assert_called_once()
+
+    def test_nanomelt_composite_in_range(self, vhh: VHHSequence) -> None:
+        """Composite score from NanoMelt must be in [0, 1]."""
+        for tm in [20.0, 55.0, 67.5, 80.0, 95.0]:
+            mock_nm = self._make_mock_nanomelt(tm)
+            scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+            result = scorer.score(vhh)
+            assert 0.0 <= result["composite_score"] <= 1.0, f"Failed for tm={tm}"
+
+    def test_nanomelt_tm_score_present(self, vhh: VHHSequence) -> None:
+        mock_nm = self._make_mock_nanomelt(72.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert "nanomelt_tm_score" in result
+        assert isinstance(result["nanomelt_tm_score"], float)
+
+    def test_both_backends(self, vhh: VHHSequence) -> None:
+        """StabilityScorer with ESM-2 + NanoMelt should use 'both' method."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert result["scoring_method"] == "both"
+        assert "predicted_tm" in result
+        assert "nanomelt_tm" in result
+        assert 0.0 <= result["composite_score"] <= 1.0
+
+    def test_both_is_average_of_backends(self, vhh: VHHSequence) -> None:
+        """'both' composite should be the average of ESM-2 and NanoMelt composites."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        mock_nm = self._make_mock_nanomelt(70.0)
+
+        # Get ESM-2-only score
+        esm_only = StabilityScorer(esm_scorer=mock_esm)
+        esm_result = esm_only.score(vhh)
+        esm_composite = esm_result["composite_score"]
+
+        # Get NanoMelt-only score
+        nm_only = StabilityScorer(nanomelt_predictor=mock_nm)
+        nm_result = nm_only.score(vhh)
+        nm_composite = nm_result["composite_score"]
+
+        # Get both score
+        mock_esm2 = MagicMock()
+        mock_esm2.score_single.return_value = -100.0
+        mock_nm2 = self._make_mock_nanomelt(70.0)
+        both = StabilityScorer(esm_scorer=mock_esm2, nanomelt_predictor=mock_nm2)
+        both_result = both.score(vhh)
+
+        expected = (esm_composite + nm_composite) / 2.0
+        assert both_result["composite_score"] == pytest.approx(expected, abs=1e-9)
+
+    def test_nanomelt_failure_falls_back(self, vhh: VHHSequence) -> None:
+        """If NanoMelt raises, scoring should fall back to legacy."""
+        mock_nm = MagicMock()
+        mock_nm.score_sequence.side_effect = RuntimeError("backend failed")
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert result["scoring_method"] == "legacy"
+        assert "nanomelt_tm" not in result
+
+    def test_both_nanomelt_failure_falls_back_to_esm2(self, vhh: VHHSequence) -> None:
+        """If NanoMelt fails in 'both' mode, score should use ESM-2 only."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        mock_nm = MagicMock()
+        mock_nm.score_sequence.side_effect = RuntimeError("backend failed")
+        scorer = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert result["scoring_method"] == "esm2"
+
+    def test_predict_mutation_effect_with_nanomelt(self, vhh: VHHSequence) -> None:
+        """predict_mutation_effect should work when NanoMelt is configured."""
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        delta = scorer.predict_mutation_effect(vhh, 1, "A")
+        assert isinstance(delta, float)
+
+    def test_esm2_path_unchanged_without_nanomelt(self, vhh: VHHSequence) -> None:
+        """ESM-2-only path should remain identical when no nanomelt_predictor is given."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        result = scorer.score(vhh)
+        assert result["scoring_method"] == "esm2"
+        assert "predicted_tm" in result
+        assert "nanomelt_tm" not in result
+
+    def test_use_nanomelt_deprecation_warning(self) -> None:
+        """use_nanomelt=True should emit a DeprecationWarning."""
+        with pytest.warns(DeprecationWarning, match="use_nanomelt is deprecated"):
+            StabilityScorer(use_nanomelt=True)
