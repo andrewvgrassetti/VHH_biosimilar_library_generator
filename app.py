@@ -222,6 +222,48 @@ def _library_to_fasta(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
+def _build_original_scores(
+    stability_scores: dict | None,
+    nativeness_scores: dict | None,
+    hydrophobicity_scores: dict | None,
+    engine: object | None = None,
+) -> dict[str, float | None]:
+    """Build a column-name → value mapping of the original sequence's scores.
+
+    The returned keys match the library DataFrame column names so they can be
+    used directly as reference-line values on the score-distribution
+    histograms.
+    """
+    original: dict[str, float | None] = {}
+    if stability_scores is not None:
+        original["stability_score"] = stability_scores.get("composite_score")
+        original["predicted_tm"] = stability_scores.get("predicted_tm")
+        original["nanomelt_tm"] = stability_scores.get("nanomelt_tm")
+    if nativeness_scores is not None:
+        original["nativeness_score"] = nativeness_scores.get("composite_score")
+    if hydrophobicity_scores is not None:
+        original["surface_hydrophobicity_score"] = hydrophobicity_scores.get("composite_score")
+
+    # Derive combined_score using the engine's weighting when available,
+    # falling back to an equal-weight average.
+    _stab = original.get("stability_score")
+    _nat = original.get("nativeness_score")
+    _sh = original.get("surface_hydrophobicity_score")
+    if engine is not None and hasattr(engine, "_combined_score") and _stab is not None:
+        _raw: dict[str, float] = {
+            "stability": _stab,
+            "nativeness": _nat if _nat is not None else 0.0,
+            "surface_hydrophobicity": _sh if _sh is not None else 0.0,
+        }
+        original["combined_score"] = engine._combined_score(_raw)
+    elif _stab is not None and _nat is not None:
+        original["combined_score"] = (_stab + _nat) / 2.0
+    elif _stab is not None:
+        original["combined_score"] = _stab
+
+    return original
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -1074,6 +1116,14 @@ def tab_library(viz):
 
     st.dataframe(library, use_container_width=True, hide_index=True)
 
+    # -- Build original-sequence score lookup for reference lines --
+    original_scores = _build_original_scores(
+        stability_scores=st.session_state.get("stability_scores"),
+        nativeness_scores=st.session_state.get("nativeness_scores"),
+        hydrophobicity_scores=st.session_state.get("hydrophobicity_scores"),
+        engine=st.session_state.get("_mutation_engine"),
+    )
+
     # -- Distribution plots --
     st.subheader("Score Distributions")
     score_cols = [
@@ -1094,6 +1144,16 @@ def tab_library(viz):
             axes = [axes]
         for ax, col in zip(axes, score_cols):
             ax.hist(library[col].dropna(), bins=30, edgecolor="white", alpha=0.8)
+            orig_val = original_scores.get(col)
+            if orig_val is not None:
+                ax.axvline(
+                    orig_val,
+                    color="red",
+                    linestyle="--",
+                    linewidth=1.5,
+                    label=f"Original ({orig_val:.3f})",
+                )
+                ax.legend(fontsize=7)
             ax.set_title(col.replace("_", " ").title(), fontsize=10)
             ax.set_xlabel("Score")
             ax.set_ylabel("Count")
@@ -1111,6 +1171,21 @@ def tab_library(viz):
             rho, pval = spearmanr(n_vals.loc[common_idx], s_vals.loc[common_idx])
             fig2, ax2 = plt.subplots(figsize=(5, 4))
             ax2.scatter(n_vals.loc[common_idx], s_vals.loc[common_idx], alpha=0.4, s=10)
+            orig_nat = original_scores.get("nativeness_score")
+            orig_stab = original_scores.get("stability_score")
+            if orig_nat is not None and orig_stab is not None:
+                ax2.scatter(
+                    [orig_nat],
+                    [orig_stab],
+                    color="red",
+                    marker="*",
+                    s=200,
+                    zorder=5,
+                    label="Original",
+                    edgecolors="black",
+                    linewidths=0.5,
+                )
+                ax2.legend(fontsize=8)
             ax2.set_xlabel("Nativeness Score")
             ax2.set_ylabel("Stability Score")
             ax2.set_title(f"Spearman ρ = {rho:.3f} (p = {pval:.2e})")
