@@ -866,7 +866,30 @@ class MutationEngine:
         n_positions = len(position_groups)
         k_max = min(n_mutations, n_positions)
         k_min = min(min_mutations, k_max)
+
+        if min_mutations > n_positions:
+            logger.warning(
+                "Requested min_mutations=%d but only %d unique positions available "
+                "in the top mutations list. Clamping min_mutations to %d. "
+                "Increase 'Top N mutations for library' to include more positions.",
+                min_mutations,
+                n_positions,
+                k_min,
+            )
+
         total = _total_grouped_combinations(position_groups, k_min, k_max)
+
+        if total < max_variants:
+            logger.warning(
+                "Requested %d variants but the search space only contains %d "
+                "unique combinations (%d positions, k_min=%d, k_max=%d). "
+                "Increase 'Top N mutations for library' to expand the search space.",
+                max_variants,
+                total,
+                n_positions,
+                k_min,
+                k_max,
+            )
 
         if strategy == "auto":
             if total <= _SAMPLING_THRESHOLD:
@@ -1015,19 +1038,30 @@ class MutationEngine:
         k_max: int,
         max_variants: int,
     ) -> list[dict]:
+        # Build position groups for position-aware sampling.
+        position_groups: dict[int, list] = {}
+        for m in mutation_list:
+            position_groups.setdefault(int(m.position), []).append(m)
+        positions = list(position_groups.keys())
+
+        # Clamp k range to available positions.
+        effective_k_max = min(k_max, len(positions))
+        effective_k_min = min(k_min, effective_k_max)
+        if effective_k_min < 1:
+            effective_k_min = 1
+
         rows: list[dict] = []
         seen: set[frozenset[tuple[int, str]]] = set()
         counter = 1
         attempts = 0
-        max_attempts = max_variants * 10
+        max_attempts = max_variants * 20
 
         while len(rows) < max_variants and attempts < max_attempts:
             attempts += 1
-            k = random.randint(k_min, k_max)
-            sample = random.sample(mutation_list, min(k, len(mutation_list)))
-            sample = self._deduplicate_positions(sample)
-            if not sample:
-                continue
+            k = random.randint(effective_k_min, effective_k_max)
+            # Sample positions first, then pick one AA per position.
+            sampled_positions = random.sample(positions, k)
+            sample = [random.choice(position_groups[p]) for p in sampled_positions]
 
             key = frozenset((int(m.position), m.suggested_aa) for m in sample)
             if key in seen:
@@ -1055,11 +1089,17 @@ class MutationEngine:
         anchor_muts = [m for m in mutation_list if anchors.get(int(m.position)) == m.suggested_aa]
         non_anchor = [m for m in mutation_list if int(m.position) not in anchors]
 
+        # Build position groups for non-anchor mutations.
+        non_anchor_groups: dict[int, list] = {}
+        for m in non_anchor:
+            non_anchor_groups.setdefault(int(m.position), []).append(m)
+        non_anchor_positions = list(non_anchor_groups.keys())
+
         rows: list[dict] = []
         seen: set[frozenset[tuple[int, str]]] = set()
         counter = 1
         attempts = 0
-        max_attempts = max_variants * 10
+        max_attempts = max_variants * 20
 
         n_anchor = len(anchor_muts)
 
@@ -1067,11 +1107,13 @@ class MutationEngine:
             attempts += 1
             k = random.randint(k_min, k_max)
             n_extra = max(0, k - n_anchor)
-            if n_extra > len(non_anchor):
-                n_extra = len(non_anchor)
-            extra = random.sample(non_anchor, n_extra) if n_extra else []
+            n_extra = min(n_extra, len(non_anchor_positions))
+            if n_extra > 0:
+                sampled_positions = random.sample(non_anchor_positions, n_extra)
+                extra = [random.choice(non_anchor_groups[p]) for p in sampled_positions]
+            else:
+                extra = []
             combined = anchor_muts + extra
-            combined = self._deduplicate_positions(combined)
             if not combined:
                 continue
 

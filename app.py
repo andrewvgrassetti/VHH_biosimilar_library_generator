@@ -27,7 +27,7 @@ from vhh_library.codon_optimizer import CodonOptimizer
 from vhh_library.components.sequence_selector import imgt_key_int_part, sequence_selector
 from vhh_library.developability import SurfaceHydrophobicityScorer
 from vhh_library.library_manager import LibraryManager
-from vhh_library.mutation_engine import MutationEngine
+from vhh_library.mutation_engine import MutationEngine, _total_grouped_combinations
 from vhh_library.nativeness import NativenessScorer
 from vhh_library.orthogonal_scoring import (
     ConsensusStabilityScorer,
@@ -307,9 +307,39 @@ def sidebar():
 
         # -- Library Generation --
         st.subheader("Library Generation")
-        st.number_input("Min mutations", 1, 20, 1, key="min_mutations")
-        st.number_input("Max mutations (n_mutations)", 1, 20, 3, key="n_mutations")
-        st.number_input("Max variants", 100, 100_000, 1000, step=100, key="max_variants")
+        st.number_input(
+            "Min mutations",
+            1,
+            20,
+            1,
+            key="min_mutations",
+            help=(
+                "Minimum number of mutations per variant. This is limited by the "
+                "number of unique positions in the 'Top N mutations for library' "
+                "selection — you cannot mutate more positions than are available."
+            ),
+        )
+        st.number_input(
+            "Max mutations (n_mutations)",
+            1,
+            20,
+            3,
+            key="n_mutations",
+            help="Maximum number of mutations per variant.",
+        )
+        st.number_input(
+            "Max variants",
+            100,
+            100_000,
+            1000,
+            step=100,
+            key="max_variants",
+            help=(
+                "Target number of variants to generate. Actual count may be lower "
+                "if the combinatorial search space (determined by available positions "
+                "and mutation options) is smaller than this value."
+            ),
+        )
         st.number_input(
             "Max candidates per position",
             1,
@@ -829,7 +859,51 @@ def tab_mutations(stability_scorer):
             min(50, len(ranked)),
             min(10, len(ranked)),
             key="top_n_muts",
+            help=(
+                "Number of top-ranked single-point mutations to include as "
+                "candidates for library generation. Each mutation targets a "
+                "specific IMGT position — the number of unique positions in "
+                "this set determines the maximum mutations per variant. "
+                "Increase this value to explore more positions and enable "
+                "more mutations per variant and more total variants."
+            ),
         )
+
+        # Show user guidance about the search space.
+        selected_top = ranked.head(top_n)
+        n_unique_positions = selected_top["position"].nunique() if "position" in selected_top.columns else 0
+        user_min_muts = st.session_state.get("min_mutations", 1)
+        user_max_muts = st.session_state.get("n_mutations", 3)
+        user_max_variants = st.session_state.get("max_variants", 1000)
+
+        if n_unique_positions > 0:
+            effective_k_max = min(user_max_muts, n_unique_positions)
+            effective_k_min = min(user_min_muts, effective_k_max)
+
+            if user_min_muts > n_unique_positions:
+                st.warning(
+                    f"⚠️ Min mutations ({user_min_muts}) exceeds available "
+                    f"positions ({n_unique_positions}) in top {top_n} mutations. "
+                    f"Each variant will have at most {n_unique_positions} mutations. "
+                    f"Increase **Top N mutations** to include more positions.",
+                    icon="⚠️",
+                )
+
+            # Estimate search space size using the shared utility.
+            _position_groups: dict = {}
+            for row in selected_top.itertuples(index=False):
+                _position_groups.setdefault(int(row.position), []).append(row)
+            _search_space = _total_grouped_combinations(_position_groups, effective_k_min, effective_k_max)
+
+            if _search_space < user_max_variants:
+                st.info(
+                    f"ℹ️ The search space contains ~{_search_space:,} unique "
+                    f"combinations ({n_unique_positions} positions, "
+                    f"{effective_k_min}–{effective_k_max} mutations each), "
+                    f"which is less than the requested {user_max_variants:,} variants. "
+                    f"Increase **Top N mutations** to expand the search space.",
+                    icon="ℹ️",
+                )
 
         if st.button("Generate library", type="primary", key="btn_gen_lib"):
             engine = st.session_state.get("_mutation_engine")
@@ -876,7 +950,15 @@ def tab_mutations(stability_scorer):
             progress_bar.progress(1.0, text="Complete!")
             st.session_state["library"] = library
             st.session_state["esm2_pll_scores"] = None
-            st.success(f"Generated {len(library)} variants.")
+            _requested = st.session_state.get("max_variants", 1000)
+            if len(library) < _requested:
+                st.warning(
+                    f"Generated {len(library)} of {_requested:,} requested variants. "
+                    f"The search space was exhausted. Increase **Top N mutations for "
+                    f"library** to expand the pool of candidate mutations and positions.",
+                )
+            else:
+                st.success(f"Generated {len(library)} variants.")
 
 
 # ---------------------------------------------------------------------------

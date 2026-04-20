@@ -40,9 +40,7 @@ class _MockNativenessScorer:
     def score(self, vhh: VHHSequence) -> dict:
         return {"composite_score": self._raw_score(vhh.sequence)}
 
-    def predict_mutation_effect(
-        self, vhh: VHHSequence, position: int | str, new_aa: str
-    ) -> float:
+    def predict_mutation_effect(self, vhh: VHHSequence, position: int | str, new_aa: str) -> float:
         # Return a small deterministic delta
         return 0.02 if new_aa in "AGILV" else -0.01
 
@@ -74,46 +72,34 @@ class TestRankSingleMutations:
         assert "position" in ranked.columns
         assert "combined_score" in ranked.columns
 
-    def test_rank_single_mutations_excluded_target_aas(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_rank_single_mutations_excluded_target_aas(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         df = engine.rank_single_mutations(vhh, excluded_target_aas={"C"})
         if not df.empty:
             assert "C" not in df["suggested_aa"].values
 
-    def test_rank_single_mutations_has_nativeness_deltas(
-        self, ranked: pd.DataFrame
-    ) -> None:
+    def test_rank_single_mutations_has_nativeness_deltas(self, ranked: pd.DataFrame) -> None:
         """With nativeness scorer, delta_nativeness should have non-zero values."""
         if not ranked.empty:
             assert "delta_nativeness" in ranked.columns
             assert ranked["delta_nativeness"].abs().sum() > 0
 
-    def test_rank_single_mutations_has_stability_deltas(
-        self, ranked: pd.DataFrame
-    ) -> None:
+    def test_rank_single_mutations_has_stability_deltas(self, ranked: pd.DataFrame) -> None:
         if not ranked.empty:
             assert "delta_stability" in ranked.columns
 
-    def test_ranked_no_cdrs(
-        self, ranked: pd.DataFrame, vhh: VHHSequence
-    ) -> None:
+    def test_ranked_no_cdrs(self, ranked: pd.DataFrame, vhh: VHHSequence) -> None:
         """Candidates should not include CDR positions."""
         cdr_positions = vhh.cdr_positions
         for _, row in ranked.iterrows():
             assert str(row["imgt_pos"]) not in cdr_positions
 
-    def test_ranked_excluded_target_aas(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_ranked_excluded_target_aas(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         df = engine.rank_single_mutations(vhh, excluded_target_aas={"C", "M"})
         if not df.empty:
             assert "C" not in df["suggested_aa"].values
             assert "M" not in df["suggested_aa"].values
 
-    def test_ranked_multiple_per_position(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_ranked_multiple_per_position(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """Stability-driven scan returns multiple AAs per position when max_per_position > 1."""
         ranked = engine.rank_single_mutations(vhh, max_per_position=3)
         if not ranked.empty:
@@ -133,9 +119,7 @@ class TestApplyMutations:
 
 
 class TestGenerateLibrary:
-    def test_generate_library(
-        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
-    ) -> None:
+    def test_generate_library(self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame) -> None:
         top5 = ranked.head(5)
         if top5.empty:
             pytest.skip("No mutations ranked")
@@ -174,9 +158,7 @@ class TestGenerateLibrary:
         if top10.empty:
             pytest.skip("No mutations ranked")
         start = time.time()
-        lib = engine.generate_library(
-            vhh, top10, n_mutations=10, max_variants=200, min_mutations=8
-        )
+        lib = engine.generate_library(vhh, top10, n_mutations=10, max_variants=200, min_mutations=8)
         elapsed = time.time() - start
         assert elapsed < 120
         assert isinstance(lib, pd.DataFrame)
@@ -219,9 +201,7 @@ class TestGenerateLibrary:
         top5 = ranked.head(5)
         if top5.empty:
             pytest.skip("No mutations ranked")
-        lib = engine.generate_library(
-            vhh, top5, n_mutations=2, strategy="random", max_variants=10
-        )
+        lib = engine.generate_library(vhh, top5, n_mutations=2, strategy="random", max_variants=10)
         assert isinstance(lib, pd.DataFrame)
 
     def test_generate_library_strategy_iterative(
@@ -230,9 +210,7 @@ class TestGenerateLibrary:
         top5 = ranked.head(5)
         if top5.empty:
             pytest.skip("No mutations ranked")
-        lib = engine.generate_library(
-            vhh, top5, n_mutations=2, strategy="iterative", max_variants=10
-        )
+        lib = engine.generate_library(vhh, top5, n_mutations=2, strategy="iterative", max_variants=10)
         assert isinstance(lib, pd.DataFrame)
 
 
@@ -247,9 +225,7 @@ class TestWeightsAndMetrics:
             stability_scorer=StabilityScorer(),
             nativeness_scorer=_MockNativenessScorer(),
         )
-        assert eng._weights["stability"] >= max(
-            v for k, v in eng._weights.items() if k != "stability"
-        )
+        assert eng._weights["stability"] >= max(v for k, v in eng._weights.items() if k != "stability")
 
     def test_nativeness_always_enabled(self) -> None:
         """Engine always has nativeness enabled."""
@@ -285,9 +261,7 @@ class TestPTMLiability:
 class TestMultiCandidatePerPosition:
     """Tests for multi-option per position feature."""
 
-    def test_multi_candidates(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_multi_candidates(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """Ranking should return multiple AAs per position when requested."""
         ranked = engine.rank_single_mutations(vhh, max_per_position=3)
         if not ranked.empty:
@@ -295,18 +269,14 @@ class TestMultiCandidatePerPosition:
             # At least some positions should have more than 1 candidate
             assert pos_counts.max() >= 1  # at least 1 always
 
-    def test_multi_candidates_limited(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_multi_candidates_limited(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """Ranking should limit to max_per_position."""
         ranked_limited = engine.rank_single_mutations(vhh, max_per_position=2)
         if not ranked_limited.empty:
             pos_counts = ranked_limited.groupby("imgt_pos").size()
             assert pos_counts.max() <= 2
 
-    def test_single_candidate_per_position(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_single_candidate_per_position(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """max_per_position=1 should give at most 1 candidate per position."""
         ranked = engine.rank_single_mutations(vhh, max_per_position=1)
         if not ranked.empty:
@@ -341,13 +311,9 @@ class TestMultiCandidatePerPosition:
 
         # At least one position should have multiple different AAs across variants
         multi_aa_positions = [p for p, aas in position_aas.items() if len(aas) > 1]
-        assert len(multi_aa_positions) > 0, (
-            "Expected at least one position with different AA choices across variants"
-        )
+        assert len(multi_aa_positions) > 0, "Expected at least one position with different AA choices across variants"
 
-    def test_no_variant_has_duplicate_position(
-        self, engine: MutationEngine, vhh: VHHSequence
-    ) -> None:
+    def test_no_variant_has_duplicate_position(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """No single variant should have the same position mutated twice."""
         ranked = engine.rank_single_mutations(vhh, max_per_position=3)
         if ranked.empty:
@@ -380,9 +346,7 @@ class TestGroupedCombinations:
 
         groups = {1: [M(1)], 2: [M(2)], 3: [M(3)], 4: [M(4)]}
         assert _total_grouped_combinations(groups, 2, 2) == math.comb(4, 2)
-        assert _total_grouped_combinations(groups, 1, 3) == (
-            math.comb(4, 1) + math.comb(4, 2) + math.comb(4, 3)
-        )
+        assert _total_grouped_combinations(groups, 1, 3) == (math.comb(4, 1) + math.comb(4, 2) + math.comb(4, 3))
 
     def test_multi_option_positions(self) -> None:
         """With multiple options per position, count should be larger than C(n, k)."""
@@ -403,6 +367,7 @@ class TestGroupedCombinations:
 
     def test_all_positions_multi_option(self) -> None:
         """All positions with 2 options each."""
+
         class M:
             def __init__(self, pos):
                 self.position = pos
@@ -417,16 +382,18 @@ class TestGroupedCombinations:
 class TestEvolutionaryIterativeStrategy:
     """Tests for the redesigned multi-phase iterative strategy."""
 
-    def test_iterative_converges(
-        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
-    ) -> None:
+    def test_iterative_converges(self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame) -> None:
         """Final round scores should be >= seed round scores (convergence)."""
         top10 = ranked.head(10)
         if top10.empty:
             pytest.skip("No mutations ranked")
         lib = engine.generate_library(
-            vhh, top10, n_mutations=3, strategy="iterative",
-            max_variants=100, max_rounds=6,
+            vhh,
+            top10,
+            n_mutations=3,
+            strategy="iterative",
+            max_variants=100,
+            max_rounds=6,
         )
         assert isinstance(lib, pd.DataFrame)
         if lib.empty:
@@ -444,8 +411,12 @@ class TestEvolutionaryIterativeStrategy:
         if top10.empty:
             pytest.skip("No mutations ranked")
         lib = engine.generate_library(
-            vhh, top10, n_mutations=3, strategy="iterative",
-            max_variants=50, max_rounds=4,
+            vhh,
+            top10,
+            n_mutations=3,
+            strategy="iterative",
+            max_variants=50,
+            max_rounds=4,
         )
         if len(lib) < 2:
             pytest.skip("Not enough variants")
@@ -468,8 +439,12 @@ class TestEvolutionaryIterativeStrategy:
             progress_events.append(prog)
 
         lib = engine.generate_library(
-            vhh, top5, n_mutations=2, strategy="iterative",
-            max_variants=30, max_rounds=4,
+            vhh,
+            top5,
+            n_mutations=2,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=4,
             progress_callback=_on_progress,
         )
         assert isinstance(lib, pd.DataFrame)
@@ -477,8 +452,10 @@ class TestEvolutionaryIterativeStrategy:
         # Verify progress event fields
         for p in progress_events:
             assert p.phase in (
-                "exploration", "anchor_identification",
-                "exploitation", "validation",
+                "exploration",
+                "anchor_identification",
+                "exploitation",
+                "validation",
             )
             assert p.round_number >= 1
             assert p.population_size >= 0
@@ -492,8 +469,12 @@ class TestEvolutionaryIterativeStrategy:
             pytest.skip("No mutations ranked")
         start = time.time()
         lib = engine.generate_library(
-            vhh, top10, n_mutations=10, strategy="iterative",
-            max_variants=200, max_rounds=6,
+            vhh,
+            top10,
+            n_mutations=10,
+            strategy="iterative",
+            max_variants=200,
+            max_rounds=6,
         )
         elapsed = time.time() - start
         assert elapsed < 300, f"Iterative strategy took {elapsed:.1f}s (>5 min)"
@@ -788,3 +769,90 @@ class TestBatchNativenessScoring:
             mutant = VHHSequence.mutate(vhh, row["imgt_pos"], row["suggested_aa"])
             expected_delta = scorer.score(mutant)["composite_score"] - parent_nat
             assert abs(row["delta_nativeness"] - expected_delta) < 1e-9
+
+
+class TestPositionAwareSampling:
+    """Tests verifying that position-aware sampling enforces mutation count
+    constraints and generates diverse variants."""
+
+    def test_min_mutations_enforced_all_strategies(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
+    ) -> None:
+        """Every variant must have at least min_mutations mutations."""
+        # Use enough top mutations to have many positions.
+        top20 = ranked.head(20)
+        if top20.empty:
+            pytest.skip("No mutations ranked")
+
+        n_positions = top20["position"].nunique()
+        min_muts = min(3, n_positions)
+
+        for strategy in ("exhaustive", "random"):
+            lib = engine.generate_library(
+                vhh,
+                top20,
+                n_mutations=min(10, n_positions),
+                min_mutations=min_muts,
+                max_variants=50,
+                strategy=strategy,
+            )
+            if not lib.empty:
+                assert lib["n_mutations"].min() >= min_muts, (
+                    f"Strategy '{strategy}': variant with {lib['n_mutations'].min()} mutations, expected >= {min_muts}"
+                )
+
+    def test_no_duplicate_positions_in_variant(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
+    ) -> None:
+        """No variant should mutate the same position twice."""
+        top20 = ranked.head(20)
+        if top20.empty:
+            pytest.skip("No mutations ranked")
+        lib = engine.generate_library(vhh, top20, n_mutations=5, max_variants=50, strategy="random")
+        for _, row in lib.iterrows():
+            muts = _parse_mut_str(row["mutations"])
+            positions = [pos for pos, _ in muts]
+            assert len(positions) == len(set(positions)), f"Duplicate positions in variant: {row['mutations']}"
+
+    def test_variants_fully_rescored(self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame) -> None:
+        """Each variant should have independently computed stability and nativeness."""
+        top10 = ranked.head(10)
+        if top10.empty:
+            pytest.skip("No mutations ranked")
+        lib = engine.generate_library(vhh, top10, n_mutations=3, max_variants=20, strategy="random")
+        if lib.empty:
+            pytest.skip("No variants generated")
+        # Stability and nativeness should be in [0, 1] range and not all identical.
+        assert (lib["stability_score"] >= 0).all()
+        assert (lib["stability_score"] <= 1).all()
+        assert (lib["nativeness_score"] >= 0).all()
+        assert (lib["nativeness_score"] <= 1).all()
+        if len(lib) > 1:
+            assert lib["stability_score"].nunique() > 1 or lib["nativeness_score"].nunique() > 1
+
+    def test_search_space_warning_logged(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame, caplog
+    ) -> None:
+        """A warning should be logged when max_variants exceeds the search space."""
+        top5 = ranked.head(5)
+        if top5.empty:
+            pytest.skip("No mutations ranked")
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            engine.generate_library(vhh, top5, n_mutations=2, max_variants=100_000)
+        assert any("search space" in msg.lower() for msg in caplog.messages)
+
+    def test_min_mutations_clamped_warning_logged(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame, caplog
+    ) -> None:
+        """A warning should be logged when min_mutations exceeds available positions."""
+        top5 = ranked.head(5)
+        if top5.empty:
+            pytest.skip("No mutations ranked")
+        n_positions = top5["position"].nunique()
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            engine.generate_library(vhh, top5, n_mutations=n_positions, min_mutations=n_positions + 5, max_variants=10)
+        assert any("clamping" in msg.lower() for msg in caplog.messages)
