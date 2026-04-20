@@ -240,6 +240,12 @@ def _build_policy_from_selector(
     1. Build policy from classifier
     2. Freeze off-limit positions
     3. Un-freeze CDR positions the user removed from off-limits
+
+    Returns
+    -------
+    DesignPolicy
+        The combined policy reflecting classifier defaults overlaid with
+        interactive-selector overrides.
     """
     classifier = PositionClassifier()
     classifications = classifier.classify(imgt_keys)
@@ -385,13 +391,8 @@ class TestPolicyFromInteractiveSelector:
         assert policy.effective_class("23") is PositionClass.FROZEN
         assert policy.effective_class("41") is PositionClass.FROZEN
         assert policy.effective_class("104") is PositionClass.FROZEN
-        # CDR positions are frozen by classifier, and with empty off-limits
-        # they have cdr_freeze reason but aren't "removed" by user — they
-        # stay frozen because the unfreeze logic only runs for positions NOT
-        # in off_limits that have cdr_freeze reason.  Since off_limits is empty,
-        # ALL CDR positions are "not in off_limits" and thus eligible for unfreeze.
-        # But that's the desired behavior: empty off-limits = user wants no freezes
-        # from the selector.
+        # With empty off-limits, CDR positions become mutable because the
+        # user has deselected all region-based freezes.
         for pos in ["27", "30", "33"]:
             assert policy.effective_class(pos) is PositionClass.MUTABLE
 
