@@ -32,9 +32,9 @@ class TestBuildRuntimeConfig:
     """Simulate the sidebar → RuntimeConfig path used in app.py."""
 
     def test_default_sidebar_values(self):
-        cfg = RuntimeConfig(device="auto", stability_backend="esm2", nativeness_backend="abnativ")
+        cfg = RuntimeConfig(device="auto", stability_backend="nanomelt", nativeness_backend="abnativ")
         assert cfg.device == "auto"
-        assert cfg.stability_backend == "esm2"
+        assert cfg.stability_backend == "nanomelt"
 
     @pytest.mark.parametrize("device", sorted(VALID_DEVICES))
     def test_all_device_options(self, device: str):
@@ -113,16 +113,39 @@ class TestClassifierToPolicyIntegration:
     def sample_imgt_positions(self) -> list[str]:
         """Minimal set of IMGT positions spanning FR and CDR regions."""
         return [
-            "1", "2", "3", "6", "7", "10", "20",       # FR1
-            "23",                                         # conserved Cys
-            "27", "28", "29", "30", "31", "32", "33",   # CDR1
-            "41",                                         # conserved Trp
-            "42", "49",                                   # FR2 hallmarks
-            "56", "57", "58",                             # CDR2
-            "69", "78", "80",                             # FR3 core
-            "105", "106", "107", "108", "109", "110", "111",  # CDR3
-            "104",                                        # conserved Cys
-            "118",                                        # FR4
+            "1",
+            "2",
+            "3",
+            "6",
+            "7",
+            "10",
+            "20",  # FR1
+            "23",  # conserved Cys
+            "27",
+            "28",
+            "29",
+            "30",
+            "31",
+            "32",
+            "33",  # CDR1
+            "41",  # conserved Trp
+            "42",
+            "49",  # FR2 hallmarks
+            "56",
+            "57",
+            "58",  # CDR2
+            "69",
+            "78",
+            "80",  # FR3 core
+            "105",
+            "106",
+            "107",
+            "108",
+            "109",
+            "110",
+            "111",  # CDR3
+            "104",  # conserved Cys
+            "118",  # FR4
         ]
 
     def test_produces_design_policy(self, sample_imgt_positions: list[str]):

@@ -75,7 +75,7 @@ def _build_runtime_config() -> RuntimeConfig:
     selection has been made yet.
     """
     device = st.session_state.get("cfg_device", "auto")
-    stability_backend = st.session_state.get("cfg_stability_backend", "esm2")
+    stability_backend = st.session_state.get("cfg_stability_backend", "nanomelt")
     nativeness_backend = st.session_state.get("cfg_nativeness_backend", "abnativ")
     return RuntimeConfig(
         device=device,
@@ -278,9 +278,9 @@ def sidebar():
         st.selectbox(
             "Stability backend",
             options=sorted(VALID_STABILITY_BACKENDS),
-            index=sorted(VALID_STABILITY_BACKENDS).index("esm2"),
+            index=sorted(VALID_STABILITY_BACKENDS).index("nanomelt"),
             key="cfg_stability_backend",
-            help="esm2 = ESM-2 PLL scoring, nanomelt = NanoMelt Tm predictor, both = ensemble",
+            help="nanomelt = NanoMelt Tm predictor (default), esm2 = ESM-2 PLL scoring, both = ensemble",
         )
         st.selectbox(
             "Nativeness backend",
@@ -301,19 +301,19 @@ def sidebar():
         resolved = resolve_device(st.session_state.get("cfg_device", "auto"))
         st.caption(f"Resolved device: **{resolved}**")
 
-        stab_backend = st.session_state.get("cfg_stability_backend", "esm2")
+        stab_backend = st.session_state.get("cfg_stability_backend", "nanomelt")
+        if stab_backend in ("nanomelt", "both"):
+            try:
+                import nanomelt  # noqa: F401
+
+                st.success("✅ NanoMelt available (primary)")
+            except ImportError:
+                st.warning('⚠️ NanoMelt not installed — pip install ".[nanomelt]". Falling back to ESM-2/heuristic.')
         if stab_backend in ("esm2", "both"):
             if _esm2_pll_available():
                 st.success("✅ ESM-2 available")
             else:
                 st.warning("⚠️ ESM-2 unavailable — install torch + fair-esm. Falling back to heuristic scoring.")
-        if stab_backend in ("nanomelt", "both"):
-            try:
-                import nanomelt  # noqa: F401
-
-                st.success("✅ NanoMelt available")
-            except ImportError:
-                st.warning('⚠️ NanoMelt not installed — pip install ".[nanomelt]". Falling back to ESM-2/heuristic.')
         try:
             import abnativ  # noqa: F401
 
@@ -407,12 +407,16 @@ def sidebar():
         st.slider("Anchor threshold", 0.0, 1.0, 0.6, 0.05, key="anchor_threshold")
         st.number_input("Max rounds", 1, 30, 15, key="max_rounds")
         st.number_input(
-            "Rescore top N (ESM-2 full PLL)",
+            "Rescore top N (iterative)",
             0,
             200,
             20,
             key="rescore_top_n",
-            help="After each iterative round, re-score top N variants with full ESM-2 PLL for accuracy (0 = disabled)",
+            help=(
+                "After each iterative round, re-score top N variants for accuracy. "
+                "Uses the active stability backend (NanoMelt by default, ESM-2 full PLL when selected). "
+                "Set to 0 to disable."
+            ),
         )
 
         st.divider()
@@ -454,27 +458,32 @@ def sidebar():
 
         st.divider()
 
-        # -- ESM-2 PLL --
-        st.subheader("ESM-2 Model Settings")
-        esm2_available = _esm2_pll_available()
-        esm2_active = stab_backend in ("esm2", "both") and esm2_available
-        st.selectbox(
-            "Model tier",
-            options=["auto", "t6_8M", "t12_35M", "t33_650M", "t36_3B"],
-            index=0,
-            key="esm2_model_tier",
-            disabled=not esm2_active,
-            help="auto = t6_8M on CPU, t33_650M on GPU",
-        )
-        st.slider(
-            "Top N variants for advanced re-ranking",
-            1,
-            100,
-            _ESM2_PLL_DEFAULT_TOP_N,
-            key="esm2_top_n",
-            disabled=not esm2_active,
-            help="Number of top variants to re-rank with a larger ESM-2 model (Tab 3 advanced option)",
-        )
+        # -- ESM-2 Prior (Optional) --
+        with st.expander("ESM-2 Prior (Optional)", expanded=False):
+            esm2_available = _esm2_pll_available()
+            esm2_active = stab_backend in ("esm2", "both") and esm2_available
+            st.caption("ESM-2 is a supplementary language-model prior. NanoMelt Tm is the primary stability signal.")
+            st.selectbox(
+                "Model tier",
+                options=["auto", "t6_8M", "t12_35M", "t33_650M", "t36_3B"],
+                index=0,
+                key="esm2_model_tier",
+                disabled=not esm2_active,
+                help="auto = t6_8M on CPU, t33_650M on GPU",
+            )
+            st.slider(
+                "Top N variants for ESM-2 re-ranking",
+                1,
+                100,
+                _ESM2_PLL_DEFAULT_TOP_N,
+                key="esm2_top_n",
+                disabled=not esm2_active,
+                help=(
+                    "Number of top variants to re-rank with ESM-2 in Tab 3. "
+                    "NanoMelt is the primary re-ranking signal; ESM-2 re-ranking "
+                    "is a supplementary diagnostic option."
+                ),
+            )
 
         st.divider()
 
@@ -1193,32 +1202,95 @@ def tab_library(viz):
             st.pyplot(fig2)
             plt.close(fig2)
 
-    # -- ESM-2 Prior (Supplementary) --
-    st.subheader("ESM-2 Prior (Supplementary)")
-    st.caption(
-        "ESM-2 PLL is an optional language-model plausibility check. "
-        "NanoMelt Tm is the primary stability ranking signal. "
-        "Scores below are for diagnostic purposes only and do not affect the primary ranking."
-    )
-    if _esm2_pll_available():
-        # Show existing ESM-2 scores if already computed in the pipeline
-        if "esm2_pll" in library.columns:
-            st.success("✅ ESM-2 scores are integrated into the library scoring pipeline.")
-            esm_cols = [
-                c
-                for c in ["variant_id", "aa_sequence", "combined_score", "esm2_pll", "esm2_delta_pll", "esm2_rank"]
-                if c in library.columns
-            ]
-            st.dataframe(
-                library[esm_cols].sort_values("esm2_pll", ascending=False).head(20),
-                use_container_width=True,
-                hide_index=True,
-            )
-        elif "predicted_tm" in library.columns:
-            st.info("ESM-2 is active in the stability scorer. Predicted Tm values are included above.")
+    # -- Advanced Re-Ranking --
+    st.subheader("Advanced Re-Ranking")
 
-        # Advanced: re-rank with a specific (potentially larger) model tier
-        with st.expander("Advanced: Re-rank top variants with ESM-2 (supplementary)"):
+    # --- NanoMelt re-ranking (primary) ---
+    st.markdown("**NanoMelt Tm Re-Ranking (Primary)**")
+    if "nanomelt_tm" in library.columns and library["nanomelt_tm"].notna().any():
+        st.success("✅ NanoMelt Tm scores are present in the library.")
+        nm_cols = [c for c in ["variant_id", "aa_sequence", "combined_score", "nanomelt_tm"] if c in library.columns]
+        st.dataframe(
+            library[nm_cols].sort_values("nanomelt_tm", ascending=False).head(20),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "NanoMelt Tm scores are not yet available for this library. "
+            "To include them, select **nanomelt** or **both** as the stability backend "
+            "and regenerate the library."
+        )
+        top_n_nm = st.number_input(
+            "Top N variants to score with NanoMelt",
+            1,
+            200,
+            20,
+            key="nanomelt_rerank_top_n",
+        )
+        if st.button("Score top variants with NanoMelt", key="btn_nanomelt_rerank"):
+            try:
+                from vhh_library.stability import StabilityScorer
+
+                subset = library.nlargest(top_n_nm, "combined_score")
+                seqs = subset["aa_sequence"].tolist()
+                progress_bar = st.progress(0, text="Initialising NanoMelt scorer…")
+                scorer = StabilityScorer(esm_scorer=None, device="auto")
+                progress_bar.progress(10, text="Computing NanoMelt Tm scores…")
+                tm_scores = []
+                for i, seq_str in enumerate(seqs):
+                    vhh_tmp = VHHSequence(seq_str)
+                    result = scorer.score(vhh_tmp)
+                    tm_scores.append(result.get("nanomelt_tm"))
+                    progress_bar.progress(
+                        10 + int(90 * (i + 1) / len(seqs)),
+                        text=f"Scoring variant {i + 1}/{len(seqs)}…",
+                    )
+                progress_bar.progress(100, text="Done!")
+                nm_df = subset[["variant_id", "aa_sequence", "combined_score"]].copy()
+                nm_df["nanomelt_tm"] = tm_scores
+                nm_df = nm_df.sort_values("nanomelt_tm", ascending=False)
+                st.session_state["nanomelt_rerank_scores"] = nm_df
+                st.success("NanoMelt re-ranking complete.")
+            except Exception as exc:
+                st.error(f"NanoMelt scoring failed: {exc}")
+
+        nm_df = st.session_state.get("nanomelt_rerank_scores")
+        if nm_df is not None:
+            st.dataframe(nm_df, use_container_width=True, hide_index=True)
+
+    # --- ESM-2 re-ranking (supplementary) ---
+    with st.expander("ESM-2 Re-Ranking (Supplementary)", expanded=False):
+        st.caption(
+            "ESM-2 PLL is an optional language-model plausibility check. "
+            "NanoMelt Tm is the primary stability ranking signal. "
+            "Scores below are for diagnostic purposes only and do not affect the primary ranking."
+        )
+        if _esm2_pll_available():
+            # Show existing ESM-2 scores if already computed in the pipeline
+            if "esm2_pll" in library.columns:
+                st.success("✅ ESM-2 scores are integrated into the library scoring pipeline.")
+                esm_cols = [
+                    c
+                    for c in [
+                        "variant_id",
+                        "aa_sequence",
+                        "combined_score",
+                        "esm2_pll",
+                        "esm2_delta_pll",
+                        "esm2_rank",
+                    ]
+                    if c in library.columns
+                ]
+                st.dataframe(
+                    library[esm_cols].sort_values("esm2_pll", ascending=False).head(20),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            elif "predicted_tm" in library.columns:
+                st.info("ESM-2 is active in the stability scorer. Predicted Tm values are included above.")
+
+            # Advanced: re-rank with a specific (potentially larger) model tier
             model_tier = st.session_state.get("esm2_model_tier", "auto")
             top_n_esm = st.session_state.get("esm2_top_n", _ESM2_PLL_DEFAULT_TOP_N)
             if st.button("Re-rank with ESM-2 (supplementary)", key="btn_esm2"):
@@ -1247,8 +1319,8 @@ def tab_library(viz):
             pll_df = st.session_state.get("esm2_pll_scores")
             if pll_df is not None:
                 st.dataframe(pll_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("ESM-2 not available (torch / esm not found). Reinstall with: pip install -e .")
+        else:
+            st.info("ESM-2 not available (torch / esm not found). Reinstall with: pip install -e .")
 
     # -- Downloads --
     st.subheader("Download Library")
