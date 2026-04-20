@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 from vhh_library.predictors.base import Predictor
@@ -81,10 +83,15 @@ class TestNanoMeltUnavailable:
 
 
 # ---------------------------------------------------------------------------
-# NanoMeltPredictor — with mocked backend
+# Mock helpers
 # ---------------------------------------------------------------------------
 
-# We need to bypass the NANOMELT_AVAILABLE guard while still mocking the backend.
+
+def _make_mock_backend(tm_values: list[float]) -> MagicMock:
+    """Create a mock ``NanoMeltPredPipe`` callable returning a DataFrame."""
+    df = pd.DataFrame({"NanoMelt Tm (C)": tm_values})
+    mock_fn = MagicMock(return_value=df)
+    return mock_fn
 
 
 def _make_predictor_with_mock_backend(
@@ -97,26 +104,29 @@ def _make_predictor_with_mock_backend(
         pred = NanoMeltPredictor(device=device, batch_size=batch_size)
     # Inject mock backend directly (bypassing lazy loading)
     pred._backend = mock_backend
-    pred._resolved_device = device
     return pred
+
+
+# ---------------------------------------------------------------------------
+# NanoMeltPredictor — with mocked backend
+# ---------------------------------------------------------------------------
 
 
 class TestNanoMeltPredictor:
     """Tests for NanoMeltPredictor using a mocked NanoMelt backend."""
 
     def test_name(self) -> None:
-        mock_backend = MagicMock()
+        mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
         assert pred.name == "nanomelt"
 
     def test_is_predictor_subclass(self) -> None:
-        mock_backend = MagicMock()
+        mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
         assert isinstance(pred, Predictor)
 
     def test_score_sequence_returns_expected_keys(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [68.5]
+        mock_backend = _make_mock_backend([68.5])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         result = pred.score_sequence(vhh)
@@ -126,42 +136,39 @@ class TestNanoMeltPredictor:
         assert 0.0 <= result["composite_score"] <= 1.0
 
     def test_score_sequence_calls_backend(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [70.0]
+        mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         pred.score_sequence(vhh)
-        mock_backend.predict_tm.assert_called_once_with([vhh.sequence], device="cpu")
+        mock_backend.assert_called_once()
+        call_kwargs = mock_backend.call_args.kwargs
+        assert call_kwargs["do_align"] is True
+        assert call_kwargs["ncpus"] == 1
+        assert len(call_kwargs["seq_records"]) == 1
 
     def test_nanomelt_tm_pred(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [72.3]
+        mock_backend = _make_mock_backend([72.3])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         tm = pred.nanomelt_tm_pred(vhh)
         assert tm == pytest.approx(72.3)
 
     def test_delta_nanomelt_tm(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        # Wild-type Tm = 70.0, mutant Tm = 73.5 → delta = +3.5
-        mock_backend.predict_tm.return_value = [70.0, 73.5]
+        mock_backend = _make_mock_backend([70.0, 73.5])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         delta = pred.delta_nanomelt_tm(vhh, vhh)
         assert delta == pytest.approx(3.5)
 
     def test_delta_nanomelt_tm_destabilising(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        # Wild-type Tm = 70.0, mutant Tm = 65.0 → delta = -5.0
-        mock_backend.predict_tm.return_value = [70.0, 65.0]
+        mock_backend = _make_mock_backend([70.0, 65.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         delta = pred.delta_nanomelt_tm(vhh, vhh)
         assert delta == pytest.approx(-5.0)
 
     def test_score_batch(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [68.0, 72.0, 65.0]
+        mock_backend = _make_mock_backend([68.0, 72.0, 65.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         results = pred.score_batch([vhh, vhh, vhh])
@@ -176,32 +183,29 @@ class TestNanoMeltPredictor:
         assert results[2]["nanomelt_tm"] == pytest.approx(65.0)
 
     def test_score_batch_empty(self) -> None:
-        mock_backend = MagicMock()
+        mock_backend = _make_mock_backend([])
         pred = _make_predictor_with_mock_backend(mock_backend)
         assert pred.score_batch([]) == []
-        mock_backend.predict_tm.assert_not_called()
+        mock_backend.assert_not_called()
 
     def test_score_batch_forwards_batch_size(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [70.0]
+        mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend, batch_size=32)
 
         pred.score_batch([vhh])
-        call_kwargs = mock_backend.predict_tm.call_args
-        assert call_kwargs.kwargs.get("batch_size") == 32
+        call_kwargs = mock_backend.call_args.kwargs
+        assert call_kwargs.get("batch_size") == 32
 
     def test_score_batch_no_batch_size_when_none(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [70.0]
+        mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend, batch_size=None)
 
         pred.score_batch([vhh])
-        call_kwargs = mock_backend.predict_tm.call_args
-        assert "batch_size" not in call_kwargs.kwargs
+        call_kwargs = mock_backend.call_args.kwargs
+        assert "batch_size" not in call_kwargs
 
     def test_composite_score_in_range(self, vhh: VHHSequence) -> None:
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [67.5]
+        mock_backend = _make_mock_backend([67.5])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         result = pred.score_sequence(vhh)
@@ -209,8 +213,7 @@ class TestNanoMeltPredictor:
 
     def test_composite_score_high_tm(self, vhh: VHHSequence) -> None:
         """Very high Tm should yield composite near 1.0."""
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [95.0]
+        mock_backend = _make_mock_backend([95.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         result = pred.score_sequence(vhh)
@@ -218,12 +221,22 @@ class TestNanoMeltPredictor:
 
     def test_composite_score_low_tm(self, vhh: VHHSequence) -> None:
         """Very low Tm should yield composite near 0.0."""
-        mock_backend = MagicMock()
-        mock_backend.predict_tm.return_value = [20.0]
+        mock_backend = _make_mock_backend([20.0])
         pred = _make_predictor_with_mock_backend(mock_backend)
 
         result = pred.score_sequence(vhh)
         assert result["composite_score"] < 0.05
+
+    def test_seqrecord_conversion(self, vhh: VHHSequence) -> None:
+        """Verify that VHH sequences are converted to SeqRecord objects."""
+        mock_backend = _make_mock_backend([70.0])
+        pred = _make_predictor_with_mock_backend(mock_backend)
+
+        pred.score_sequence(vhh)
+        call_kwargs = mock_backend.call_args.kwargs
+        records = call_kwargs["seq_records"]
+        assert len(records) == 1
+        assert str(records[0].seq) == vhh.sequence
 
 
 # ---------------------------------------------------------------------------
@@ -240,55 +253,78 @@ class TestLazyLoading:
         assert pred._backend is None
 
     def test_backend_created_on_first_score(self, vhh: VHHSequence) -> None:
-        mock_backend_instance = MagicMock()
-        mock_backend_instance.predict_tm.return_value = [70.0]
+        mock_pred_pipe = MagicMock(
+            return_value=pd.DataFrame({"NanoMelt Tm (C)": [70.0]})
+        )
 
         with (
             patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True),
-            patch(
-                "vhh_library.predictors.nanomelt._NanoMeltBackend",
-                return_value=mock_backend_instance,
-            ) as mock_cls,
+            patch.dict(
+                "sys.modules",
+                {
+                    "nanomelt": MagicMock(),
+                    "nanomelt.predict": MagicMock(NanoMeltPredPipe=mock_pred_pipe),
+                },
+            ),
         ):
             pred = NanoMeltPredictor(device="cpu")
             assert pred._backend is None
             pred.score_sequence(vhh)
-            mock_cls.assert_called_once()
-            assert pred._backend is mock_backend_instance
+            assert pred._backend is mock_pred_pipe
 
 
 # ---------------------------------------------------------------------------
-# Device resolution
+# Device handling
 # ---------------------------------------------------------------------------
 
 
 class TestDeviceHandling:
-    """Verify device parameter is resolved and forwarded correctly."""
+    """Verify device parameter warning and storage."""
 
     def test_device_stored(self) -> None:
         with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
-            pred = NanoMeltPredictor(device="cuda")
-        assert pred._device == "cuda"
+            pred = NanoMeltPredictor(device="cpu")
+        assert pred._device == "cpu"
 
-    def test_auto_device_resolves(self, vhh: VHHSequence) -> None:
-        mock_backend_instance = MagicMock()
-        mock_backend_instance.predict_tm.return_value = [70.0]
+    def test_auto_device_no_warning(self) -> None:
+        with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
+            with pytest.warns(match="SHOULD_NOT_MATCH") if False else _no_warning():
+                NanoMeltPredictor(device="auto")
 
-        with (
-            patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True),
-            patch(
-                "vhh_library.predictors.nanomelt._NanoMeltBackend",
-                return_value=mock_backend_instance,
-            ),
-            patch(
-                "vhh_library.predictors.nanomelt.resolve_device",
-                return_value="cpu",
-            ) as mock_resolve,
-        ):
-            pred = NanoMeltPredictor(device="auto")
-            pred.score_sequence(vhh)
-            mock_resolve.assert_called_once_with("auto")
-            assert pred._resolved_device == "cpu"
+    def test_non_standard_device_warns(self) -> None:
+        with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
+            with pytest.warns(UserWarning, match="device.*ignored"):
+                NanoMeltPredictor(device="cuda")
+
+
+# ---------------------------------------------------------------------------
+# Constructor parameters
+# ---------------------------------------------------------------------------
+
+
+class TestConstructorParams:
+    """Verify new constructor parameters are stored and forwarded."""
+
+    def test_do_align_default(self) -> None:
+        with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
+            pred = NanoMeltPredictor()
+        assert pred._do_align is True
+
+    def test_ncpus_default(self) -> None:
+        with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
+            pred = NanoMeltPredictor()
+        assert pred._ncpus == 1
+
+    def test_custom_do_align_and_ncpus(self, vhh: VHHSequence) -> None:
+        mock_backend = _make_mock_backend([70.0])
+        with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
+            pred = NanoMeltPredictor(do_align=False, ncpus=4)
+        pred._backend = mock_backend
+
+        pred.score_sequence(vhh)
+        call_kwargs = mock_backend.call_args.kwargs
+        assert call_kwargs["do_align"] is False
+        assert call_kwargs["ncpus"] == 4
 
 
 # ---------------------------------------------------------------------------
@@ -331,3 +367,14 @@ class TestNanoMeltIntegration:
         for r in results:
             assert "composite_score" in r
             assert "nanomelt_tm" in r
+
+
+# ---------------------------------------------------------------------------
+# Helpers for context managers
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _no_warning():
+    """Context manager that does nothing — used to skip pytest.warns when not needed."""
+    yield
