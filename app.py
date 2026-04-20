@@ -690,9 +690,10 @@ def tab_mutations(stability_scorer):
     if selected_positions is not None:
         new_set = set(selected_positions)
         if new_set != off_limit_positions:
-            # User made a change in the selector
+            # User made a change in the selector — update session state and rerun
+            # so that the policy table and all downstream code sees the new state.
             st.session_state[_state_key] = new_set
-            off_limit_positions = new_set
+            st.rerun()
     st.caption(f"Total off-limit positions: {len(off_limit_positions)}")
 
     # -- Position Policy Review/Edit (new design system) --

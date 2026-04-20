@@ -60,6 +60,7 @@ var seqLen = 0;
 var isDragging = false;
 var dragStart = -1;
 var dragMode = "";
+var pendingUpdate = false;
 
 /** Extract the integer portion of an IMGT key, e.g. "111A" → 111. */
 function imgtKeyInt(key) {
@@ -171,6 +172,7 @@ function applyDragToPos(pos) {
 document.addEventListener("mouseup", function() {
   if (isDragging) {
     isDragging = false; dragStart = -1;
+    pendingUpdate = true;
     Streamlit.setComponentValue(Array.from(offLimitSet).sort(function(a, b) {
       var ai = imgtKeyInt(a), bi = imgtKeyInt(b);
       if (ai !== bi) return ai - bi;
@@ -206,8 +208,16 @@ function onStreamlitRender(event) {
   imgtPositionsList = args.imgtPositionsList || [];
   regions = args.regions || []; notablePositions = args.notablePositions || {};
   seqLen = imgtPositionsList.length;
-  offLimitSet = new Set(args.offLimitPositions || []);
   forbiddenPositions = new Set(args.forbiddenPositions || []);
+
+  if (pendingUpdate) {
+    // User just made a change — keep local offLimitSet, don't reset from args.
+    // The args on this render still reflect the old state; our local state is correct.
+    pendingUpdate = false;
+  } else {
+    // No pending local changes — sync from Python's authoritative state.
+    offLimitSet = new Set(args.offLimitPositions || []);
+  }
   render();
 }
 
