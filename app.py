@@ -904,7 +904,7 @@ def tab_mutations(stability_scorer):
         top_n = st.slider(
             "Top N mutations for library",
             1,
-            min(50, len(ranked)),
+            len(ranked),
             min(10, len(ranked)),
             key="top_n_muts",
             help=(
@@ -952,6 +952,41 @@ def tab_mutations(stability_scorer):
                     f"Increase **Top N mutations** to expand the search space.",
                     icon="ℹ️",
                 )
+
+            with st.expander("📈 Search space vs. Top N"):
+                ns = []
+                combos = []
+                groups: dict = {}
+                for i, row in enumerate(ranked.itertuples(index=False), 1):
+                    groups.setdefault(int(row.position), []).append(row)
+                    n_pos = len(groups)
+                    k_max = min(user_max_muts, n_pos)
+                    k_min = min(user_min_muts, k_max)
+                    combos.append(_total_grouped_combinations(groups, k_min, k_max))
+                    ns.append(i)
+
+                fig, ax = plt.subplots(figsize=(8, 3))
+                ax.plot(ns, combos, linewidth=1.5)
+                ax.axhline(
+                    user_max_variants,
+                    color="red",
+                    linestyle="--",
+                    label=f"Requested variants ({user_max_variants:,})",
+                )
+                ax.axvline(
+                    top_n,
+                    color="gray",
+                    linestyle="--",
+                    label=f"Current Top N ({top_n})",
+                )
+                ax.set_yscale("log")
+                ax.set_xlabel("Top N mutations")
+                ax.set_ylabel("Unique combinations")
+                ax.set_title("Search space size vs. Top N mutations")
+                ax.legend(fontsize=8)
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
 
         if st.button("Generate library", type="primary", key="btn_gen_lib"):
             engine = st.session_state.get("_mutation_engine")
