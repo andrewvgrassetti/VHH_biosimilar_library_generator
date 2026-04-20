@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -288,7 +287,10 @@ class TestDeviceHandling:
 
     def test_auto_device_no_warning(self) -> None:
         with patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True):
-            with pytest.warns(match="SHOULD_NOT_MATCH") if False else _no_warning():
+            import warnings
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
                 NanoMeltPredictor(device="auto")
 
     def test_non_standard_device_warns(self) -> None:
@@ -367,14 +369,3 @@ class TestNanoMeltIntegration:
         for r in results:
             assert "composite_score" in r
             assert "nanomelt_tm" in r
-
-
-# ---------------------------------------------------------------------------
-# Helpers for context managers
-# ---------------------------------------------------------------------------
-
-
-@contextmanager
-def _no_warning():
-    """Context manager that does nothing — used to skip pytest.warns when not needed."""
-    yield
