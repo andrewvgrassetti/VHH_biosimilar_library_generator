@@ -477,16 +477,19 @@ class MutationEngine:
     ) -> list[dict]:
         """Generate candidate mutations ranked by stability impact.
 
-        For each mutable position (respecting off-limits, CDRs, forbidden
+        For each mutable position (respecting off-limits, forbidden
         substitutions, and excluded AAs), all 19 possible substitutions are
         evaluated using :meth:`StabilityScorer.predict_mutation_effect`.
         Mutations introducing PTM liabilities are filtered out.
+
+        The ``off_limits`` set is the sole authority on position mutability —
+        CDR positions are only skipped when they appear in ``off_limits``
+        (as determined by the user's interactive selections).
 
         Nativeness scoring is performed in a single batch call rather than
         per-candidate to avoid repeated ANARCI re-alignment overhead inside
         AbNatiV.
         """
-        cdr_positions = vhh_sequence.cdr_positions
         parent_seq = vhh_sequence.sequence
         forbidden_str: dict[str, set[str]] = {}
         if forbidden_substitutions:
@@ -497,7 +500,7 @@ class MutationEngine:
         mutant_sequences: list[str] = []
 
         for pos_key, original_aa in vhh_sequence.imgt_numbered.items():
-            if pos_key in off_limits or pos_key in cdr_positions:
+            if pos_key in off_limits:
                 continue
 
             seq_idx = vhh_sequence._pos_to_seq_idx.get(pos_key, _imgt_key_to_int(pos_key) - 1)

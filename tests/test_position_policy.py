@@ -289,8 +289,9 @@ class TestDesignPolicy:
 
     def test_effective_class_cdr_default(self):
         dp = DesignPolicy()
-        # Position 30 is CDR1
-        assert dp.effective_class("30") == PositionClass.FROZEN
+        # Position 30 is CDR1, but unlisted positions now default to MUTABLE
+        # (the policy dict is the sole source of truth)
+        assert dp.effective_class("30") == PositionClass.MUTABLE
 
     def test_effective_class_framework_default(self):
         dp = DesignPolicy()
@@ -306,7 +307,8 @@ class TestDesignPolicy:
 
     def test_permits_cdr_default(self):
         dp = DesignPolicy()
-        assert not dp.permits("30", "A")  # CDR1
+        # Unlisted CDR positions now default to MUTABLE (permits any AA)
+        assert dp.permits("30", "A")  # CDR1, but not in policy dict
 
     def test_permits_framework_default(self):
         dp = DesignPolicy()
@@ -328,8 +330,20 @@ class TestDesignPolicy:
 
     def test_effective_class_insertion_position(self):
         dp = DesignPolicy()
-        # 111 is CDR3 (105–117), so default is FROZEN
-        assert dp.effective_class("111A") == PositionClass.FROZEN
+        # 111 is CDR3 (105–117), but unlisted positions default to MUTABLE
+        assert dp.effective_class("111A") == PositionClass.MUTABLE
+
+    def test_effective_class_cdr_explicit_frozen(self):
+        """CDR positions are frozen when explicitly added to the policy."""
+        dp = DesignPolicy()
+        dp.freeze(["30"])
+        assert dp.effective_class("30") == PositionClass.FROZEN
+
+    def test_permits_cdr_explicit_frozen(self):
+        """Explicitly frozen CDR positions block all substitutions."""
+        dp = DesignPolicy()
+        dp.freeze(["30"])
+        assert not dp.permits("30", "A")
 
     # -- serialisation ----------------------------------------------------
 

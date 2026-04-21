@@ -255,9 +255,11 @@ class DesignPolicy:
     """Collection of :class:`PositionPolicy` entries keyed by IMGT position.
 
     A ``DesignPolicy`` describes the mutation rules for an entire VHH
-    sequence.  Positions not explicitly listed default to **MUTABLE** in
-    framework regions and **FROZEN** in CDR regions (matching the current
-    mutation-engine behaviour).
+    sequence.  Positions not explicitly listed default to **MUTABLE** —
+    the policy dict is the sole source of truth.  Positions the user
+    wants frozen (including CDR positions) will have explicit FROZEN
+    entries populated by the classifier and reconciled with user
+    selections in the UI.
 
     Parameters
     ----------
@@ -286,32 +288,27 @@ class DesignPolicy:
         """Return the effective class for *pos*.
 
         If the position has an explicit policy, return its class.
-        Otherwise, infer based on IMGT region: CDR → FROZEN,
-        framework → MUTABLE.
+        Otherwise, default to MUTABLE — the policy dict is the sole
+        source of truth.  Positions the user wants frozen will have
+        explicit FROZEN entries.
         """
         key = parse_imgt_position(pos)
         if key in self.policies:
             return self.policies[key].position_class
-        region = imgt_region_for(key)
-        if region is not None and region.startswith("CDR"):
-            return PositionClass.FROZEN
         return PositionClass.MUTABLE
 
     def permits(self, pos: int | str, aa: str) -> bool:
         """Return ``True`` if substituting *aa* at *pos* is permitted.
 
         Delegates to the explicit :class:`PositionPolicy` if one exists,
-        otherwise falls back to the region-based default (CDR → frozen,
-        framework → mutable).
+        otherwise defaults to mutable (any valid amino acid is allowed).
+        The policy dict is the sole source of truth — positions the user
+        wants frozen will have explicit FROZEN entries.
         """
         key = parse_imgt_position(pos)
         policy = self.policies.get(key)
         if policy is not None:
             return policy.permits(aa)
-        # Default: CDR frozen, framework mutable.
-        region = imgt_region_for(key)
-        if region is not None and region.startswith("CDR"):
-            return False
         return aa in AMINO_ACIDS
 
     # -- Bulk queries -----------------------------------------------------
