@@ -889,24 +889,20 @@ def tab_mutations(stability_scorer):
         classifications = classifier.classify(imgt_keys)
         policy = classifier.to_design_policy(imgt_keys)
 
-        # Apply legacy off-limits on top
-        if off_limit_positions:
-            policy.freeze(off_limit_positions)
-
-        # Un-freeze CDR positions that the user explicitly removed from off-limits
-        # via the interactive selector.  Only override positions whose frozen
-        # status comes from CDR-region membership ("cdr_freeze" rule); conserved
-        # structural positions (Cys-23, Trp-41, Cys-104) must stay frozen
-        # because their freeze is structural, not region-based.
-        user_mutable = set(vhh.imgt_numbered.keys()) - off_limit_positions
-        to_unfreeze = [
-            pos_key
-            for pos_key in user_mutable
-            if (pp := policy.policies.get(pos_key)) is not None
-            and pp.is_frozen
-            and (clf := classifications.get(pos_key)) is not None
-            and clf.reason.rule == "cdr_freeze"
-        ]
+        # Reconcile policy with the user's interactive selections.
+        # The off_limit_positions set (from the interactive selector) is
+        # the sole authority on position mutability.
+        to_freeze = []
+        to_unfreeze = []
+        for pos_key in vhh.imgt_numbered:
+            if pos_key in off_limit_positions:
+                to_freeze.append(pos_key)
+            else:
+                pp = policy.policies.get(pos_key)
+                if pp is not None and pp.is_frozen:
+                    to_unfreeze.append(pos_key)
+        if to_freeze:
+            policy.freeze(to_freeze)
         if to_unfreeze:
             policy.make_mutable(to_unfreeze)
 

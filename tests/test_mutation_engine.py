@@ -89,9 +89,21 @@ class TestRankSingleMutations:
             assert "delta_stability" in ranked.columns
 
     def test_ranked_no_cdrs(self, ranked: pd.DataFrame, vhh: VHHSequence) -> None:
-        """Candidates should not include CDR positions."""
+        """Without off_limits, CDR positions are eligible for mutation.
+
+        The off_limits set (built from user selections) is the sole authority
+        on position mutability — CDR positions are only skipped when they
+        are explicitly in off_limits.
+        """
+        if not ranked.empty:
+            # CDR positions MAY appear because no off_limits was provided
+            assert "imgt_pos" in ranked.columns
+
+    def test_ranked_cdrs_excluded_when_off_limits(self, engine: MutationEngine, vhh: VHHSequence) -> None:
+        """When CDR positions are in off_limits, they should not appear in candidates."""
         cdr_positions = vhh.cdr_positions
-        for _, row in ranked.iterrows():
+        df = engine.rank_single_mutations(vhh, off_limits=cdr_positions)
+        for _, row in df.iterrows():
             assert str(row["imgt_pos"]) not in cdr_positions
 
     def test_ranked_excluded_target_aas(self, engine: MutationEngine, vhh: VHHSequence) -> None:

@@ -1,5 +1,9 @@
 """Rule-based IMGT position classifier for VHH library design.
 
+Classifications represent the recommended defaults that seed the interactive
+selector.  User overrides (from the UI or policy files) take absolute
+precedence — including over CDR freezing and conserved residue rules.
+
 Classifies each IMGT-numbered position as **frozen**, **conservative**, or
 **mutable** based on a layered set of rules:
 
