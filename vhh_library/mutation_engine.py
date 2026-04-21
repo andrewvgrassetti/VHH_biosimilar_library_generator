@@ -424,15 +424,23 @@ class MutationEngine:
 
         return scores
 
-    def _score_variant_without_nativeness(self, vhh: VHHSequence) -> dict[str, float]:
+    def _score_variant_without_nativeness(self, vhh: VHHSequence, *, _skip_ml: bool = False) -> dict[str, float]:
         """Score a variant on all axes *except* nativeness.
 
         Nativeness scoring via AbNatiV is expensive (ANARCI alignment per
         call) so library-generation strategies batch it separately using
         :meth:`_batch_fill_nativeness`.  This helper provides the
         remaining cheap/moderate scores.
+
+        Parameters
+        ----------
+        _skip_ml : bool
+            When ``True``, tell the stability scorer to skip expensive ML
+            backends (ESM-2, NanoMelt) and use only heuristic sub-scores.
+            Library generation passes ``True`` here and batch-scores the
+            ML axes afterward via :meth:`_batch_fill_stability`.
         """
-        stab = self._stability_scorer.score(vhh)
+        stab = self._stability_scorer.score(vhh, _skip_ml=_skip_ml)
 
         scores: dict[str, float] = {
             "stability": stab["composite_score"],
@@ -975,6 +983,7 @@ class MutationEngine:
         variant_counter: int,
         *,
         nativeness_score: float | None = None,
+        _skip_ml: bool = False,
     ) -> dict:
         """Build a single library-variant row.
 
@@ -985,6 +994,11 @@ class MutationEngine:
             the expensive per-variant AbNatiV call is skipped — callers
             should supply this from a batch :meth:`score_batch` call.
             When *None*, nativeness is scored individually (legacy path).
+        _skip_ml : bool
+            When ``True``, skip expensive ML stability backends (ESM-2,
+            NanoMelt) during per-variant scoring.  Library generation
+            passes ``True`` here and batch-scores the ML axes afterward
+            via :meth:`_batch_fill_stability`.
         """
         mutations: list[tuple[int, str]] = [(int(m.position), m.suggested_aa) for m in selected]
         mut_labels = [f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected]
@@ -996,7 +1010,7 @@ class MutationEngine:
         mutant_seq = current.sequence
 
         if nativeness_score is not None:
-            raw = self._score_variant_without_nativeness(current)
+            raw = self._score_variant_without_nativeness(current, _skip_ml=_skip_ml)
             raw["nativeness"] = nativeness_score
         else:
             raw = self._score_variant(current)
@@ -1072,6 +1086,132 @@ class MutationEngine:
         return rows
 
     # ------------------------------------------------------------------
+    # Private: batch ML stability scoring for library rows
+    # ------------------------------------------------------------------
+
+    def _batch_fill_stability(self, rows: list[dict]) -> list[dict]:
+        """Batch-score stability with ML backends and update library rows.
+
+        When the stability scorer has NanoMelt or ESM-2 available, this
+        method batch-scores all variants in one pass and updates each
+        row's ``stability_score``, ``scoring_method``, and optional ML
+        columns (``nanomelt_tm``, ``predicted_tm``).  ``combined_score``
+        is recomputed afterward.
+
+        This mirrors :meth:`_batch_fill_nativeness` and avoids the
+        per-variant ML inference calls that caused Streamlit timeouts
+        during library generation.
+        """
+        if not rows:
+            return rows
+
+        has_nanomelt = self._stability_scorer.nanomelt_predictor is not None
+        has_esm = self._stability_scorer.esm_scorer is not None
+
+        if not has_nanomelt and not has_esm:
+            return rows  # No ML backends — heuristic scores are already set
+
+        from vhh_library.stability import _sigmoid_normalize
+
+        scorer = self._stability_scorer
+        sequences = [r["aa_sequence"] for r in rows]
+
+        # --- NanoMelt batch scoring (preferred stability backend) ---
+        if has_nanomelt:
+            try:
+                predictor = scorer.nanomelt_predictor
+                # Create minimal dummy VHHSequence objects for the batch API.
+                dummies: list = []
+                for seq in sequences:
+                    dummy = object.__new__(VHHSequence)
+                    dummy.sequence = seq
+                    dummies.append(dummy)
+
+                nm_results = predictor.score_batch(dummies)
+
+                for row, nm in zip(rows, nm_results):
+                    nm_tm = nm["nanomelt_tm"]
+                    row["nanomelt_tm"] = nm_tm
+
+                    # Use the stability scorer's calibrated sigmoid params
+                    # to match StabilityScorer.score() logic exactly.
+                    nm_tm_score = _sigmoid_normalize(nm_tm, scorer._tm_min, scorer._tm_max)
+
+                    hallmark = row["vhh_hallmark_score"]
+                    disulfide = row["disulfide_score"]
+                    aggregation = row["aggregation_score"]
+                    charge_balance = row["charge_balance_score"]
+
+                    penalty = 0.0
+                    if disulfide < 1.0:
+                        penalty += scorer._penalty_disulfide
+                    if aggregation < 0.5:
+                        penalty += scorer._penalty_aggregation
+                    if charge_balance < 0.5:
+                        penalty += scorer._penalty_charge
+                    vhh_bonus = scorer._hallmark_bonus_weight * hallmark
+
+                    row["stability_score"] = max(0.0, min(1.0, nm_tm_score + vhh_bonus - penalty))
+                    row["scoring_method"] = "nanomelt"
+
+                    # Recompute combined_score with updated stability.
+                    raw_scores: dict[str, float] = {
+                        "stability": row["stability_score"],
+                        "surface_hydrophobicity": row["surface_hydrophobicity_score"],
+                        "nativeness": row["nativeness_score"],
+                        "orthogonal_stability": row["orthogonal_stability_score"],
+                    }
+                    row["combined_score"] = self._combined_score(raw_scores)
+
+                return rows
+            except Exception:
+                logger.warning("NanoMelt batch scoring failed; trying ESM-2 fallback", exc_info=True)
+
+        # --- ESM-2 batch scoring (fallback when NanoMelt unavailable) ---
+        if has_esm:
+            try:
+                esm = scorer.esm_scorer
+                plls = esm.score_batch(sequences)
+
+                for row, pll in zip(rows, plls):
+                    seq = row["aa_sequence"]
+                    predicted_tm = scorer._pll_to_predicted_tm(pll, len(seq))
+                    row["predicted_tm"] = predicted_tm
+
+                    tm_score = _sigmoid_normalize(predicted_tm, scorer._tm_min, scorer._tm_max)
+
+                    hallmark = row["vhh_hallmark_score"]
+                    disulfide = row["disulfide_score"]
+                    aggregation = row["aggregation_score"]
+                    charge_balance = row["charge_balance_score"]
+
+                    penalty = 0.0
+                    if disulfide < 1.0:
+                        penalty += scorer._penalty_disulfide
+                    if aggregation < 0.5:
+                        penalty += scorer._penalty_aggregation
+                    if charge_balance < 0.5:
+                        penalty += scorer._penalty_charge
+                    vhh_bonus = scorer._hallmark_bonus_weight * hallmark
+
+                    row["stability_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
+                    row["scoring_method"] = "esm2"
+
+                    raw_scores: dict[str, float] = {
+                        "stability": row["stability_score"],
+                        "surface_hydrophobicity": row["surface_hydrophobicity_score"],
+                        "nativeness": row["nativeness_score"],
+                        "orthogonal_stability": row["orthogonal_stability_score"],
+                    }
+                    row["combined_score"] = self._combined_score(raw_scores)
+
+                return rows
+            except Exception:
+                logger.warning("ESM-2 batch scoring failed; keeping heuristic scores", exc_info=True)
+
+        return rows
+
+    # ------------------------------------------------------------------
     # Private: exhaustive enumeration
     # ------------------------------------------------------------------
 
@@ -1093,7 +1233,7 @@ class MutationEngine:
         positions = list(position_groups.keys())
         groups = [position_groups[p] for p in positions]
 
-        # Build rows without nativeness (cheap/moderate scoring only).
+        # Build rows without nativeness or ML (cheap heuristic scoring only).
         rows: list[dict] = []
         counter = 1
         for k in range(k_min, k_max + 1):
@@ -1107,12 +1247,13 @@ class MutationEngine:
                             list(aa_combo),
                             counter,
                             nativeness_score=0.0,
+                            _skip_ml=True,
                         )
                     )
                     counter += 1
                     if len(rows) >= max_variants:
-                        return self._batch_fill_nativeness(rows)
-        return self._batch_fill_nativeness(rows)
+                        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
 
     # ------------------------------------------------------------------
     # Private: random sampling (position-deduplicated)
@@ -1156,10 +1297,10 @@ class MutationEngine:
                 continue
             seen.add(key)
 
-            rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0))
+            rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
 
-        return self._batch_fill_nativeness(rows)
+        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
 
     # ------------------------------------------------------------------
     # Private: constrained sampling (anchor-fixed)
@@ -1210,10 +1351,10 @@ class MutationEngine:
                 continue
             seen.add(key)
 
-            rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0))
+            rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
 
-        return self._batch_fill_nativeness(rows)
+        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
 
     # ------------------------------------------------------------------
     # Private: iterative anchor-and-explore (Evolutionary Stability
