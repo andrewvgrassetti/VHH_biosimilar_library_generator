@@ -1120,14 +1120,15 @@ class MutationEngine:
         if has_nanomelt:
             try:
                 predictor = scorer.nanomelt_predictor
-                # Create minimal dummy VHHSequence objects for the batch API.
-                dummies: list = []
+                # Create minimal VHHSequence objects for the batch API.
+                # NanoMeltPredictor.score_batch only accesses vhh.sequence.
+                batch_vhh_objects: list[VHHSequence] = []
                 for seq in sequences:
-                    dummy = object.__new__(VHHSequence)
-                    dummy.sequence = seq
-                    dummies.append(dummy)
+                    obj = object.__new__(VHHSequence)
+                    obj.sequence = seq
+                    batch_vhh_objects.append(obj)
 
-                nm_results = predictor.score_batch(dummies)
+                nm_results = predictor.score_batch(batch_vhh_objects)
 
                 for row, nm in zip(rows, nm_results):
                     nm_tm = nm["nanomelt_tm"]
@@ -1165,7 +1166,10 @@ class MutationEngine:
 
                 return rows
             except Exception:
-                logger.warning("NanoMelt batch scoring failed; trying ESM-2 fallback", exc_info=True)
+                if has_esm:
+                    logger.warning("NanoMelt batch scoring failed; falling back to ESM-2", exc_info=True)
+                else:
+                    logger.warning("NanoMelt batch scoring failed; keeping heuristic scores", exc_info=True)
 
         # --- ESM-2 batch scoring (fallback when NanoMelt unavailable) ---
         if has_esm:
