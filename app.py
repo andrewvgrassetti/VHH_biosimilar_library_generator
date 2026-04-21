@@ -2,6 +2,8 @@
 
 import json
 import logging
+import tempfile
+import time
 
 import matplotlib
 import pandas as pd
@@ -163,6 +165,131 @@ def init_state():
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    # Auto-restore from disk if critical state is missing but an auto-save
+    # exists.  This guards against Streamlit session resets caused by
+    # WebSocket disconnects, server restarts, or browser refreshes.
+    if st.session_state.get("vhh_seq") is None:
+        _try_auto_restore()
+
+
+# ---------------------------------------------------------------------------
+# Session auto-save / auto-restore
+# ---------------------------------------------------------------------------
+
+_AUTOSAVE_DIR = Path(tempfile.gettempdir()) / "vhh_autosave"
+
+# Keys that are persisted to the auto-save file.
+_AUTOSAVE_KEYS: list[str] = [
+    "vhh_seq",
+    "stability_scores",
+    "nativeness_scores",
+    "hydrophobicity_scores",
+    "orthogonal_stability_scores",
+    "ranked_mutations",
+    "library",
+    "constructs",
+]
+
+
+def serialize_session_data(state: dict) -> dict:
+    """Convert session-state values to a JSON-serialisable dict.
+
+    * ``VHHSequence`` → raw amino-acid string.
+    * ``DataFrame`` → list of dicts (``orient="records"``).
+    * Everything else is kept as-is (must already be JSON-serialisable).
+    """
+    out: dict = {}
+    for key, val in state.items():
+        if val is None:
+            continue
+        if isinstance(val, VHHSequence):
+            out[key] = {"__type__": "VHHSequence", "sequence": val.sequence}
+        elif isinstance(val, pd.DataFrame):
+            out[key] = {"__type__": "DataFrame", "records": val.to_dict(orient="records")}
+        else:
+            out[key] = val
+    return out
+
+
+def deserialize_session_data(data: dict) -> dict:
+    """Inverse of :func:`serialize_session_data`.
+
+    Wraps raw strings back into ``VHHSequence`` and record-lists back into
+    ``DataFrame`` objects.
+    """
+    out: dict = {}
+    for key, val in data.items():
+        if isinstance(val, dict) and "__type__" in val:
+            type_tag = val["__type__"]
+            if type_tag == "VHHSequence":
+                try:
+                    out[key] = VHHSequence(val["sequence"])
+                except Exception:
+                    logger.warning("Auto-restore: failed to reconstruct VHHSequence for key '%s'", key)
+            elif type_tag == "DataFrame":
+                out[key] = pd.DataFrame(val.get("records", []))
+            else:
+                logger.warning("Auto-restore: unknown type tag '%s' for key '%s'", type_tag, key)
+        else:
+            out[key] = val
+    return out
+
+
+def _auto_save_path() -> Path:
+    """Return the path to the auto-save JSON file."""
+    return _AUTOSAVE_DIR / "autosave.json"
+
+
+def auto_save_session() -> None:
+    """Persist critical session-state keys to disk.
+
+    Called after each major operation (sequence analysis, mutation ranking,
+    library generation) so that the session can be recovered automatically
+    if Streamlit loses its server-side state.
+    """
+    snapshot: dict = {}
+    for key in _AUTOSAVE_KEYS:
+        val = st.session_state.get(key)
+        if val is not None:
+            snapshot[key] = val
+    if not snapshot:
+        return
+    try:
+        _AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+        serialised = serialize_session_data(snapshot)
+        _auto_save_path().write_text(json.dumps(serialised))
+    except Exception:
+        logger.warning("Auto-save failed", exc_info=True)
+
+
+def _try_auto_restore() -> None:
+    """Restore session state from the auto-save file if it exists.
+
+    Only called when ``vhh_seq`` is ``None`` (i.e. the session appears
+    fresh).  If the file is stale (>24 h) it is ignored and cleaned up.
+    """
+    path = _auto_save_path()
+    if not path.is_file():
+        return
+    try:
+        age_seconds = time.time() - path.stat().st_mtime
+        if age_seconds > 86400:  # 24 hours
+            path.unlink(missing_ok=True)
+            return
+
+        raw = json.loads(path.read_text())
+        restored = deserialize_session_data(raw)
+        if not restored:
+            return
+
+        for key, val in restored.items():
+            st.session_state[key] = val
+
+        st.session_state["_auto_restored"] = True
+        logger.info("Auto-restored session state from %s", path)
+    except Exception:
+        logger.warning("Auto-restore failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +719,7 @@ def tab_input(stability_scorer, nativeness_scorer, hydrophobicity_scorer, consen
                 st.session_state["nativeness_scores"] = None
             st.session_state["hydrophobicity_scores"] = hydrophobicity_scorer.score(vhh)
             st.session_state["orthogonal_stability_scores"] = consensus_scorer.score(vhh)
+        auto_save_session()
 
     # -- Display results --
     vhh = st.session_state.get("vhh_seq")
@@ -945,6 +1073,7 @@ def tab_mutations(stability_scorer):
                 return
         st.session_state["ranked_mutations"] = ranked
         st.session_state["_mutation_engine"] = engine
+        auto_save_session()
         st.success(f"Ranked {len(ranked)} mutations.")
 
     ranked = st.session_state.get("ranked_mutations")
@@ -1091,6 +1220,7 @@ def tab_mutations(stability_scorer):
             progress_bar.progress(1.0, text="Complete!")
             st.session_state["library"] = library
             st.session_state["esm2_pll_scores"] = None
+            auto_save_session()
             _requested = st.session_state.get("max_variants", 1000)
             if len(library) < _requested:
                 st.warning(
@@ -1950,6 +2080,10 @@ def tab_history():
 
 def main():
     init_state()
+
+    # Show a one-time notification when session state was auto-restored.
+    if st.session_state.pop("_auto_restored", False):
+        st.toast("♻️ Session auto-restored from previous run.", icon="♻️")
 
     # Sidebar must run first so that cfg_* session-state keys exist.
     sidebar()
