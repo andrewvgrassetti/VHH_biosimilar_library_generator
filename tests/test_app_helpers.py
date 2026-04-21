@@ -23,6 +23,7 @@ from vhh_library.runtime_config import (
     RuntimeConfig,
     resolve_device,
 )
+from vhh_library.utils import AMINO_ACIDS, DEFAULT_CONSERVATIVE_FALLBACK, SIMILAR_AA_GROUPS
 
 # ---------------------------------------------------------------------------
 # RuntimeConfig — sidebar-like construction
@@ -295,8 +296,6 @@ def _build_policy_from_three_state(
     -------
     DesignPolicy
     """
-    from vhh_library.utils import AMINO_ACIDS, DEFAULT_CONSERVATIVE_FALLBACK, SIMILAR_AA_GROUPS
-
     classifier = PositionClassifier()
     classifications = classifier.classify(imgt_keys)
 
@@ -589,8 +588,6 @@ class TestThreeStatePolicyFromSelector:
         self, imgt_keys: list[str], default_frozen: set[str], default_conservative: set[str]
     ):
         """Conservative positions without classifier data should use similarity groups."""
-        from vhh_library.utils import SIMILAR_AA_GROUPS
-
         expanded_conservative = default_conservative | {"10"}
         imgt_numbered = {k: "A" for k in imgt_keys}
         policy = _build_policy_from_three_state(imgt_keys, default_frozen, expanded_conservative, imgt_numbered)
@@ -711,8 +708,6 @@ class TestCSVForbiddenSubstitutionsOverride:
 
     def test_csv_freezes_when_all_aas_forbidden(self, imgt_keys: list[str]):
         """When CSV forbids all 20 AAs, position becomes frozen."""
-        from vhh_library.utils import AMINO_ACIDS
-
         policy = _build_policy_from_three_state(
             imgt_keys,
             set(),
@@ -723,8 +718,6 @@ class TestCSVForbiddenSubstitutionsOverride:
 
     def test_csv_overrides_selector_conservative(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
         """CSV restrictions are additive on top of conservative AA sets."""
-        from vhh_library.utils import SIMILAR_AA_GROUPS
-
         # Make "10" conservative via selector
         policy_no_csv = _build_policy_from_three_state(
             imgt_keys,

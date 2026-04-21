@@ -38,6 +38,7 @@ from vhh_library.position_classifier import PositionClassifier
 from vhh_library.position_policy import (
     DesignPolicy,
     PositionClass as _PositionClass,
+    to_off_limits as _to_off_limits,
 )
 from vhh_library.runtime_config import (
     VALID_DEVICES,
@@ -52,6 +53,11 @@ from vhh_library.stability import (
     _esm2_pll_available,
 )
 from vhh_library.tags import TagManager
+from vhh_library.utils import (
+    AMINO_ACIDS as _ALL_AAS,
+    DEFAULT_CONSERVATIVE_FALLBACK as _CONSERVATIVE_FALLBACK,
+    SIMILAR_AA_GROUPS as _SIMILAR_AA_GROUPS,
+)
 from vhh_library.visualization import SequenceVisualizer
 
 logger = logging.getLogger(__name__)
@@ -927,10 +933,6 @@ def tab_mutations(stability_scorer):
 
         # Build the policy from the selector's authoritative state.
         # The classifier is used only for allowed-AA sets and reason metadata.
-        from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
-        from vhh_library.utils import DEFAULT_CONSERVATIVE_FALLBACK as _CONSERVATIVE_FALLBACK
-        from vhh_library.utils import SIMILAR_AA_GROUPS as _SIMILAR_AA_GROUPS
-
         policy = DesignPolicy()
         for pos_key in imgt_keys:
             if pos_key in frozen_positions:
@@ -1103,8 +1105,6 @@ def tab_mutations(stability_scorer):
             # compatibility with rank_single_mutations.  The policy already
             # includes the CSV overrides (applied last), so these derived
             # parameters honour CSV as the ultimate arbiter.
-            from vhh_library.position_policy import to_off_limits as _to_off_limits
-
             active_policy = st.session_state.get("_design_policy")
             if active_policy is not None:
                 rank_off_limits, rank_forbidden = _to_off_limits(active_policy)
