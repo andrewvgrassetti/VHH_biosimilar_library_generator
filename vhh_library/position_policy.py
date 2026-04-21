@@ -256,10 +256,10 @@ class DesignPolicy:
 
     A ``DesignPolicy`` describes the mutation rules for an entire VHH
     sequence.  Positions not explicitly listed default to **MUTABLE** —
-    the policy dict is the sole source of truth.  Positions the user
-    wants frozen (including CDR positions) will have explicit FROZEN
-    entries populated by the classifier and reconciled with user
-    selections in the UI.
+    the policy dict is the sole source of truth.  The classifier suggests
+    initial FROZEN classifications (e.g. for CDR and conserved positions),
+    which are then reconciled with user selections in the UI to populate
+    the final explicit entries.
 
     Parameters
     ----------
