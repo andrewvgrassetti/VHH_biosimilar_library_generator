@@ -917,7 +917,6 @@ def tab_mutations(stability_scorer):
         imgt_numbered=vhh.imgt_numbered,
         frozen_positions=frozen_positions,
         conservative_positions=conservative_positions,
-        forbidden_substitutions=position_forbidden if position_forbidden else None,
         key="seq_selector",
     )
     # The selector returns the authoritative classes when the user interacts.
@@ -944,7 +943,8 @@ def tab_mutations(stability_scorer):
             "Positions are classified as **frozen** (no mutation), "
             "**conservative** (restricted AAs), or **mutable** (any AA). "
             "Toggle classes in the interactive selector above. "
-            "The forbidden-substitutions CSV overrides all other settings."
+            "The forbidden-substitutions CSV further restricts allowed AAs "
+            "for non-frozen positions without changing their selector class."
         )
 
         # Build the policy from the selector's authoritative state.
@@ -966,12 +966,26 @@ def tab_mutations(stability_scorer):
             else:
                 policy.make_mutable([pos_key])
 
-        # The forbidden-substitutions CSV is the ultimate arbiter —
-        # its restrictions override any interactive selector state.
-        # Applied last so CSV always wins.
+        # The forbidden-substitutions CSV further restricts allowed AAs
+        # for non-frozen positions.  It respects the user's interactive
+        # selector choices: frozen positions stay frozen, conservative
+        # positions have their allowed set narrowed, and mutable positions
+        # become conservative only if the CSV removes some AAs.
+        # The original (wild-type) AA is also excluded from the allowed
+        # set since mutating to the same residue is not meaningful.
         if position_forbidden:
             for pos_key, forbidden_set in position_forbidden.items():
-                allowed = _ALL_AAS - frozenset(forbidden_set)
+                existing = policy.get(pos_key)
+                # Frozen positions from the selector stay frozen.
+                if existing is not None and existing.is_frozen:
+                    continue
+                wt_aa = vhh.imgt_numbered.get(pos_key, "")
+                if existing is not None and existing.is_conservative and existing.allowed_aas:
+                    # Narrow the existing conservative set.
+                    allowed = existing.allowed_aas - frozenset(forbidden_set) - frozenset({wt_aa})
+                else:
+                    # Mutable position: restrict from ALL_AAS.
+                    allowed = _ALL_AAS - frozenset(forbidden_set) - frozenset({wt_aa})
                 if allowed:
                     policy.restrict(pos_key, allowed)
                 else:
@@ -1421,9 +1435,7 @@ def tab_library(viz):
             key="nanomelt_rerank_top_n",
         )
         _nm_running = is_task_running("nanomelt_rerank")
-        if st.button(
-            "Score top variants with NanoMelt", key="btn_nanomelt_rerank", disabled=_nm_running
-        ):
+        if st.button("Score top variants with NanoMelt", key="btn_nanomelt_rerank", disabled=_nm_running):
             from vhh_library.stability import StabilityScorer
 
             subset = library.nlargest(top_n_nm, "combined_score")
@@ -1459,9 +1471,7 @@ def tab_library(viz):
             submit_task("nanomelt_rerank", _nanomelt_rerank_work)
 
         # Poll / display result for NanoMelt re-ranking
-        nm_result = render_task_status(
-            "nanomelt_rerank", success_message="NanoMelt re-ranking complete."
-        )
+        nm_result = render_task_status("nanomelt_rerank", success_message="NanoMelt re-ranking complete.")
         if nm_result is not None:
             st.session_state["nanomelt_rerank_scores"] = nm_result
             reset_task("nanomelt_rerank")
@@ -1505,9 +1515,7 @@ def tab_library(viz):
             model_tier = st.session_state.get("esm2_model_tier", "auto")
             top_n_esm = st.session_state.get("esm2_top_n", _ESM2_PLL_DEFAULT_TOP_N)
             _esm_running = is_task_running("esm2_rerank")
-            if st.button(
-                "Re-rank with ESM-2 (supplementary)", key="btn_esm2", disabled=_esm_running
-            ):
+            if st.button("Re-rank with ESM-2 (supplementary)", key="btn_esm2", disabled=_esm_running):
                 from vhh_library.esm_scorer import ESMStabilityScorer
 
                 subset = library.nlargest(top_n_esm, "combined_score")
@@ -1536,9 +1544,7 @@ def tab_library(viz):
                 submit_task("esm2_rerank", _esm2_rerank_work)
 
             # Poll / display result for ESM-2 re-ranking
-            esm_result = render_task_status(
-                "esm2_rerank", success_message="ESM-2 re-ranking complete."
-            )
+            esm_result = render_task_status("esm2_rerank", success_message="ESM-2 re-ranking complete.")
             if esm_result is not None:
                 st.session_state["esm2_pll_scores"] = esm_result
                 reset_task("esm2_rerank")
@@ -1715,9 +1721,7 @@ def tab_construct(optimizer, tag_manager):
     c_tag_val = c_tag if c_tag != "None" else None
 
     _construct_running = is_task_running("construct_build")
-    if st.button(
-        "Build constructs", type="primary", key="btn_build_constructs", disabled=_construct_running
-    ):
+    if st.button("Build constructs", type="primary", key="btn_build_constructs", disabled=_construct_running):
         # Resolve host organism from sidebar widgets
         host_sel = st.session_state.get("host_organism_select", "e_coli")
         if host_sel == "Advanced: enter taxonomy ID":
@@ -1789,9 +1793,7 @@ def tab_construct(optimizer, tag_manager):
         submit_task("construct_build", _construct_build_work)
 
     # Poll / display result for construct building
-    construct_result = render_task_status(
-        "construct_build", success_message=""
-    )
+    construct_result = render_task_status("construct_build", success_message="")
     if construct_result is not None:
         st.session_state["constructs"] = construct_result
         reset_task("construct_build")
@@ -1880,9 +1882,7 @@ def tab_validation(stability_scorer):
     cv_folds = st.slider("Cross-validation folds", min_value=2, max_value=10, value=5, key="bench_cv_folds")
 
     _bench_running = is_task_running("benchmark")
-    if st.button(
-        "Run benchmark on reference VHHs", key="btn_run_benchmark", disabled=_bench_running
-    ):
+    if st.button("Run benchmark on reference VHHs", key="btn_run_benchmark", disabled=_bench_running):
         try:
             benchmark_vhhs = load_benchmark_dataset()
         except Exception as exc:

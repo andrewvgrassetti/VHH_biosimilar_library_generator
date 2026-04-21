@@ -275,7 +275,9 @@ def _build_policy_from_three_state(
     This mirrors the exact logic in the updated ``tab_mutations()``:
     1. Use classifier for allowed-AA metadata.
     2. Build policy directly from frozen/conservative/mutable sets.
-    3. Apply CSV forbidden substitutions **last** (ultimate arbiter).
+    3. Apply CSV forbidden substitutions **last**.  The CSV further restricts
+       allowed AAs for non-frozen positions without changing their selector
+       class.  The wild-type (original) AA is excluded from allowed sets.
 
     Parameters
     ----------
@@ -290,7 +292,8 @@ def _build_policy_from_three_state(
         as the fallback WT residue for similarity lookups.
     position_forbidden : dict[str, set[str]], optional
         CSV-derived forbidden substitutions (position → set of forbidden AAs).
-        Applied last and overrides all other settings.
+        Applied last; restricts allowed AAs for non-frozen positions and
+        excludes the wild-type AA from allowed sets.
 
     Returns
     -------
@@ -314,10 +317,21 @@ def _build_policy_from_three_state(
         else:
             policy.make_mutable([pos_key])
 
-    # CSV forbidden substitutions override everything — applied last.
+    # CSV forbidden substitutions further restrict allowed AAs for
+    # non-frozen positions.  The wild-type AA is excluded from allowed sets.
     if position_forbidden:
         for pos_key, forbidden_set in position_forbidden.items():
-            allowed = AMINO_ACIDS - frozenset(forbidden_set)
+            existing = policy.get(pos_key)
+            # Frozen positions from the selector stay frozen.
+            if existing is not None and existing.is_frozen:
+                continue
+            wt_aa = (imgt_numbered or {}).get(pos_key, "")
+            if existing is not None and existing.is_conservative and existing.allowed_aas:
+                # Narrow the existing conservative set.
+                allowed = existing.allowed_aas - frozenset(forbidden_set) - frozenset({wt_aa})
+            else:
+                # Mutable position: restrict from ALL_AAS.
+                allowed = AMINO_ACIDS - frozenset(forbidden_set) - frozenset({wt_aa})
             if allowed:
                 policy.restrict(pos_key, allowed)
             else:
@@ -632,10 +646,11 @@ class TestThreeStatePolicyFromSelector:
 
 
 class TestCSVForbiddenSubstitutionsOverride:
-    """Verify that the CSV forbidden-substitutions file is the ultimate arbiter.
+    """Verify that the CSV forbidden-substitutions file restricts allowed AAs.
 
-    The CSV restrictions must override interactive selector state, classifier
-    defaults, and any other settings.  They are applied last in the pipeline.
+    The CSV restrictions further narrow the allowed amino acids for non-frozen
+    positions.  Frozen positions from the selector stay frozen.  The wild-type
+    (original) AA is excluded from allowed sets.
     """
 
     @pytest.fixture()
@@ -674,13 +689,14 @@ class TestCSVForbiddenSubstitutionsOverride:
         }
         return {k: aa_map.get(k, "A") for k in imgt_keys}
 
-    def test_csv_overrides_mutable_to_conservative(self, imgt_keys: list[str]):
+    def test_csv_restricts_mutable_to_conservative(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
         """CSV makes a mutable position conservative (restricts allowed AAs)."""
-        # Position "10" is mutable by default
+        # Position "10" (WT=G) is mutable by default
         policy = _build_policy_from_three_state(
             imgt_keys,
             set(),
             set(),
+            imgt_numbered,
             position_forbidden={"10": {"P", "C", "W"}},
         )
         assert policy.effective_class("10") is PositionClass.CONSERVATIVE
@@ -688,66 +704,109 @@ class TestCSVForbiddenSubstitutionsOverride:
         assert "P" not in pp.allowed_aas
         assert "C" not in pp.allowed_aas
         assert "W" not in pp.allowed_aas
+        # WT AA (G) must not be in allowed set
+        assert "G" not in pp.allowed_aas
         # Other AAs should still be allowed
         assert "A" in pp.allowed_aas
 
-    def test_csv_overrides_selector_frozen_to_conservative(self, imgt_keys: list[str]):
-        """CSV can restrict a frozen position to conservative (allows some AAs)."""
-        # User froze position "10", but CSV says only some AAs are forbidden
+    def test_csv_respects_selector_frozen(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
+        """CSV does not override a user-frozen position."""
+        # User froze position "10", CSV says some AAs are forbidden
         policy = _build_policy_from_three_state(
             imgt_keys,
             {"10"},
             set(),
+            imgt_numbered,
             position_forbidden={"10": {"P", "C"}},
         )
-        # CSV overrides: position becomes conservative (restricted), not frozen
-        assert policy.effective_class("10") is PositionClass.CONSERVATIVE
-        pp = policy["10"]
-        assert "P" not in pp.allowed_aas
-        assert "C" not in pp.allowed_aas
+        # Frozen from selector stays frozen — CSV does not override
+        assert policy.effective_class("10") is PositionClass.FROZEN
 
-    def test_csv_freezes_when_all_aas_forbidden(self, imgt_keys: list[str]):
+    def test_csv_freezes_when_all_aas_forbidden(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
         """When CSV forbids all 20 AAs, position becomes frozen."""
         policy = _build_policy_from_three_state(
             imgt_keys,
             set(),
             set(),
+            imgt_numbered,
             position_forbidden={"10": set(AMINO_ACIDS)},
         )
         assert policy.effective_class("10") is PositionClass.FROZEN
 
-    def test_csv_overrides_selector_conservative(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
+    def test_csv_narrows_selector_conservative(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
         """CSV restrictions are additive on top of conservative AA sets."""
-        # Make "10" conservative via selector
+        # Make "20" (WT=L) conservative via selector.
+        # SIMILAR_AA_GROUPS["L"] = {"L", "I", "V", "M", "F"} — large enough
+        # to survive narrowing.
         policy_no_csv = _build_policy_from_three_state(
             imgt_keys,
             set(),
-            {"10"},
+            {"20"},
             imgt_numbered,
         )
-        similar_for_g = SIMILAR_AA_GROUPS["G"]  # G is WT at position 10
-        assert policy_no_csv["10"].allowed_aas == similar_for_g
+        similar_for_l = SIMILAR_AA_GROUPS["L"]  # L is WT at position 20
+        assert policy_no_csv["20"].allowed_aas == similar_for_l
 
-        # Now add CSV that further restricts
+        # Now add CSV that further restricts: forbid "I" and "V"
         policy_with_csv = _build_policy_from_three_state(
+            imgt_keys,
+            set(),
+            {"20"},
+            imgt_numbered,
+            position_forbidden={"20": {"I", "V"}},
+        )
+        pp = policy_with_csv["20"]
+        assert pp.is_conservative
+        # CSV-forbidden AAs must not be in allowed set
+        assert "I" not in pp.allowed_aas
+        assert "V" not in pp.allowed_aas
+        # WT AA (L) must not be in allowed set
+        assert "L" not in pp.allowed_aas
+        # Remaining similar AAs should be present
+        assert "M" in pp.allowed_aas
+        assert "F" in pp.allowed_aas
+
+    def test_csv_freezes_conservative_when_all_similar_excluded(
+        self, imgt_keys: list[str], imgt_numbered: dict[str, str]
+    ):
+        """When CSV + WT exclusion removes all similar AAs from a conservative
+        position, it becomes frozen."""
+        # Position "10" (WT=G): SIMILAR_AA_GROUPS["G"] = {"G", "A", "S"}
+        # Forbid A and S → after removing WT G → empty → frozen
+        policy = _build_policy_from_three_state(
             imgt_keys,
             set(),
             {"10"},
             imgt_numbered,
             position_forbidden={"10": {"A", "S"}},
         )
-        pp = policy_with_csv["10"]
-        assert pp.is_conservative
-        # CSV-forbidden AAs must not be in allowed set
-        assert "A" not in pp.allowed_aas
-        assert "S" not in pp.allowed_aas
+        assert policy.effective_class("10") is PositionClass.FROZEN
 
-    def test_csv_does_not_affect_unmentioned_positions(self, imgt_keys: list[str]):
+    def test_csv_excludes_wt_aa_from_allowed(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
+        """The wild-type AA should not appear in the allowed set when CSV is active."""
+        # Position "10" (WT=G) mutable, CSV forbids only "P"
+        policy = _build_policy_from_three_state(
+            imgt_keys,
+            set(),
+            set(),
+            imgt_numbered,
+            position_forbidden={"10": {"P"}},
+        )
+        pp = policy["10"]
+        assert pp.is_conservative
+        assert "P" not in pp.allowed_aas
+        # WT AA excluded
+        assert "G" not in pp.allowed_aas
+        # Other AAs allowed
+        assert "A" in pp.allowed_aas
+
+    def test_csv_does_not_affect_unmentioned_positions(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
         """Positions not in the CSV retain their selector/classifier class."""
         policy = _build_policy_from_three_state(
             imgt_keys,
             {"23"},
             {"42"},
+            imgt_numbered,
             position_forbidden={"10": {"P"}},
         )
         # Unmentioned positions: class unchanged
@@ -757,14 +816,15 @@ class TestCSVForbiddenSubstitutionsOverride:
         # CSV-affected position
         assert policy.effective_class("10") is PositionClass.CONSERVATIVE
 
-    def test_csv_applied_last_overrides_all_layers(self, imgt_keys: list[str]):
-        """CSV is applied after selector and classifier, overriding both."""
-        # Position "42" is conservative by classifier.  User left it conservative.
+    def test_csv_applied_last_restricts_conservative(self, imgt_keys: list[str], imgt_numbered: dict[str, str]):
+        """CSV is applied after selector and classifier, further restricting conservative."""
+        # Position "42" (WT=F) is conservative by classifier.  User left it conservative.
         # CSV forbids "F" and "Y" at position 42.
         policy = _build_policy_from_three_state(
             imgt_keys,
             set(),
             {"42"},
+            imgt_numbered,
             position_forbidden={"42": {"F", "Y"}},
         )
         pp = policy["42"]
