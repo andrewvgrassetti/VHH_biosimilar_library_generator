@@ -1164,3 +1164,279 @@ class TestBatchNativenessLibraryGeneration:
             for _, row in lib.iterrows():
                 # combined_score should reflect actual nativeness, not the placeholder 0.0.
                 assert row["nativeness_score"] != 0.0 or row["aa_sequence"] == seq
+
+
+# ---------------------------------------------------------------------------
+# Batch stability scoring during library generation
+# ---------------------------------------------------------------------------
+
+
+class TestBatchStabilityScoring:
+    """Verify that library generation batch-scores ML stability backends
+    instead of calling them per-variant, preventing repeated ESM/NanoMelt
+    inference and associated Streamlit timeouts.
+    """
+
+    @staticmethod
+    def _make_vhh_no_anarci(sequence: str, imgt_numbered: dict[str, str] | None = None) -> VHHSequence:
+        """Create a VHHSequence without ANARCI (for environments lacking hmmscan)."""
+        vhh = object.__new__(VHHSequence)
+        vhh.sequence = sequence.upper()
+        vhh.length = len(vhh.sequence)
+        vhh.strict = False
+        vhh.chain_type = "H"
+        vhh.species = "camelid"
+        if imgt_numbered is None:
+            imgt_numbered = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh.imgt_numbered = imgt_numbered
+        vhh._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt_numbered)}
+        vhh.validation_result = {"valid": True, "errors": [], "warnings": []}
+        return vhh
+
+    @staticmethod
+    def _make_top_muts(vhh: VHHSequence, positions: list[str]) -> pd.DataFrame:
+        """Build a minimal top_mutations DataFrame for the given positions."""
+        rows = []
+        for pos_key in positions:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:1]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_skip_ml_flag_prevents_esm_calls(self) -> None:
+        """StabilityScorer.score(_skip_ml=True) should not call ESM scorer."""
+        from unittest.mock import MagicMock
+
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
+
+        result = scorer.score(vhh, _skip_ml=True)
+        mock_esm.score_single.assert_not_called()
+        assert result["scoring_method"] == "legacy"
+        assert "composite_score" in result
+
+    def test_skip_ml_flag_prevents_nanomelt_calls(self) -> None:
+        """StabilityScorer.score(_skip_ml=True) should not call NanoMelt."""
+        from unittest.mock import MagicMock
+
+        mock_nm = MagicMock()
+        mock_nm.score_sequence.return_value = {"composite_score": 0.6, "nanomelt_tm": 70.0}
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
+
+        result = scorer.score(vhh, _skip_ml=True)
+        mock_nm.score_sequence.assert_not_called()
+        assert result["scoring_method"] == "legacy"
+
+    def test_score_without_skip_ml_still_calls_backends(self) -> None:
+        """Normal score() without _skip_ml should still call ML backends."""
+        from unittest.mock import MagicMock
+
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
+
+        scorer.score(vhh)
+        mock_esm.score_single.assert_called_once()
+
+    def test_batch_fill_stability_with_esm(self) -> None:
+        """_batch_fill_stability should batch-score ESM and update rows."""
+        from unittest.mock import MagicMock
+
+        mock_esm = MagicMock()
+        mock_esm.score_batch.return_value = [-50.0, -45.0]
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.7,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+            {
+                "aa_sequence": "QVQLVESGGGLAQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.6,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+        ]
+        result = engine._batch_fill_stability(rows)
+        mock_esm.score_batch.assert_called_once()
+        assert result[0]["scoring_method"] == "esm2"
+        assert result[1]["scoring_method"] == "esm2"
+        assert "predicted_tm" in result[0]
+
+    def test_batch_fill_stability_with_nanomelt(self) -> None:
+        """_batch_fill_stability should prefer NanoMelt over ESM."""
+        from unittest.mock import MagicMock
+
+        mock_nm = MagicMock()
+        mock_nm.score_batch.return_value = [
+            {"composite_score": 0.65, "nanomelt_tm": 68.0},
+            {"composite_score": 0.72, "nanomelt_tm": 73.0},
+        ]
+        mock_esm = MagicMock()
+        scorer = StabilityScorer(esm_scorer=mock_esm, nanomelt_predictor=mock_nm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.7,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+            {
+                "aa_sequence": "QVQLVESGGGLAQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.6,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+        ]
+        result = engine._batch_fill_stability(rows)
+        mock_nm.score_batch.assert_called_once()
+        mock_esm.score_batch.assert_not_called()
+        assert result[0]["scoring_method"] == "nanomelt"
+        assert result[0]["nanomelt_tm"] == 68.0
+        assert result[1]["nanomelt_tm"] == 73.0
+
+    def test_batch_fill_stability_no_ml_noop(self) -> None:
+        """_batch_fill_stability with no ML backends should be a no-op."""
+        scorer = StabilityScorer()
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "stability_score": 0.5,
+                "scoring_method": "legacy",
+            }
+        ]
+        result = engine._batch_fill_stability(rows)
+        assert result[0]["stability_score"] == 0.5
+        assert result[0]["scoring_method"] == "legacy"
+
+    def test_library_generation_no_per_variant_esm_calls(self) -> None:
+        """Library generation should NOT call ESM per-variant; only batch."""
+        from unittest.mock import MagicMock
+
+        call_log: list[str] = []
+
+        mock_esm = MagicMock()
+
+        def _track_single(seq):
+            call_log.append("score_single")
+            return -50.0
+
+        def _track_batch(seqs):
+            call_log.append(f"score_batch({len(seqs)})")
+            return [-50.0] * len(seqs)
+
+        mock_esm.score_single.side_effect = _track_single
+        mock_esm.score_batch.side_effect = _track_batch
+
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQ"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3"])
+
+        lib = engine.generate_library(vhh, top_muts, n_mutations=2, strategy="exhaustive", max_variants=50)
+
+        # score_single should NOT be called (no per-variant ESM)
+        single_calls = [c for c in call_log if c == "score_single"]
+        batch_calls = [c for c in call_log if c.startswith("score_batch")]
+        assert len(single_calls) == 0, f"ESM score_single called {len(single_calls)} times (should be 0)"
+        assert len(batch_calls) >= 1, "ESM score_batch should be called at least once"
+
+    def test_library_generation_no_per_variant_nanomelt_calls(self) -> None:
+        """Library generation should NOT call NanoMelt per-variant; only batch."""
+        from unittest.mock import MagicMock
+
+        call_log: list[str] = []
+
+        mock_nm = MagicMock()
+
+        def _track_single(vhh):
+            call_log.append("score_sequence")
+            return {"composite_score": 0.6, "nanomelt_tm": 70.0}
+
+        def _track_batch(vhhs):
+            call_log.append(f"score_batch({len(vhhs)})")
+            return [{"composite_score": 0.6, "nanomelt_tm": 70.0}] * len(vhhs)
+
+        mock_nm.score_sequence.side_effect = _track_single
+        mock_nm.score_batch.side_effect = _track_batch
+
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQ"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3"])
+
+        lib = engine.generate_library(vhh, top_muts, n_mutations=2, strategy="exhaustive", max_variants=50)
+
+        single_calls = [c for c in call_log if c == "score_sequence"]
+        batch_calls = [c for c in call_log if c.startswith("score_batch")]
+        assert len(single_calls) == 0, f"NanoMelt score_sequence called {len(single_calls)} times (should be 0)"
+        assert len(batch_calls) >= 1, "NanoMelt score_batch should be called at least once"

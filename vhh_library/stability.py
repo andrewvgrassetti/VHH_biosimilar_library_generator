@@ -192,8 +192,19 @@ class StabilityScorer:
     # Public API
     # ------------------------------------------------------------------
 
-    def score(self, vhh: VHHSequence) -> dict:
-        """Return a comprehensive stability score dictionary for *vhh*."""
+    def score(self, vhh: VHHSequence, *, _skip_ml: bool = False) -> dict:
+        """Return a comprehensive stability score dictionary for *vhh*.
+
+        Parameters
+        ----------
+        _skip_ml : bool
+            When ``True``, skip expensive ML backends (ESM-2 and NanoMelt)
+            and return only the fast heuristic sub-scores.  The
+            ``composite_score`` will be derived from the legacy heuristic
+            path.  This is used during library generation where variants
+            are scored individually for cheap axes and then batch-scored
+            for ML backends afterward.
+        """
         seq = vhh.sequence
         numbered = vhh.imgt_numbered
         warnings: list[str] = list(vhh.validation_result.get("warnings", []))
@@ -238,8 +249,11 @@ class StabilityScorer:
         vhh_bonus = self._hallmark_bonus_weight * hallmark
 
         # --- Determine which backends to use ---
-        has_esm = self.esm_scorer is not None
-        has_nanomelt = self.nanomelt_predictor is not None
+        # When _skip_ml is True (batch library generation), skip the
+        # expensive per-variant ESM / NanoMelt calls.  The library
+        # generation path will batch-score these axes afterward.
+        has_esm = self.esm_scorer is not None and not _skip_ml
+        has_nanomelt = self.nanomelt_predictor is not None and not _skip_ml
 
         esm2_composite: float | None = None
         nanomelt_composite: float | None = None
