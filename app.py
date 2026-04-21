@@ -37,6 +37,7 @@ from vhh_library.orthogonal_scoring import (
 from vhh_library.position_classifier import PositionClassifier
 from vhh_library.position_policy import (
     DesignPolicy,
+    PositionClass as _PositionClass,
 )
 from vhh_library.runtime_config import (
     VALID_DEVICES,
@@ -801,35 +802,63 @@ def tab_mutations(stability_scorer):
         st.info("Please analyse a sequence first (Tab 1).")
         return
 
-    # -- Off-limit regions (checkboxes provide the INITIAL defaults only) --
-    st.subheader("Off-Limit Regions")
-    checkbox_off_limits: set[str] = set()
+    # -- Region freeze checkboxes (seed the initial classification) --
+    st.subheader("Region Freeze")
+    checkbox_frozen: set[str] = set()
     region_cols = st.columns(len(IMGT_REGIONS))
     for idx, (region_name, (start, end)) in enumerate(IMGT_REGIONS.items()):
         with region_cols[idx]:
             default_off = region_name.startswith("CDR")
             if st.checkbox(region_name, value=default_off, key=f"ol_{region_name}"):
-                # Collect all IMGT keys (including insertion codes) within this region.
                 for imgt_key in vhh.imgt_numbered:
                     if start <= imgt_key_int_part(imgt_key) <= end:
-                        checkbox_off_limits.add(imgt_key)
+                        checkbox_frozen.add(imgt_key)
+
+    # Build classifier-derived initial classes
+    classifier = PositionClassifier()
+    imgt_keys = list(vhh.imgt_numbered.keys())
+    classifications = classifier.classify(imgt_keys)
+
+    # Initial frozen/conservative sets from classifier
+    classifier_frozen: set[str] = set()
+    classifier_conservative: set[str] = set()
+    for pos_key, clf in classifications.items():
+        if clf.position_class is _PositionClass.FROZEN:
+            classifier_frozen.add(pos_key)
+        elif clf.position_class is _PositionClass.CONSERVATIVE:
+            classifier_conservative.add(pos_key)
+
+    # Merge checkbox state with classifier defaults.
+    # Checkbox-frozen positions are added; CDR positions from unchecked
+    # checkboxes that were frozen by the CDR rule become mutable (but NOT
+    # structurally conserved Cys/Trp).
+    initial_frozen = set(classifier_frozen)
+    initial_frozen |= checkbox_frozen
+    for pos_key in list(initial_frozen):
+        if pos_key not in checkbox_frozen:
+            clf = classifications.get(pos_key)
+            if clf and clf.reason.rule == "cdr_freeze":
+                initial_frozen.discard(pos_key)
+
+    initial_conservative = set(classifier_conservative) - initial_frozen
 
     # Use session state to persist the selector's output across reruns.
-    # The checkboxes only seed the initial value; after that, the selector owns it.
-    _state_key = "_off_limit_positions"
-    _checkbox_key = "_last_checkbox_off_limits"
+    _state_key = "_position_classes"
+    _checkbox_key = "_last_checkbox_frozen"
 
-    # Detect if checkboxes changed (user toggled a region checkbox)
     prev_checkbox = st.session_state.get(_checkbox_key)
-    checkboxes_changed = prev_checkbox is not None and prev_checkbox != checkbox_off_limits
-    st.session_state[_checkbox_key] = checkbox_off_limits
+    checkboxes_changed = prev_checkbox is not None and prev_checkbox != checkbox_frozen
+    st.session_state[_checkbox_key] = checkbox_frozen
 
     if _state_key not in st.session_state or checkboxes_changed:
-        # First render or user toggled a checkbox → reset to checkbox state
-        st.session_state[_state_key] = checkbox_off_limits
+        st.session_state[_state_key] = {
+            "frozen": initial_frozen,
+            "conservative": initial_conservative,
+        }
 
-    # The stable off-limit set passed to the component (from session state)
-    off_limit_positions: set[str] = st.session_state[_state_key]
+    position_classes: dict[str, set[str]] = st.session_state[_state_key]
+    frozen_positions: set[str] = position_classes.get("frozen", set())
+    conservative_positions: set[str] = position_classes.get("conservative", set())
 
     # -- Forbidden substitutions CSV --
     st.subheader("Forbidden Substitutions")
@@ -857,58 +886,72 @@ def tab_mutations(stability_scorer):
 
     # -- Interactive selector --
     st.subheader("Interactive Position Selector")
-    selected_positions = sequence_selector(
+    st.caption(
+        "Click a residue to cycle: **mutable** → **frozen** → **conservative** → **mutable**. "
+        "Drag to apply the same class to multiple positions."
+    )
+    selector_result = sequence_selector(
         sequence=vhh.sequence,
         imgt_numbered=vhh.imgt_numbered,
-        off_limit_positions=off_limit_positions,
+        frozen_positions=frozen_positions,
+        conservative_positions=conservative_positions,
         forbidden_substitutions=position_forbidden if position_forbidden else None,
         key="seq_selector",
     )
-    # The selector returns the authoritative set when the user interacts.
-    # On non-interaction reruns it returns the default (which matches session state).
-    if selected_positions is not None:
-        new_set = set(selected_positions)
-        if new_set != off_limit_positions:
-            # User made a change in the selector — update session state and rerun
-            # so that the policy table and all downstream code sees the new state.
-            st.session_state[_state_key] = new_set
+    # The selector returns the authoritative classes when the user interacts.
+    if selector_result is not None:
+        new_frozen = set(selector_result.get("frozen", []))
+        new_conservative = set(selector_result.get("conservative", []))
+        if new_frozen != frozen_positions or new_conservative != conservative_positions:
+            st.session_state[_state_key] = {
+                "frozen": new_frozen,
+                "conservative": new_conservative,
+            }
             st.rerun()
-    st.caption(f"Total off-limit positions: {len(off_limit_positions)}")
+
+    st.caption(
+        f"Frozen: {len(frozen_positions)} · "
+        f"Conservative: {len(conservative_positions)} · "
+        f"Mutable: {len(imgt_keys) - len(frozen_positions) - len(conservative_positions)}"
+    )
 
     # -- Position Policy Review/Edit (new design system) --
     with st.expander("📋 Position Policy (Advanced)", expanded=False):
         st.markdown(
             "Review and edit the position-level mutation policy. "
             "Positions are classified as **frozen** (no mutation), "
-            "**conservative** (restricted AAs), or **mutable** (any AA)."
+            "**conservative** (restricted AAs), or **mutable** (any AA). "
+            "Toggle classes in the interactive selector above. "
+            "The forbidden-substitutions CSV overrides all other settings."
         )
 
-        # Build the current policy from classifier + legacy controls
-        classifier = PositionClassifier()
-        imgt_keys = list(vhh.imgt_numbered.keys())
-        classifications = classifier.classify(imgt_keys)
-        policy = classifier.to_design_policy(imgt_keys)
+        # Build the policy from the selector's authoritative state.
+        # The classifier is used only for allowed-AA sets and reason metadata.
+        from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
+        from vhh_library.utils import DEFAULT_CONSERVATIVE_FALLBACK as _CONSERVATIVE_FALLBACK
+        from vhh_library.utils import SIMILAR_AA_GROUPS as _SIMILAR_AA_GROUPS
 
-        # Reconcile policy with the user's interactive selections.
-        # The off_limit_positions set (from the interactive selector) is
-        # the sole authority on position mutability.
-        to_freeze = []
-        to_unfreeze = []
-        for pos_key in vhh.imgt_numbered:
-            if pos_key in off_limit_positions:
-                to_freeze.append(pos_key)
+        policy = DesignPolicy()
+        for pos_key in imgt_keys:
+            if pos_key in frozen_positions:
+                policy.freeze([pos_key])
+            elif pos_key in conservative_positions:
+                # Use classifier's allowed AAs if available, else use
+                # chemically-similar group based on the wild-type residue.
+                clf = classifications.get(pos_key)
+                if clf and clf.position_class is _PositionClass.CONSERVATIVE and clf.allowed_aas:
+                    policy.restrict(pos_key, clf.allowed_aas)
+                else:
+                    wt_aa = vhh.imgt_numbered.get(pos_key, "A")
+                    similar = _SIMILAR_AA_GROUPS.get(wt_aa, _CONSERVATIVE_FALLBACK)
+                    policy.restrict(pos_key, similar)
             else:
-                pp = policy.policies.get(pos_key)
-                if pp is not None and pp.is_frozen:
-                    to_unfreeze.append(pos_key)
-        if to_freeze:
-            policy.freeze(to_freeze)
-        if to_unfreeze:
-            policy.make_mutable(to_unfreeze)
+                policy.make_mutable([pos_key])
 
+        # The forbidden-substitutions CSV is the ultimate arbiter —
+        # its restrictions override any interactive selector state.
+        # Applied last so CSV always wins.
         if position_forbidden:
-            from vhh_library.utils import AMINO_ACIDS as _ALL_AAS
-
             for pos_key, forbidden_set in position_forbidden.items():
                 allowed = _ALL_AAS - frozenset(forbidden_set)
                 if allowed:
@@ -1056,11 +1099,23 @@ def tab_mutations(stability_scorer):
             enabled_metrics=enabled,
         )
         with st.spinner("Ranking mutations…"):
+            # Derive legacy parameters from the design policy for backward
+            # compatibility with rank_single_mutations.  The policy already
+            # includes the CSV overrides (applied last), so these derived
+            # parameters honour CSV as the ultimate arbiter.
+            from vhh_library.position_policy import to_off_limits as _to_off_limits
+
+            active_policy = st.session_state.get("_design_policy")
+            if active_policy is not None:
+                rank_off_limits, rank_forbidden = _to_off_limits(active_policy)
+            else:
+                rank_off_limits = frozen_positions
+                rank_forbidden = {}
             try:
                 ranked = engine.rank_single_mutations(
                     vhh,
-                    off_limits=off_limit_positions if off_limit_positions else None,
-                    forbidden_substitutions=position_forbidden if position_forbidden else None,
+                    off_limits=rank_off_limits if rank_off_limits else None,
+                    forbidden_substitutions=rank_forbidden if rank_forbidden else None,
                     excluded_target_aas=excluded_set,
                     max_per_position=st.session_state.get("max_candidates_per_position", 3),
                 )
