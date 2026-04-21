@@ -15,6 +15,14 @@ from pathlib import Path  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
+from vhh_library.background import (
+    is_task_running,
+    make_progress_callback,
+    render_task_status,
+    reset_task,
+    set_progress,
+    submit_task,
+)
 from vhh_library.barcodes import BarcodeGenerator
 from vhh_library.calibration import (
     load_calibration as _load_calibration,
@@ -37,7 +45,11 @@ from vhh_library.orthogonal_scoring import (
 from vhh_library.position_classifier import PositionClassifier
 from vhh_library.position_policy import (
     DesignPolicy,
+)
+from vhh_library.position_policy import (
     PositionClass as _PositionClass,
+)
+from vhh_library.position_policy import (
     to_off_limits as _to_off_limits,
 )
 from vhh_library.runtime_config import (
@@ -55,7 +67,11 @@ from vhh_library.stability import (
 from vhh_library.tags import TagManager
 from vhh_library.utils import (
     AMINO_ACIDS as _ALL_AAS,
+)
+from vhh_library.utils import (
     DEFAULT_CONSERVATIVE_FALLBACK as _CONSERVATIVE_FALLBACK,
+)
+from vhh_library.utils import (
     SIMILAR_AA_GROUPS as _SIMILAR_AA_GROUPS,
 )
 from vhh_library.visualization import SequenceVisualizer
@@ -1226,7 +1242,8 @@ def tab_mutations(stability_scorer):
                 st.pyplot(fig)
                 plt.close(fig)
 
-        if st.button("Generate library", type="primary", key="btn_gen_lib"):
+        _lib_running = is_task_running("library_gen")
+        if st.button("Generate library", type="primary", key="btn_gen_lib", disabled=_lib_running):
             engine = st.session_state.get("_mutation_engine")
             if engine is None:
                 st.error("Please rank mutations first.")
@@ -1234,53 +1251,40 @@ def tab_mutations(stability_scorer):
             strategy_map = {"Auto": "auto", "Random": "random", "Iterative": "iterative"}
             strategy = strategy_map.get(st.session_state.get("strategy", "Auto"), "auto")
 
-            # Progress bar for iterative strategy
-            progress_bar = st.progress(0, text="Generating library…")
-            status_text = st.empty()
+            _progress_cb = make_progress_callback("library_gen")
 
-            def _on_progress(prog):
-                frac = prog.round_number / max(prog.total_rounds, 1)
-                progress_bar.progress(
-                    min(frac, 1.0),
-                    text=f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds}",
-                )
-                status_text.caption(
-                    f"🧬 {prog.population_size} variants | "
-                    f"Best: {prog.best_score:.4f} | "
-                    f"Anchors: {prog.n_anchors} | "
-                    f"Diversity: {prog.diversity_entropy:.2f}"
+            def _library_gen_work():
+                return engine.generate_library(
+                    vhh,
+                    ranked.head(top_n),
+                    n_mutations=st.session_state.get("n_mutations", 3),
+                    max_variants=st.session_state.get("max_variants", 1000),
+                    min_mutations=st.session_state.get("min_mutations", 1),
+                    strategy=strategy,
+                    anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
+                    max_rounds=st.session_state.get("max_rounds", 15),
+                    rescore_top_n=st.session_state.get("rescore_top_n", 20),
+                    progress_callback=_progress_cb,
                 )
 
-            with st.spinner("Generating library…"):
-                try:
-                    library = engine.generate_library(
-                        vhh,
-                        ranked.head(top_n),
-                        n_mutations=st.session_state.get("n_mutations", 3),
-                        max_variants=st.session_state.get("max_variants", 1000),
-                        min_mutations=st.session_state.get("min_mutations", 1),
-                        strategy=strategy,
-                        anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
-                        max_rounds=st.session_state.get("max_rounds", 15),
-                        rescore_top_n=st.session_state.get("rescore_top_n", 20),
-                        progress_callback=_on_progress,
-                    )
-                except FileNotFoundError as exc:
-                    _show_abnativ_weights_error(exc)
-                    return
-            progress_bar.progress(1.0, text="Complete!")
-            st.session_state["library"] = library
+            submit_task("library_gen", _library_gen_work)
+
+        # Poll / display result for library generation
+        library_result = render_task_status("library_gen", success_message="")
+        if library_result is not None:
+            st.session_state["library"] = library_result
             st.session_state["esm2_pll_scores"] = None
             auto_save_session()
+            reset_task("library_gen")
             _requested = st.session_state.get("max_variants", 1000)
-            if len(library) < _requested:
+            if len(library_result) < _requested:
                 st.warning(
-                    f"Generated {len(library)} of {_requested:,} requested variants. "
+                    f"Generated {len(library_result)} of {_requested:,} requested variants. "
                     f"The search space was exhausted. Increase **Top N mutations for "
                     f"library** to expand the pool of candidate mutations and positions.",
                 )
             else:
-                st.success(f"Generated {len(library)} variants.")
+                st.success(f"Generated {len(library_result)} variants.")
 
 
 # ---------------------------------------------------------------------------
@@ -1416,32 +1420,51 @@ def tab_library(viz):
             20,
             key="nanomelt_rerank_top_n",
         )
-        if st.button("Score top variants with NanoMelt", key="btn_nanomelt_rerank"):
-            try:
-                from vhh_library.stability import StabilityScorer
+        _nm_running = is_task_running("nanomelt_rerank")
+        if st.button(
+            "Score top variants with NanoMelt", key="btn_nanomelt_rerank", disabled=_nm_running
+        ):
+            from vhh_library.stability import StabilityScorer
 
-                subset = library.nlargest(top_n_nm, "combined_score")
-                seqs = subset["aa_sequence"].tolist()
-                progress_bar = st.progress(0, text="Initialising NanoMelt scorer…")
+            subset = library.nlargest(top_n_nm, "combined_score")
+            seqs = subset["aa_sequence"].tolist()
+            variant_ids = subset["variant_id"].tolist()
+            combined_scores = subset["combined_score"].tolist()
+
+            def _nanomelt_rerank_work():
                 scorer = StabilityScorer(esm_scorer=None, device="auto")
-                progress_bar.progress(10, text="Computing NanoMelt Tm scores…")
+                set_progress("nanomelt_rerank", 0.1, "Computing NanoMelt Tm scores…")
                 tm_scores = []
                 for i, seq_str in enumerate(seqs):
                     vhh_tmp = VHHSequence(seq_str)
                     result = scorer.score(vhh_tmp)
                     tm_scores.append(result.get("nanomelt_tm"))
-                    progress_bar.progress(
-                        10 + int(90 * (i + 1) / len(seqs)),
-                        text=f"Scoring variant {i + 1}/{len(seqs)}…",
+                    set_progress(
+                        "nanomelt_rerank",
+                        0.1 + 0.9 * (i + 1) / len(seqs),
+                        f"Scoring variant {i + 1}/{len(seqs)}…",
                     )
-                progress_bar.progress(100, text="Done!")
-                nm_df = subset[["variant_id", "aa_sequence", "combined_score"]].copy()
-                nm_df["nanomelt_tm"] = tm_scores
-                nm_df = nm_df.sort_values("nanomelt_tm", ascending=False)
-                st.session_state["nanomelt_rerank_scores"] = nm_df
-                st.success("NanoMelt re-ranking complete.")
-            except Exception as exc:
-                st.error(f"NanoMelt scoring failed: {exc}")
+                import pandas as _pd
+
+                nm_df = _pd.DataFrame(
+                    {
+                        "variant_id": variant_ids,
+                        "aa_sequence": seqs,
+                        "combined_score": combined_scores,
+                        "nanomelt_tm": tm_scores,
+                    }
+                )
+                return nm_df.sort_values("nanomelt_tm", ascending=False)
+
+            submit_task("nanomelt_rerank", _nanomelt_rerank_work)
+
+        # Poll / display result for NanoMelt re-ranking
+        nm_result = render_task_status(
+            "nanomelt_rerank", success_message="NanoMelt re-ranking complete."
+        )
+        if nm_result is not None:
+            st.session_state["nanomelt_rerank_scores"] = nm_result
+            reset_task("nanomelt_rerank")
 
         nm_df = st.session_state.get("nanomelt_rerank_scores")
         if nm_df is not None:
@@ -1481,28 +1504,44 @@ def tab_library(viz):
             # Advanced: re-rank with a specific (potentially larger) model tier
             model_tier = st.session_state.get("esm2_model_tier", "auto")
             top_n_esm = st.session_state.get("esm2_top_n", _ESM2_PLL_DEFAULT_TOP_N)
-            if st.button("Re-rank with ESM-2 (supplementary)", key="btn_esm2"):
+            _esm_running = is_task_running("esm2_rerank")
+            if st.button(
+                "Re-rank with ESM-2 (supplementary)", key="btn_esm2", disabled=_esm_running
+            ):
                 from vhh_library.esm_scorer import ESMStabilityScorer
 
                 subset = library.nlargest(top_n_esm, "combined_score")
                 seqs = subset["aa_sequence"].tolist()
-                progress_bar = st.progress(0, text="Initialising ESM-2 model…")
-                try:
-                    scorer = ESMStabilityScorer(model_tier=model_tier, device="auto")
-                    progress_bar.progress(10, text="Computing ESM-2 PLL scores…")
-                    pll_scores = scorer.score_batch(seqs)
-                    progress_bar.progress(100, text="Done!")
-                except Exception as exc:
-                    st.error(f"ESM-2 scoring failed: {exc}")
-                    progress_bar.empty()
-                    pll_scores = None
+                variant_ids = subset["variant_id"].tolist()
+                combined_scores = subset["combined_score"].tolist()
 
-                if pll_scores is not None:
-                    pll_df = subset[["variant_id", "aa_sequence", "combined_score"]].copy()
-                    pll_df["esm2_pll"] = pll_scores
-                    pll_df = pll_df.sort_values("esm2_pll", ascending=False)
-                    st.session_state["esm2_pll_scores"] = pll_df
-                    st.success("ESM-2 re-ranking complete.")
+                def _esm2_rerank_work():
+                    set_progress("esm2_rerank", 0.0, "Initialising ESM-2 model…")
+                    scorer = ESMStabilityScorer(model_tier=model_tier, device="auto")
+                    set_progress("esm2_rerank", 0.1, "Computing ESM-2 PLL scores…")
+                    pll_scores = scorer.score_batch(seqs)
+                    set_progress("esm2_rerank", 1.0, "Done!")
+                    import pandas as _pd
+
+                    pll_df = _pd.DataFrame(
+                        {
+                            "variant_id": variant_ids,
+                            "aa_sequence": seqs,
+                            "combined_score": combined_scores,
+                            "esm2_pll": pll_scores,
+                        }
+                    )
+                    return pll_df.sort_values("esm2_pll", ascending=False)
+
+                submit_task("esm2_rerank", _esm2_rerank_work)
+
+            # Poll / display result for ESM-2 re-ranking
+            esm_result = render_task_status(
+                "esm2_rerank", success_message="ESM-2 re-ranking complete."
+            )
+            if esm_result is not None:
+                st.session_state["esm2_pll_scores"] = esm_result
+                reset_task("esm2_rerank")
 
             pll_df = st.session_state.get("esm2_pll_scores")
             if pll_df is not None:
@@ -1675,7 +1714,10 @@ def tab_construct(optimizer, tag_manager):
     n_tag_val = n_tag if n_tag != "None" else None
     c_tag_val = c_tag if c_tag != "None" else None
 
-    if st.button("Build constructs", type="primary", key="btn_build_constructs"):
+    _construct_running = is_task_running("construct_build")
+    if st.button(
+        "Build constructs", type="primary", key="btn_build_constructs", disabled=_construct_running
+    ):
         # Resolve host organism from sidebar widgets
         host_sel = st.session_state.get("host_organism_select", "e_coli")
         if host_sel == "Advanced: enter taxonomy ID":
@@ -1700,61 +1742,60 @@ def tab_construct(optimizer, tag_manager):
                 opt_kwargs["uniquify_kmers"] = None
 
         source_df = barcoded if (use_barcoded and barcoded is not None) else library
-        constructs: list[dict] = []
 
+        # Snapshot rows for the background thread (avoid passing the full df)
         if source_df is not None and not source_df.empty:
-            with st.spinner("Building constructs…"):
-                for _, row in source_df.iterrows():
-                    aa_seq = row.get("barcoded_sequence", row.get("aa_sequence", ""))
-                    vid = row.get("variant_id", "variant")
-                    opt = optimizer.optimize(aa_seq, host=host, strategy=codon_strat, **opt_kwargs)
-                    construct = tag_manager.build_construct(
-                        aa_seq,
-                        opt["dna_sequence"],
-                        n_tag=n_tag_val,
-                        c_tag=c_tag_val,
-                        linker=linker,
-                    )
-                    constructs.append(
-                        {
-                            "variant_id": vid,
-                            "aa_construct": construct["aa_construct"],
-                            "dna_construct": construct["dna_construct"],
-                            "schematic": construct["schematic"],
-                            "gc_content": opt["gc_content"],
-                            "cai": opt["cai"],
-                        }
-                    )
+            _rows = [
+                (
+                    row.get("variant_id", "variant"),
+                    row.get("barcoded_sequence", row.get("aa_sequence", "")),
+                )
+                for _, row in source_df.iterrows()
+            ]
         else:
-            # Single sequence mode
-            with st.spinner("Optimizing codons…"):
-                opt = optimizer.optimize(vhh.sequence, host=host, strategy=codon_strat, **opt_kwargs)
-            construct = tag_manager.build_construct(
-                vhh.sequence,
-                opt["dna_sequence"],
-                n_tag=n_tag_val,
-                c_tag=c_tag_val,
-                linker=linker,
-            )
-            constructs.append(
-                {
-                    "variant_id": "parent",
-                    "aa_construct": construct["aa_construct"],
-                    "dna_construct": construct["dna_construct"],
-                    "schematic": construct["schematic"],
-                    "gc_content": opt["gc_content"],
-                    "cai": opt["cai"],
-                }
-            )
-            if opt.get("warnings"):
-                for w in opt["warnings"]:
-                    st.warning(w)
-            if opt.get("flagged_sites"):
-                for f in opt["flagged_sites"]:
-                    st.warning(f"Flagged site: {f}")
+            _rows = [("parent", vhh.sequence)]
 
-        st.session_state["constructs"] = constructs
-        st.success(f"Built {len(constructs)} construct(s).")
+        _is_library = source_df is not None and not source_df.empty
+
+        def _construct_build_work():
+            constructs_out: list[dict] = []
+            total = len(_rows)
+            for idx, (vid, aa_seq) in enumerate(_rows):
+                opt = optimizer.optimize(aa_seq, host=host, strategy=codon_strat, **opt_kwargs)
+                construct = tag_manager.build_construct(
+                    aa_seq,
+                    opt["dna_sequence"],
+                    n_tag=n_tag_val,
+                    c_tag=c_tag_val,
+                    linker=linker,
+                )
+                constructs_out.append(
+                    {
+                        "variant_id": vid,
+                        "aa_construct": construct["aa_construct"],
+                        "dna_construct": construct["dna_construct"],
+                        "schematic": construct["schematic"],
+                        "gc_content": opt["gc_content"],
+                        "cai": opt["cai"],
+                    }
+                )
+                set_progress(
+                    "construct_build",
+                    (idx + 1) / total,
+                    f"Building construct {idx + 1}/{total}…",
+                )
+            return constructs_out
+
+        submit_task("construct_build", _construct_build_work)
+
+    # Poll / display result for construct building
+    construct_result = render_task_status(
+        "construct_build", success_message=""
+    )
+    if construct_result is not None:
+        st.session_state["constructs"] = construct_result
+        reset_task("construct_build")
+        st.success(f"Built {len(construct_result)} construct(s).")
 
     constructs = st.session_state.get("constructs", [])
     if constructs:
@@ -1838,7 +1879,10 @@ def tab_validation(stability_scorer):
 
     cv_folds = st.slider("Cross-validation folds", min_value=2, max_value=10, value=5, key="bench_cv_folds")
 
-    if st.button("Run benchmark on reference VHHs", key="btn_run_benchmark"):
+    _bench_running = is_task_running("benchmark")
+    if st.button(
+        "Run benchmark on reference VHHs", key="btn_run_benchmark", disabled=_bench_running
+    ):
         try:
             benchmark_vhhs = load_benchmark_dataset()
         except Exception as exc:
@@ -1849,51 +1893,65 @@ def tab_validation(stability_scorer):
         exp_tms = [float(v["experimental_tm"]) for v in benchmark_vhhs]
         names = [v["name"] for v in benchmark_vhhs]
 
-        # Compute scores for each benchmark VHH
-        progress = st.progress(0, text="Scoring benchmark VHHs…")
-        composite_scores = []
-        predicted_tms = []
-        esm_plls = []
-        scoring_results: dict[str, list[float]] = {}
+        def _benchmark_work():
+            composite_scores: list[float] = []
+            predicted_tms: list[float] = []
+            esm_plls: list[float] = []
+            scoring_results: dict[str, list[float]] = {}
 
-        for i, seq in enumerate(seqs):
-            progress.progress((i + 1) / len(seqs), text=f"Scoring {names[i]}…")
-            try:
-                vhh = VHHSequence(seq)
-                result = stability_scorer.score(vhh)
-                composite_scores.append(result.get("composite_score", float("nan")))
-                if "predicted_tm" in result:
-                    predicted_tms.append(result["predicted_tm"])
-                if "esm2_pll" in result:
-                    esm_plls.append(result["esm2_pll"])
-            except Exception:
-                composite_scores.append(float("nan"))
+            for i, seq in enumerate(seqs):
+                set_progress(
+                    "benchmark",
+                    (i + 1) / len(seqs),
+                    f"Scoring {names[i]}…",
+                )
+                try:
+                    vhh_tmp = VHHSequence(seq)
+                    result = stability_scorer.score(vhh_tmp)
+                    composite_scores.append(result.get("composite_score", float("nan")))
+                    if "predicted_tm" in result:
+                        predicted_tms.append(result["predicted_tm"])
+                    if "esm2_pll" in result:
+                        esm_plls.append(result["esm2_pll"])
+                except Exception:
+                    composite_scores.append(float("nan"))
 
-        progress.progress(1.0, text="Done!")
+            scoring_results["Composite Score"] = composite_scores
+            if len(predicted_tms) == len(seqs):
+                scoring_results["Predicted Tm"] = predicted_tms
+            if len(esm_plls) == len(seqs):
+                scoring_results["ESM-2 PLL"] = esm_plls
 
-        scoring_results["Composite Score"] = composite_scores
-        if len(predicted_tms) == len(seqs):
-            scoring_results["Predicted Tm"] = predicted_tms
-        if len(esm_plls) == len(seqs):
-            scoring_results["ESM-2 PLL"] = esm_plls
+            per_residue_plls = None
+            if len(esm_plls) == len(seqs):
+                per_residue_plls = [pll / max(len(seq), 1) for pll, seq in zip(esm_plls, seqs)]
 
-        # Compute per-residue PLLs from ESM data if available
-        per_residue_plls = None
-        if len(esm_plls) == len(seqs):
-            per_residue_plls = [pll / max(len(seq), 1) for pll, seq in zip(esm_plls, seqs)]
+            report = run_benchmark(
+                benchmark_vhhs=benchmark_vhhs,
+                per_residue_plls=per_residue_plls,
+                composite_scores=composite_scores,
+                cv_folds=cv_folds,
+            )
 
-        report = run_benchmark(
-            benchmark_vhhs=benchmark_vhhs,
-            per_residue_plls=per_residue_plls,
-            composite_scores=composite_scores,
-            cv_folds=cv_folds,
-        )
+            return {
+                "report": report,
+                "scoring_results": scoring_results,
+                "exp_tms": exp_tms,
+                "composite_scores": composite_scores,
+                "predicted_tms": predicted_tms,
+            }
 
-        st.session_state["benchmark_report"] = report
-        st.session_state["benchmark_scoring_results"] = scoring_results
-        st.session_state["benchmark_exp_tms"] = exp_tms
-        st.session_state["benchmark_composite_scores"] = composite_scores
-        st.session_state["benchmark_predicted_tms"] = predicted_tms
+        submit_task("benchmark", _benchmark_work)
+
+    # Poll / display result for benchmark
+    bench_result = render_task_status("benchmark", success_message="")
+    if bench_result is not None:
+        st.session_state["benchmark_report"] = bench_result["report"]
+        st.session_state["benchmark_scoring_results"] = bench_result["scoring_results"]
+        st.session_state["benchmark_exp_tms"] = bench_result["exp_tms"]
+        st.session_state["benchmark_composite_scores"] = bench_result["composite_scores"]
+        st.session_state["benchmark_predicted_tms"] = bench_result["predicted_tms"]
+        reset_task("benchmark")
 
     # Display results if available
     report = st.session_state.get("benchmark_report")
