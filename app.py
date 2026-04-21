@@ -917,7 +917,6 @@ def tab_mutations(stability_scorer):
         imgt_numbered=vhh.imgt_numbered,
         frozen_positions=frozen_positions,
         conservative_positions=conservative_positions,
-        forbidden_substitutions=position_forbidden if position_forbidden else None,
         key="seq_selector",
     )
     # The selector returns the authoritative classes when the user interacts.
@@ -944,7 +943,8 @@ def tab_mutations(stability_scorer):
             "Positions are classified as **frozen** (no mutation), "
             "**conservative** (restricted AAs), or **mutable** (any AA). "
             "Toggle classes in the interactive selector above. "
-            "The forbidden-substitutions CSV overrides all other settings."
+            "The forbidden-substitutions CSV further restricts allowed AAs "
+            "for non-frozen positions without changing their selector class."
         )
 
         # Build the policy from the selector's authoritative state.
@@ -966,12 +966,26 @@ def tab_mutations(stability_scorer):
             else:
                 policy.make_mutable([pos_key])
 
-        # The forbidden-substitutions CSV is the ultimate arbiter —
-        # its restrictions override any interactive selector state.
-        # Applied last so CSV always wins.
+        # The forbidden-substitutions CSV further restricts allowed AAs
+        # for non-frozen positions.  It respects the user's interactive
+        # selector choices: frozen positions stay frozen, conservative
+        # positions have their allowed set narrowed, and mutable positions
+        # become conservative only if the CSV removes some AAs.
+        # The original (wild-type) AA is also excluded from the allowed
+        # set since mutating to the same residue is not meaningful.
         if position_forbidden:
             for pos_key, forbidden_set in position_forbidden.items():
-                allowed = _ALL_AAS - frozenset(forbidden_set)
+                existing = policy.get(pos_key)
+                # Frozen positions from the selector stay frozen.
+                if existing is not None and existing.is_frozen:
+                    continue
+                wt_aa = vhh.imgt_numbered.get(pos_key, "")
+                if existing is not None and existing.is_conservative and existing.allowed_aas:
+                    # Narrow the existing conservative set.
+                    allowed = existing.allowed_aas - frozenset(forbidden_set) - frozenset({wt_aa})
+                else:
+                    # Mutable position: restrict from ALL_AAS.
+                    allowed = _ALL_AAS - frozenset(forbidden_set) - frozenset({wt_aa})
                 if allowed:
                     policy.restrict(pos_key, allowed)
                 else:
