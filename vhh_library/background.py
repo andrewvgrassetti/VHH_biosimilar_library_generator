@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import Any, Callable
 
 import streamlit as st
@@ -175,19 +174,32 @@ def render_task_status(
 
     Call this in your Streamlit page function.  It will:
 
-    * Show a progress bar + status text while the task is running, then
-      ``time.sleep(poll_interval); st.rerun()`` to keep the UI refreshing.
+    * Show a progress bar + status text while the task is running via an
+      ``@st.fragment(run_every=poll_interval)`` that reruns only the
+      progress UI — **not** the entire app script.
+    * Trigger a full app rerun (``st.rerun(scope="app")``) once the task
+      finishes so that calling code can pick up the result.
     * Show a success message (or error) when the task finishes.
     * Return the task result when status is ``done``, or ``None`` otherwise.
     """
     status = get_task_status(name)
 
     if status == STATUS_RUNNING:
-        frac, text = get_task_progress(name)
-        if show_progress:
-            st.progress(min(frac, 1.0), text=text or "Working…")
-        time.sleep(poll_interval)
-        st.rerun()
+
+        @st.fragment(run_every=poll_interval)
+        def _poll_fragment() -> None:
+            current = get_task_status(name)
+            if current == STATUS_RUNNING:
+                frac, text = get_task_progress(name)
+                if show_progress:
+                    st.progress(min(frac, 1.0), text=text or "Working…")
+            else:
+                # Task completed or errored — trigger a full app rerun so
+                # the caller picks up the result on the next execution.
+                st.rerun(scope="app")
+
+        _poll_fragment()
+        return None
 
     if status == STATUS_DONE:
         result = get_task_result(name)

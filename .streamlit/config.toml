@@ -6,3 +6,6 @@
 [server]
 maxMessageSize = 500
 enableWebsocketCompression = false
+
+[runner]
+fastReruns = true
