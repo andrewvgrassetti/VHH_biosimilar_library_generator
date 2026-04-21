@@ -1,4 +1,4 @@
-# Defence-in-depth: generous server timeouts to prevent WebSocket drops
+# Defense-in-depth: generous server timeouts to prevent WebSocket drops
 # during long-running background tasks.  The background worker pattern in
 # vhh_library/background.py is the primary mitigation; these settings are
 # a safety net.

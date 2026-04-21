@@ -76,7 +76,7 @@ def submit_task(
     # Streamlit's runtime.  We grab the underlying dict-like object once here.
     state = st.session_state
 
-    def _worker() -> None:  # noqa: ANN202
+    def _worker() -> None:
         try:
             result = func(*args, **kwargs)
             state[_key(name, "result")] = result
