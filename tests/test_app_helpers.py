@@ -6,6 +6,7 @@ They validate:
 - DesignPolicy round-trip serialisation (JSON)
 - PositionClassifier → DesignPolicy integration
 - Policy import/export contract
+- Three-state interactive selector ↔ policy synchronisation
 """
 
 from __future__ import annotations
