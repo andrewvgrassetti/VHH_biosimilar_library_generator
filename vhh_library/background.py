@@ -297,13 +297,21 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     """
     state = st.session_state
 
-    # Phases reported during non-iterative strategies (exhaustive / random).
+    # Phases reported during non-iterative strategies (exhaustive / random)
+    # and sub-step phases reported from within _batch_fill_* methods.
     _simple_phases = frozenset(
         {
             "generating_variants",
             "scoring_stability",
             "scoring_nativeness",
             "esm2_scoring",
+            "scoring_stability_start",
+            "scoring_stability_done",
+            "scoring_nativeness_start",
+            "scoring_nativeness_progress",
+            "scoring_nativeness_done",
+            "esm2_scoring_stage1",
+            "esm2_scoring_stage2",
         }
     )
 
