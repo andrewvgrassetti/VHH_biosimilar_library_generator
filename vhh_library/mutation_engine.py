@@ -1259,7 +1259,7 @@ class MutationEngine:
             # only reads vhh.sequence via _cached_score(vhh.sequence).
             _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
             nat_scores = []
-            _progress_interval = max(n_seqs // 10, 100)
+            _progress_interval = max(n_seqs // 10, 1)
             for i, seq in enumerate(sequences):
                 dummy = object.__new__(VHHSequence)
                 dummy.sequence = seq

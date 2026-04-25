@@ -1848,7 +1848,7 @@ class TestBatchProgressCallbacks:
         assert result[0]["nativeness_score"] != 0.0
 
     def test_batch_fill_nativeness_fallback_fires_progress(self) -> None:
-        """Fallback (no score_batch) path should fire progress at intervals."""
+        """Fallback (no score_batch) path should fire start/done and intermediate progress."""
 
         class _NoScoreBatchScorer:
             """Mock scorer that lacks score_batch, triggering the fallback path."""
@@ -1869,6 +1869,8 @@ class TestBatchProgressCallbacks:
             nativeness_scorer=_NoScoreBatchScorer(),
         )
 
+        # Use 15 rows so that with _progress_interval = max(15 // 10, 1) = 1,
+        # intermediate progress events fire on every sequence.
         rows = [
             {
                 "aa_sequence": f"QVQLVESGGGLVQ{chr(65 + (i % 26))}",
@@ -1878,7 +1880,7 @@ class TestBatchProgressCallbacks:
                 "orthogonal_stability_score": 0.5,
                 "combined_score": 0.0,
             }
-            for i in range(5)
+            for i in range(15)
         ]
 
         engine._batch_fill_nativeness(rows, progress_callback=_on_progress)
@@ -1886,6 +1888,9 @@ class TestBatchProgressCallbacks:
         phases = [p.phase for p in progress_events]
         assert "scoring_nativeness_start" in phases
         assert "scoring_nativeness_done" in phases
+        # With interval=1, intermediate progress events should fire.
+        progress_phases = [p for p in phases if p == "scoring_nativeness_progress"]
+        assert len(progress_phases) >= 1, f"Expected at least 1 intermediate progress event, got {len(progress_phases)}"
 
     def test_batch_fill_stability_fires_progress_with_esm(self) -> None:
         """_batch_fill_stability should fire start/done callbacks with ESM backend."""
