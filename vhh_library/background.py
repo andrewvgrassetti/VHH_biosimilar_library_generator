@@ -30,9 +30,12 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import streamlit as st
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -294,14 +297,29 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     """
     state = st.session_state
 
+    # Phases reported during non-iterative strategies (exhaustive / random).
+    _simple_phases = frozenset(
+        {
+            "generating_variants",
+            "scoring_stability",
+            "scoring_nativeness",
+            "esm2_scoring",
+        }
+    )
+
     def _callback(prog: Any) -> None:
         frac = prog.round_number / max(prog.total_rounds, 1)
         state[_key(task_name, "progress")] = min(frac, 1.0)
-        state[_key(task_name, "progress_text")] = (
-            f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds} | "
-            f"🧬 {prog.population_size} variants | Best: {prog.best_score:.4f} | "
-            f"Anchors: {prog.n_anchors} | Diversity: {prog.diversity_entropy:.2f}"
-        )
+
+        if prog.phase in _simple_phases:
+            # Show the human-readable message for non-iterative phases.
+            state[_key(task_name, "progress_text")] = prog.message or f"Step {prog.round_number}/{prog.total_rounds}"
+        else:
+            state[_key(task_name, "progress_text")] = (
+                f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds} | "
+                f"🧬 {prog.population_size} variants | Best: {prog.best_score:.4f} | "
+                f"Anchors: {prog.n_anchors} | Diversity: {prog.diversity_entropy:.2f}"
+            )
 
     return _callback
 
@@ -368,3 +386,63 @@ def render_task_status(
 
     # STATUS_IDLE — nothing to show
     return None
+
+
+# ---------------------------------------------------------------------------
+# Disk-based result persistence
+# ---------------------------------------------------------------------------
+
+
+def save_result_to_disk(
+    run_id: str,
+    df: pd.DataFrame,
+    checkpoint_root: Path | None = None,
+) -> Path | None:
+    """Save *df* to a Parquet file on disk for crash recovery.
+
+    Parameters
+    ----------
+    run_id:
+        Run identifier (from :func:`vhh_library.checkpoint.compute_run_id`).
+    df:
+        Final library DataFrame to persist.
+    checkpoint_root:
+        Base directory for checkpoint / result files.  When ``None``,
+        ``tempfile.gettempdir()`` is used.
+
+    Returns
+    -------
+    Path to the written file, or ``None`` if saving failed.
+    """
+    from vhh_library.checkpoint import save_result
+
+    if checkpoint_root is None:
+        import tempfile
+
+        checkpoint_root = Path(tempfile.gettempdir())
+    try:
+        return save_result(checkpoint_root, run_id, df)
+    except Exception:
+        logger.warning("Failed to save result to disk", exc_info=True)
+        return None
+
+
+def load_result_from_disk(
+    run_id: str,
+    checkpoint_root: Path | None = None,
+) -> pd.DataFrame | None:
+    """Load a previously saved library DataFrame from disk.
+
+    Returns ``None`` if no result file exists or loading fails.
+    """
+    from vhh_library.checkpoint import load_result
+
+    if checkpoint_root is None:
+        import tempfile
+
+        checkpoint_root = Path(tempfile.gettempdir())
+    try:
+        return load_result(checkpoint_root, run_id)
+    except Exception:
+        logger.warning("Failed to load result from disk", exc_info=True)
+        return None
