@@ -338,15 +338,19 @@ def _recover_background_tasks() -> None:
     """
     for task_name, state_key in _RECOVERABLE_TASKS.items():
         # Skip if the session already has a result for this task.
+        # DataFrames expose .empty; other types (lists, dicts) do not.
         existing = st.session_state.get(state_key)
-        if existing is not None and (not hasattr(existing, "empty") or not existing.empty):
-            continue
+        if existing is not None:
+            if not hasattr(existing, "empty") or not existing.empty:
+                continue
 
         result = recover_task(task_name)
         if result is not None:
             st.session_state[state_key] = result
             st.session_state["_bg_recovered"] = task_name
             auto_save_session()
+            # Safe to clear the persisted file: the result is now held in
+            # session_state and (best-effort) in the auto-save file.
             reset_task(task_name)
             logger.info("Recovered background task %r result into session key %r.", task_name, state_key)
 

@@ -108,13 +108,16 @@ def _load_persisted(task_name: str) -> dict | None:
     if not path.is_file():
         return None
     try:
-        age = time.time() - path.stat().st_mtime
+        payload = json.loads(path.read_text())
+
+        # Use the timestamp stored in the payload for reliable age tracking,
+        # falling back to file mtime if the field is absent.
+        ts = payload.get("timestamp")
+        age = time.time() - (ts if ts is not None else path.stat().st_mtime)
         if age > _PERSIST_MAX_AGE_SECONDS:
             path.unlink(missing_ok=True)
             logger.info("Removed stale persisted result for task %r (%.0fs old).", task_name, age)
             return None
-
-        payload = json.loads(path.read_text())
 
         # Deserialise DataFrames
         raw_result = payload.get("result")
@@ -180,7 +183,9 @@ def submit_task(
                 state[_key(name, "status")] = STATUS_DONE
             except Exception:
                 logger.warning(
-                    "Could not write result to session_state for task %r (session may have been lost).", name
+                    "Could not write result to session_state for task %r (session may have been lost).",
+                    name,
+                    exc_info=True,
                 )
             # Always persist to disk so the result can be recovered.
             _persist_result(name, status=STATUS_DONE, result=result)
@@ -190,7 +195,7 @@ def submit_task(
                 state[_key(name, "error")] = error_msg
                 state[_key(name, "status")] = STATUS_ERROR
             except Exception:
-                logger.warning("Could not write error to session_state for task %r.", name)
+                logger.warning("Could not write error to session_state for task %r.", name, exc_info=True)
             _persist_result(name, status=STATUS_ERROR, error=error_msg)
             logger.exception("Background task %r failed", name)
 

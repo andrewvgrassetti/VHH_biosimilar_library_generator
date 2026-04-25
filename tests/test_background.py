@@ -499,15 +499,22 @@ class TestRecoverTask:
         assert result is None
 
     def test_recover_ignores_stale_file(self, _mock_session_state):
-        import os
+        from vhh_library.background import (
+            _TASK_PERSIST_DIR,
+            _persist_path,
+            recover_task,
+        )
 
-        from vhh_library.background import _persist_path, _persist_result, recover_task
-
-        _persist_result("stale_rec", status="done", result="old-data")
+        # Write a persisted result with an old timestamp (2 hours ago)
+        _TASK_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
         path = _persist_path("stale_rec")
-        # Backdate the file by 2 hours (beyond the 1-hour max age)
-        old_time = time.time() - 7200
-        os.utime(path, (old_time, old_time))
+        payload = {
+            "status": "done",
+            "result": "old-data",
+            "error": None,
+            "timestamp": time.time() - 7200,
+        }
+        path.write_text(json.dumps(payload))
 
         result = recover_task("stale_rec")
         assert result is None
