@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
 
 import streamlit as st
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -229,3 +233,63 @@ def render_task_status(
 
     # STATUS_IDLE — nothing to show
     return None
+
+
+# ---------------------------------------------------------------------------
+# Disk-based result persistence
+# ---------------------------------------------------------------------------
+
+
+def save_result_to_disk(
+    run_id: str,
+    df: pd.DataFrame,
+    checkpoint_root: Path | None = None,
+) -> Path | None:
+    """Save *df* to a Parquet file on disk for crash recovery.
+
+    Parameters
+    ----------
+    run_id:
+        Run identifier (from :func:`vhh_library.checkpoint.compute_run_id`).
+    df:
+        Final library DataFrame to persist.
+    checkpoint_root:
+        Base directory for checkpoint / result files.  When ``None``,
+        ``tempfile.gettempdir()`` is used.
+
+    Returns
+    -------
+    Path to the written file, or ``None`` if saving failed.
+    """
+    from vhh_library.checkpoint import save_result
+
+    if checkpoint_root is None:
+        import tempfile
+
+        checkpoint_root = Path(tempfile.gettempdir())
+    try:
+        return save_result(checkpoint_root, run_id, df)
+    except Exception:
+        logger.warning("Failed to save result to disk", exc_info=True)
+        return None
+
+
+def load_result_from_disk(
+    run_id: str,
+    checkpoint_root: Path | None = None,
+) -> pd.DataFrame | None:
+    """Load a previously saved library DataFrame from disk.
+
+    Returns ``None`` if no result file exists or loading fails.
+    """
+    from vhh_library.checkpoint import load_result
+
+    if checkpoint_root is None:
+        import tempfile
+
+        checkpoint_root = Path(tempfile.gettempdir())
+    try:
+        return load_result(checkpoint_root, run_id)
+    except Exception:
+        logger.warning("Failed to load result from disk", exc_info=True)
+        return None
