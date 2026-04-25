@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from unittest.mock import MagicMock
@@ -35,6 +36,20 @@ def _mock_session_state(monkeypatch):
     # Expose mock_st on the dict so tests can inspect calls
     state["__mock_st__"] = mock_st
     return state
+
+
+@pytest.fixture(autouse=True)
+def _clean_persist_dir():
+    """Remove persisted task files before and after each test."""
+    import shutil
+
+    from vhh_library.background import _TASK_PERSIST_DIR
+
+    if _TASK_PERSIST_DIR.is_dir():
+        shutil.rmtree(_TASK_PERSIST_DIR)
+    yield
+    if _TASK_PERSIST_DIR.is_dir():
+        shutil.rmtree(_TASK_PERSIST_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -348,3 +363,197 @@ class TestRenderTaskStatus:
 
         assert len(captured_kwargs) == 1
         assert captured_kwargs[0]["run_every"] == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Disk persistence tests
+# ---------------------------------------------------------------------------
+
+
+class TestDiskPersistence:
+    """Verify that background tasks persist results to disk."""
+
+    def test_successful_task_persists_to_disk(self, _mock_session_state):
+        from vhh_library.background import _persist_path, submit_task
+
+        def work():
+            return {"answer": 42}
+
+        submit_task("persist_ok", work)
+        time.sleep(0.5)
+
+        path = _persist_path("persist_ok")
+        assert path.is_file()
+        payload = json.loads(path.read_text())
+        assert payload["status"] == "done"
+        assert payload["result"] == {"answer": 42}
+        assert "timestamp" in payload
+
+    def test_failed_task_persists_error_to_disk(self, _mock_session_state):
+        from vhh_library.background import _persist_path, submit_task
+
+        def failing():
+            raise RuntimeError("disk-test-error")
+
+        submit_task("persist_err", failing)
+        time.sleep(0.5)
+
+        path = _persist_path("persist_err")
+        assert path.is_file()
+        payload = json.loads(path.read_text())
+        assert payload["status"] == "error"
+        assert "disk-test-error" in payload["error"]
+
+    def test_dataframe_result_persists_and_round_trips(self, _mock_session_state):
+        import pandas as pd
+
+        from vhh_library.background import _load_persisted, _persist_path, submit_task
+
+        def work():
+            return pd.DataFrame({"variant_id": ["V1", "V2"], "score": [0.8, 0.9]})
+
+        submit_task("persist_df", work)
+        time.sleep(0.5)
+
+        path = _persist_path("persist_df")
+        assert path.is_file()
+
+        # Raw JSON should have the DataFrame type tag
+        raw = json.loads(path.read_text())
+        assert raw["result"]["__type__"] == "DataFrame"
+
+        # _load_persisted should deserialise it back to a DataFrame
+        payload = _load_persisted("persist_df")
+        assert payload is not None
+        assert isinstance(payload["result"], pd.DataFrame)
+        assert list(payload["result"]["variant_id"]) == ["V1", "V2"]
+
+    def test_reset_task_clears_persisted_file(self, _mock_session_state):
+        from vhh_library.background import _persist_path, _persist_result, reset_task
+
+        _persist_result("reset_me", status="done", result="data")
+        assert _persist_path("reset_me").is_file()
+
+        reset_task("reset_me")
+        assert not _persist_path("reset_me").is_file()
+
+    def test_submit_clears_stale_persisted_file(self, _mock_session_state):
+        from vhh_library.background import _persist_path, _persist_result, submit_task
+
+        # Pre-populate a stale file
+        _persist_result("stale_test", status="done", result="old-data")
+        assert _persist_path("stale_test").is_file()
+
+        event = threading.Event()
+
+        def slow():
+            event.wait(timeout=2)
+            return "new"
+
+        submit_task("stale_test", slow)
+        # The old file should have been cleared at submission time
+        assert not _persist_path("stale_test").is_file()
+
+        event.set()
+        time.sleep(0.3)
+
+
+class TestRecoverTask:
+    """Verify that recover_task restores results into session state."""
+
+    def test_recover_done_task(self, _mock_session_state):
+        from vhh_library.background import (
+            STATUS_DONE,
+            _key,
+            _persist_result,
+            recover_task,
+        )
+
+        _persist_result("rec_done", status="done", result={"answer": 42})
+
+        result = recover_task("rec_done")
+        assert result == {"answer": 42}
+        assert _mock_session_state[_key("rec_done", "status")] == STATUS_DONE
+        assert _mock_session_state[_key("rec_done", "result")] == {"answer": 42}
+        assert _mock_session_state[_key("rec_done", "progress")] == 1.0
+
+    def test_recover_error_task(self, _mock_session_state):
+        from vhh_library.background import (
+            STATUS_ERROR,
+            _key,
+            _persist_result,
+            recover_task,
+        )
+
+        _persist_result("rec_err", status="error", error="something broke")
+
+        result = recover_task("rec_err")
+        assert result is None
+        assert _mock_session_state[_key("rec_err", "status")] == STATUS_ERROR
+        assert "something broke" in _mock_session_state[_key("rec_err", "error")]
+
+    def test_recover_returns_none_when_no_file(self, _mock_session_state):
+        from vhh_library.background import recover_task
+
+        result = recover_task("nonexistent_task")
+        assert result is None
+
+    def test_recover_ignores_stale_file(self, _mock_session_state):
+        import os
+
+        from vhh_library.background import _persist_path, _persist_result, recover_task
+
+        _persist_result("stale_rec", status="done", result="old-data")
+        path = _persist_path("stale_rec")
+        # Backdate the file by 2 hours (beyond the 1-hour max age)
+        old_time = time.time() - 7200
+        os.utime(path, (old_time, old_time))
+
+        result = recover_task("stale_rec")
+        assert result is None
+        # The stale file should have been cleaned up
+        assert not path.is_file()
+
+    def test_recover_dataframe_result(self, _mock_session_state):
+        import pandas as pd
+
+        from vhh_library.background import _persist_result, recover_task
+
+        df = pd.DataFrame({"x": [1, 2, 3]})
+        _persist_result("rec_df", status="done", result=df)
+
+        result = recover_task("rec_df")
+        assert isinstance(result, pd.DataFrame)
+        assert list(result["x"]) == [1, 2, 3]
+
+
+class TestSessionStateLossRecovery:
+    """End-to-end test: task completes after session state is replaced."""
+
+    def test_task_result_survives_session_loss(self, _mock_session_state):
+        """Simulate a task completing after the session state dict is replaced."""
+        from vhh_library.background import (
+            STATUS_DONE,
+            _key,
+            recover_task,
+            submit_task,
+        )
+
+        def work():
+            return "computed-result"
+
+        submit_task("survive", work)
+        time.sleep(0.5)
+
+        # Simulate session loss: clear the dict (as Streamlit would on reconnect)
+        keys_to_remove = [k for k in _mock_session_state if k != "__mock_st__"]
+        for k in keys_to_remove:
+            del _mock_session_state[k]
+
+        # Session state no longer has the result
+        assert _mock_session_state.get(_key("survive", "result")) is None
+
+        # But recovery from disk should restore it
+        result = recover_task("survive")
+        assert result == "computed-result"
+        assert _mock_session_state[_key("survive", "status")] == STATUS_DONE

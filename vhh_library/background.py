@@ -12,12 +12,24 @@ the current Streamlit architecture (single Python process, GIL-protected dict
 operations).  This module relies on that assumption.  If Streamlit ever moves
 to multi-process sessions the approach will need a ``threading.Lock`` or a
 shared-memory store.
+
+Disk persistence
+----------------
+When a background task completes, its result (and status) are persisted to a
+temporary file on disk.  This allows recovery after WebSocket disconnects
+caused by e.g. laptop sleep/wake cycles.  On the next session init, the app
+can call :func:`recover_task` to check for an orphaned result and restore it
+into the fresh ``session_state``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import tempfile
 import threading
+import time
+from pathlib import Path
 from typing import Any, Callable
 
 import streamlit as st
@@ -40,6 +52,87 @@ STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_DONE = "done"
 STATUS_ERROR = "error"
+
+
+# ---------------------------------------------------------------------------
+# Disk persistence helpers
+# ---------------------------------------------------------------------------
+
+_TASK_PERSIST_DIR = Path(tempfile.gettempdir()) / "vhh_bg_tasks"
+
+# How long persisted results stay valid (1 hour).
+_PERSIST_MAX_AGE_SECONDS = 3600
+
+
+def _persist_path(task_name: str) -> Path:
+    """Return the on-disk path for a persisted task result."""
+    return _TASK_PERSIST_DIR / f"{task_name}.json"
+
+
+def _persist_result(task_name: str, *, status: str, result: Any = None, error: str | None = None) -> None:
+    """Write a completed task's outcome to disk so it survives session loss.
+
+    The serialisation format mirrors the auto-save helpers in ``app.py``:
+    DataFrames are stored as ``{"__type__": "DataFrame", "records": [...]}``,
+    and all other values pass through ``json.dumps`` directly.
+    """
+    import pandas as pd
+
+    def _serialize(obj: Any) -> Any:
+        if obj is None:
+            return None
+        if isinstance(obj, pd.DataFrame):
+            return {"__type__": "DataFrame", "records": obj.to_dict(orient="records")}
+        # Lists of dicts (e.g. construct results) are already JSON-friendly.
+        return obj
+
+    payload = {
+        "status": status,
+        "result": _serialize(result),
+        "error": error,
+        "timestamp": time.time(),
+    }
+    try:
+        _TASK_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
+        _persist_path(task_name).write_text(json.dumps(payload))
+        logger.info("Persisted result for background task %r to disk.", task_name)
+    except Exception:
+        logger.warning("Failed to persist background task %r result to disk.", task_name, exc_info=True)
+
+
+def _load_persisted(task_name: str) -> dict | None:
+    """Load a persisted task result from disk, or ``None`` if unavailable/stale."""
+    import pandas as pd
+
+    path = _persist_path(task_name)
+    if not path.is_file():
+        return None
+    try:
+        age = time.time() - path.stat().st_mtime
+        if age > _PERSIST_MAX_AGE_SECONDS:
+            path.unlink(missing_ok=True)
+            logger.info("Removed stale persisted result for task %r (%.0fs old).", task_name, age)
+            return None
+
+        payload = json.loads(path.read_text())
+
+        # Deserialise DataFrames
+        raw_result = payload.get("result")
+        if isinstance(raw_result, dict) and raw_result.get("__type__") == "DataFrame":
+            payload["result"] = pd.DataFrame(raw_result.get("records", []))
+
+        return payload
+    except Exception:
+        logger.warning("Failed to load persisted result for task %r.", task_name, exc_info=True)
+        return None
+
+
+def _clear_persisted(task_name: str) -> None:
+    """Remove the on-disk persisted result for *task_name*."""
+    try:
+        _persist_path(task_name).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +163,9 @@ def submit_task(
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
 
+    # Clear any stale persisted result from a previous run.
+    _clear_persisted(name)
+
     # Capture the session_state reference so the background thread can write to
     # the *same* dict even though ``st.session_state`` is thread-local in
     # Streamlit's runtime.  We grab the underlying dict-like object once here.
@@ -78,11 +174,24 @@ def submit_task(
     def _worker() -> None:
         try:
             result = func(*args, **kwargs)
-            state[_key(name, "result")] = result
-            state[_key(name, "status")] = STATUS_DONE
+            # Write to session_state (may be a dead dict if session was lost).
+            try:
+                state[_key(name, "result")] = result
+                state[_key(name, "status")] = STATUS_DONE
+            except Exception:
+                logger.warning(
+                    "Could not write result to session_state for task %r (session may have been lost).", name
+                )
+            # Always persist to disk so the result can be recovered.
+            _persist_result(name, status=STATUS_DONE, result=result)
         except Exception as exc:
-            state[_key(name, "error")] = str(exc)
-            state[_key(name, "status")] = STATUS_ERROR
+            error_msg = str(exc)
+            try:
+                state[_key(name, "error")] = error_msg
+                state[_key(name, "status")] = STATUS_ERROR
+            except Exception:
+                logger.warning("Could not write error to session_state for task %r.", name)
+            _persist_result(name, status=STATUS_ERROR, error=error_msg)
             logger.exception("Background task %r failed", name)
 
     thread = threading.Thread(target=_worker, daemon=True, name=f"bg-{name}")
@@ -119,6 +228,46 @@ def reset_task(name: str) -> None:
     st.session_state[_key(name, "progress_text")] = ""
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
+    _clear_persisted(name)
+
+
+def recover_task(name: str) -> Any | None:
+    """Attempt to recover a completed background-task result from disk.
+
+    If a persisted result file exists for *name* and is not stale, restore it
+    into ``session_state`` and return the result (or the error string for failed
+    tasks).  Returns ``None`` when there is nothing to recover.
+
+    This should be called during session initialisation so that results
+    produced while the WebSocket was disconnected (e.g. laptop sleep) are
+    not lost.
+    """
+    payload = _load_persisted(name)
+    if payload is None:
+        return None
+
+    persisted_status = payload.get("status")
+    if persisted_status == STATUS_DONE:
+        result = payload.get("result")
+        st.session_state[_key(name, "status")] = STATUS_DONE
+        st.session_state[_key(name, "result")] = result
+        st.session_state[_key(name, "progress")] = 1.0
+        st.session_state[_key(name, "progress_text")] = ""
+        st.session_state[_key(name, "error")] = None
+        logger.info("Recovered completed result for background task %r from disk.", name)
+        return result
+
+    if persisted_status == STATUS_ERROR:
+        error = payload.get("error", "Unknown error")
+        st.session_state[_key(name, "status")] = STATUS_ERROR
+        st.session_state[_key(name, "error")] = error
+        st.session_state[_key(name, "result")] = None
+        st.session_state[_key(name, "progress")] = 0.0
+        st.session_state[_key(name, "progress_text")] = ""
+        logger.info("Recovered error for background task %r from disk.", name)
+        return None
+
+    return None
 
 
 def is_task_running(name: str) -> bool:
