@@ -621,9 +621,9 @@ class TestEvolutionaryIterativeStrategy:
         )
 
         anchor_events = [p for p in progress_events if p.phase == "anchor_identification"]
-        # With max_rounds=8: n_anchor_id = max(1, 8//7) = 1
-        # But even with 1 round, anchor_identification should appear at least
-        # twice: once per sampling round + once after anchor selection.
+        # The iterative strategy allocates n_anchor_id = max(1, max_rounds // 7)
+        # rounds for Phase 2.  With max_rounds=8 that yields 1 sampling round
+        # plus 1 report after anchor selection ⇒ at least 1 event.
         assert len(anchor_events) >= 1, "anchor_identification phase should be reported"
         # Each anchor event should have an increasing round_number
         rounds = [p.round_number for p in anchor_events]

@@ -1075,7 +1075,10 @@ class MutationEngine:
         if not df.empty:
             df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
 
-        # ESM-2 progressive scoring (when scorer is available)
+        # ESM-2 progressive scoring (when scorer is available).
+        # Reported as a single-step phase (step 1 of 1) because the
+        # deprecated score_library_progressive runs as one atomic block
+        # after all strategy-specific rounds have completed.
         if self._esm_scorer is not None and not df.empty:
             _report_progress(
                 "esm2_scoring",
