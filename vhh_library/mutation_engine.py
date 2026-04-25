@@ -1077,14 +1077,13 @@ class MutationEngine:
 
         # ESM-2 progressive scoring (when scorer is available)
         if self._esm_scorer is not None and not df.empty:
-            if strategy != "iterative":
-                _report_progress(
-                    "esm2_scoring",
-                    total_steps,
-                    total_steps,
-                    len(df),
-                    message=f"ESM-2 progressive scoring for {len(df):,} variants…",
-                )
+            _report_progress(
+                "esm2_scoring",
+                1,
+                1,
+                len(df),
+                message=f"ESM-2 progressive scoring for {len(df):,} variants…",
+            )
             df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
 
         return df
@@ -1635,6 +1634,10 @@ class MutationEngine:
             )
             new = _esm_score_rows(new)
             _add_rows(new)
+            _report(
+                "anchor_identification",
+                f"Sampling for anchor analysis ({len(all_rows)} variants)",
+            )
 
         # Identify anchor candidates
         anchor_candidates = self._identify_anchors_with_epistasis(all_rows, anchor_threshold)

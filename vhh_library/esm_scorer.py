@@ -384,6 +384,7 @@ class ESMStabilityScorer:
         logger.info("Progressive stage 1: kept %d / %d variants", len(df), len(library_df))
 
         # Stage 2 — ESM-2 delta scoring
+        logger.info("Progressive stage 2: computing ESM-2 delta PLL for %d variants…", len(df))
         parent_seq = parent.sequence
         variants: list[tuple[list[int], list[str]]] = []
         for _, row in df.iterrows():
@@ -398,15 +399,17 @@ class ESMStabilityScorer:
 
         delta_scores = self.score_delta(parent_seq, variants)
         df["esm2_delta_pll"] = delta_scores
+        logger.info("Progressive stage 2: delta PLL scoring complete")
 
         # Also compute full PLL for the stage-2 survivors
         n_stage2 = max(1, int(len(df) * stage2_top_frac))
         df = df.nlargest(n_stage2, "esm2_delta_pll").reset_index(drop=True)
-        logger.info("Progressive stage 2: kept %d variants", len(df))
+        logger.info("Progressive stage 2: computing full PLL for top %d variants…", len(df))
 
         seqs = df["aa_sequence"].tolist()
         pll_scores = self.score_batch(seqs)
         df["esm2_pll"] = pll_scores
+        logger.info("Progressive stage 2: full PLL scoring complete, kept %d variants", len(df))
 
         # Stage 3 (optional) — re-score with larger model
         if stage3 and self._tier != "t33_650M":
