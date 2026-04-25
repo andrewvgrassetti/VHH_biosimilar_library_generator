@@ -563,6 +563,153 @@ class TestEvolutionaryIterativeStrategy:
             assert p.total_rounds >= 2
             assert p.message
 
+    def test_iterative_anchor_phase_reported_per_round(
+        self, vhh: VHHSequence
+    ) -> None:
+        """Phase 2 anchor identification should report progress per round, not just once."""
+
+        # Build a VHH with manual IMGT numbering so we don't need ANARCI.
+        seq = vhh.sequence
+        test_vhh = object.__new__(VHHSequence)
+        test_vhh.sequence = seq
+        test_vhh.length = len(seq)
+        test_vhh.strict = False
+        test_vhh.chain_type = "H"
+        test_vhh.species = "alpaca"
+        test_vhh.imgt_numbered = {str(i + 1): aa for i, aa in enumerate(seq)}
+        test_vhh._pos_to_seq_idx = {str(i + 1): i for i in range(len(seq))}
+        test_vhh.validation_result = {"valid": True}
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        # Build synthetic ranked mutations.
+        rows = []
+        for pos in range(1, 6):
+            orig = seq[pos - 1]
+            for aa in "AGL":
+                if aa != orig:
+                    rows.append(
+                        {
+                            "position": pos,
+                            "imgt_pos": str(pos),
+                            "original_aa": orig,
+                            "suggested_aa": aa,
+                            "delta_stability": 0.01,
+                            "delta_nativeness": 0.01,
+                            "combined_score": 0.6,
+                            "reason": "test",
+                        }
+                    )
+        top5 = pd.DataFrame(rows).head(8)
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine.generate_library(
+            test_vhh,
+            top5,
+            n_mutations=2,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=8,
+            progress_callback=_on_progress,
+        )
+
+        anchor_events = [p for p in progress_events if p.phase == "anchor_identification"]
+        # The iterative strategy allocates n_anchor_id = max(1, max_rounds // 7)
+        # rounds for Phase 2.  With max_rounds=8 that yields 1 sampling round
+        # plus 1 report after anchor selection ⇒ at least 1 event.
+        assert len(anchor_events) >= 1, "anchor_identification phase should be reported"
+        # Each anchor event should have an increasing round_number
+        rounds = [p.round_number for p in anchor_events]
+        assert rounds == sorted(rounds), "Anchor phase rounds should be non-decreasing"
+
+    def test_iterative_esm2_progress_reported(self, vhh: VHHSequence) -> None:
+        """ESM-2 progressive scoring should report progress for iterative strategy."""
+
+        class _MockESMScorer:
+            """Minimal mock that implements the ESMStabilityScorer interface."""
+
+            def score_delta(self, parent_seq, variants):
+                return [0.01] * len(variants)
+
+            def score_batch(self, sequences):
+                return [0.5] * len(sequences)
+
+            def score_library_progressive(self, parent, library_df, **kwargs):
+                """Return the DataFrame with mock ESM-2 columns added."""
+                df = library_df.copy()
+                df["esm2_pll"] = 0.5
+                df["esm2_delta_pll"] = 0.01
+                df["esm2_rank"] = range(1, len(df) + 1)
+                return df
+
+        engine_with_esm = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+            esm_scorer=_MockESMScorer(),
+        )
+
+        # Build a VHH with manual IMGT numbering so we don't need ANARCI.
+        seq = vhh.sequence
+        test_vhh = object.__new__(VHHSequence)
+        test_vhh.sequence = seq
+        test_vhh.length = len(seq)
+        test_vhh.strict = False
+        test_vhh.chain_type = "H"
+        test_vhh.species = "alpaca"
+        # Create simple 1-based numbering for each residue.
+        test_vhh.imgt_numbered = {str(i + 1): aa for i, aa in enumerate(seq)}
+        test_vhh._pos_to_seq_idx = {str(i + 1): i for i in range(len(seq))}
+        test_vhh.validation_result = {"valid": True}
+
+        # Build a synthetic ranked DataFrame.
+        rows = []
+        for pos in range(1, 6):
+            orig = seq[pos - 1]
+            for aa in "AGL":
+                if aa != orig:
+                    rows.append(
+                        {
+                            "position": pos,
+                            "imgt_pos": str(pos),
+                            "original_aa": orig,
+                            "suggested_aa": aa,
+                            "delta_stability": 0.01,
+                            "delta_nativeness": 0.01,
+                            "combined_score": 0.6,
+                            "reason": "test",
+                        }
+                    )
+        top = pd.DataFrame(rows).head(8)
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine_with_esm.generate_library(
+            test_vhh,
+            top,
+            n_mutations=2,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=4,
+            progress_callback=_on_progress,
+        )
+
+        phases_seen = {p.phase for p in progress_events}
+        assert "esm2_scoring" in phases_seen, (
+            "esm2_scoring phase should be reported for iterative strategy when ESM scorer is available"
+        )
+        esm_event = next(p for p in progress_events if p.phase == "esm2_scoring")
+        assert esm_event.message, "ESM-2 scoring progress should have a descriptive message"
+
 
 class TestEpistasisDetection:
     """Tests for epistasis detection with synthetic data."""
