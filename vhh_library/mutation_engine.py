@@ -1775,6 +1775,10 @@ class MutationEngine:
         """Identify anchor mutations with marginal contribution + pairwise epistasis.
 
         Returns a list of :class:`AnchorCandidate` with confidence scores.
+
+        Mutation strings are pre-parsed once and reused across the
+        frequency, marginal-contribution, and epistasis analyses to avoid
+        redundant O(candidates × rows) string splitting.
         """
         if not rows:
             return []
