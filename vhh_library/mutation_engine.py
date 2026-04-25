@@ -9,6 +9,7 @@ import random
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 import pandas as pd
@@ -891,6 +892,7 @@ class MutationEngine:
         max_rounds: int = _DEFAULT_MAX_ROUNDS,
         rescore_top_n: int = _RESCORE_TOP_N_DEFAULT,
         progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
+        checkpoint_dir: Optional[Path] = None,
     ) -> pd.DataFrame:
         if top_mutations.empty:
             return self._empty_library_df()
@@ -949,6 +951,19 @@ class MutationEngine:
             k_max,
             total,
         )
+
+        # Compute checkpoint run_id when checkpointing is enabled.
+        _run_id: str | None = None
+        if checkpoint_dir is not None:
+            from vhh_library.checkpoint import compute_run_id
+
+            _run_id = compute_run_id(
+                vhh_sequence.sequence,
+                n_mutations=n_mutations,
+                max_variants=max_variants,
+                min_mutations=min_mutations,
+                strategy=strategy,
+            )
 
         # Progress helper for non-iterative strategies.  The iterative
         # strategy has its own internal ``_report`` function with richer
@@ -1067,6 +1082,8 @@ class MutationEngine:
                 max_rounds,
                 rescore_top_n=rescore_top_n,
                 progress_callback=progress_callback,
+                checkpoint_dir=checkpoint_dir,
+                run_id=_run_id,
             )
         else:
             raise ValueError(f"Unknown strategy: {strategy!r}")
@@ -1088,6 +1105,13 @@ class MutationEngine:
                 message=f"ESM-2 progressive scoring for {len(df):,} variants…",
             )
             df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
+
+        # Persist final result and clean up intermediate checkpoint.
+        if checkpoint_dir is not None and _run_id is not None:
+            from vhh_library.checkpoint import remove_checkpoint, save_result
+
+            save_result(checkpoint_dir, _run_id, df)
+            remove_checkpoint(checkpoint_dir, _run_id)
 
         return df
 
@@ -1510,6 +1534,8 @@ class MutationEngine:
         *,
         rescore_top_n: int = _RESCORE_TOP_N_DEFAULT,
         progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
+        checkpoint_dir: Optional[Path] = None,
+        run_id: str | None = None,
     ) -> list[dict]:
         """Multi-phase evolutionary strategy with epistasis-aware anchoring.
 
@@ -1535,6 +1561,40 @@ class MutationEngine:
         prev_top_avg = -float("inf")
         prev_diversity = -1.0
         stagnant_rounds = 0
+
+        # -- Checkpoint resume: reload partial results from a prior run --
+        _ckpt_enabled = checkpoint_dir is not None and run_id is not None
+        _resume_round = 0
+        if _ckpt_enabled:
+            from vhh_library.checkpoint import load_checkpoint as _load_ckpt
+
+            loaded = _load_ckpt(checkpoint_dir, run_id)
+            if loaded is not None:
+                ckpt_df, completed_rounds = loaded
+                # Restore rows from the checkpoint DataFrame.
+                all_rows = ckpt_df.to_dict(orient="records")
+                seen_keys = {r["mutations"] for r in all_rows}
+                counter = len(all_rows) + 1
+                global_round = completed_rounds
+                _resume_round = completed_rounds
+                logger.info(
+                    "Resuming from checkpoint: %d rows, %d rounds completed",
+                    len(all_rows),
+                    completed_rounds,
+                )
+
+        def _save_ckpt() -> None:
+            """Write an intermediate checkpoint if checkpointing is enabled."""
+            if not _ckpt_enabled:
+                return
+            from vhh_library.checkpoint import save_checkpoint as _save_ckpt_fn
+
+            _save_ckpt_fn(
+                checkpoint_dir,  # type: ignore[arg-type]
+                run_id,  # type: ignore[arg-type]
+                pd.DataFrame(all_rows),
+                completed_rounds=global_round,
+            )
 
         def _add_rows(new_rows: list[dict]) -> None:
             nonlocal counter
@@ -1603,6 +1663,8 @@ class MutationEngine:
         logger.info("Phase 1: Broad exploration (%d rounds)", n_explore)
         for _ in range(n_explore):
             global_round += 1
+            if global_round <= _resume_round:
+                continue
             new = self._generate_sampled(
                 vhh_sequence,
                 mutation_list,
@@ -1614,6 +1676,7 @@ class MutationEngine:
             new = _esm_score_rows(new)
             _add_rows(new)
             _report("exploration", f"Exploring ({len(all_rows)} variants)")
+            _save_ckpt()
 
             if len(all_rows) >= max_variants:
                 break
@@ -1627,6 +1690,8 @@ class MutationEngine:
         logger.info("Phase 2: Anchor identification (%d rounds)", n_anchor_id)
         for _ in range(n_anchor_id):
             global_round += 1
+            if global_round <= _resume_round:
+                continue
             new = self._generate_sampled(
                 vhh_sequence,
                 mutation_list,
@@ -1641,6 +1706,7 @@ class MutationEngine:
                 "anchor_identification",
                 f"Sampling for anchor analysis ({len(all_rows)} variants)",
             )
+            _save_ckpt()
 
         # Identify anchor candidates
         anchor_candidates = self._identify_anchors_with_epistasis(all_rows, anchor_threshold)
@@ -1660,6 +1726,8 @@ class MutationEngine:
         logger.info("Phase 3: Focused exploitation (%d rounds)", n_exploit)
         for exploit_round in range(n_exploit):
             global_round += 1
+            if global_round <= _resume_round:
+                continue
 
             # Build weighted anchor set from confident candidates
             anchors = self._select_anchors_weighted(anchor_candidates)
@@ -1739,6 +1807,7 @@ class MutationEngine:
                 "exploitation",
                 f"Round {global_round}: {len(all_rows)} variants, best={sorted_rows[0]['combined_score']:.4f}",
             )
+            _save_ckpt()
 
             if len(all_rows) >= max_variants:
                 break

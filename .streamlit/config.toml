@@ -6,6 +6,7 @@
 [server]
 maxMessageSize = 500
 enableWebsocketCompression = false
+scriptRunnerCommandTimeout = 600
 
 [runner]
 fastReruns = true
