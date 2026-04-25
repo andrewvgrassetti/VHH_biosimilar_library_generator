@@ -894,6 +894,16 @@ class MutationEngine:
         progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
         checkpoint_dir: Optional[Path] = None,
     ) -> pd.DataFrame:
+        """Generate a scored variant library from *top_mutations*.
+
+        Parameters
+        ----------
+        checkpoint_dir:
+            When set, intermediate checkpoints are written to this directory
+            during iterative library generation.  If a prior checkpoint for
+            the same run exists, generation resumes from it.  Defaults to
+            ``None`` (no checkpointing) for backward compatibility.
+        """
         if top_mutations.empty:
             return self._empty_library_df()
 
@@ -1664,6 +1674,7 @@ class MutationEngine:
         for _ in range(n_explore):
             global_round += 1
             if global_round <= _resume_round:
+                logger.debug("Skipping round %d (already completed via checkpoint)", global_round)
                 continue
             new = self._generate_sampled(
                 vhh_sequence,
@@ -1691,6 +1702,7 @@ class MutationEngine:
         for _ in range(n_anchor_id):
             global_round += 1
             if global_round <= _resume_round:
+                logger.debug("Skipping round %d (already completed via checkpoint)", global_round)
                 continue
             new = self._generate_sampled(
                 vhh_sequence,
@@ -1727,6 +1739,7 @@ class MutationEngine:
         for exploit_round in range(n_exploit):
             global_round += 1
             if global_round <= _resume_round:
+                logger.debug("Skipping round %d (already completed via checkpoint)", global_round)
                 continue
 
             # Build weighted anchor set from confident candidates

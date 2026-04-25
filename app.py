@@ -201,7 +201,7 @@ def init_state():
 
         cleanup_stale_checkpoints(Path(tempfile.gettempdir()))
     except Exception:
-        pass  # non-critical; swallow silently
+        logger.debug("Checkpoint cleanup failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
