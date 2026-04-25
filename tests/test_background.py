@@ -145,6 +145,52 @@ class TestProgressCallback:
         assert "Phase: explore" in text
         assert "Round 3/10" in text
 
+    def test_progress_callback_simple_phase_uses_message(self, _mock_session_state):
+        """Non-iterative phases (e.g. generating_variants) display the message field."""
+        from vhh_library.background import _key, make_progress_callback
+
+        cb = make_progress_callback("libgen")
+
+        prog = MagicMock()
+        prog.round_number = 1
+        prog.total_rounds = 3
+        prog.phase = "generating_variants"
+        prog.message = "Building exhaustive combinations (500 max)…"
+        prog.population_size = 0
+        prog.best_score = 0.0
+        prog.n_anchors = 0
+        prog.diversity_entropy = 0.0
+
+        cb(prog)
+
+        assert _mock_session_state[_key("libgen", "progress")] == pytest.approx(1 / 3)
+        text = _mock_session_state[_key("libgen", "progress_text")]
+        assert "Building exhaustive" in text
+        # Should NOT contain iterative-style format
+        assert "Phase:" not in text
+        assert "Anchors:" not in text
+
+    def test_progress_callback_scoring_nativeness_phase(self, _mock_session_state):
+        """Scoring nativeness phase shows the message."""
+        from vhh_library.background import _key, make_progress_callback
+
+        cb = make_progress_callback("libgen")
+
+        prog = MagicMock()
+        prog.round_number = 2
+        prog.total_rounds = 3
+        prog.phase = "scoring_nativeness"
+        prog.message = "Scoring nativeness for 100 variants…"
+        prog.population_size = 100
+        prog.best_score = 0.0
+        prog.n_anchors = 0
+        prog.diversity_entropy = 0.0
+
+        cb(prog)
+
+        text = _mock_session_state[_key("libgen", "progress_text")]
+        assert "Scoring nativeness" in text
+
 
 class TestSetProgress:
     """set_progress directly updates progress keys."""

@@ -140,14 +140,29 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     """
     state = st.session_state
 
+    # Phases reported during non-iterative strategies (exhaustive / random).
+    _simple_phases = frozenset(
+        {
+            "generating_variants",
+            "scoring_stability",
+            "scoring_nativeness",
+            "esm2_scoring",
+        }
+    )
+
     def _callback(prog: Any) -> None:
         frac = prog.round_number / max(prog.total_rounds, 1)
         state[_key(task_name, "progress")] = min(frac, 1.0)
-        state[_key(task_name, "progress_text")] = (
-            f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds} | "
-            f"🧬 {prog.population_size} variants | Best: {prog.best_score:.4f} | "
-            f"Anchors: {prog.n_anchors} | Diversity: {prog.diversity_entropy:.2f}"
-        )
+
+        if prog.phase in _simple_phases:
+            # Show the human-readable message for non-iterative phases.
+            state[_key(task_name, "progress_text")] = prog.message or f"Step {prog.round_number}/{prog.total_rounds}"
+        else:
+            state[_key(task_name, "progress_text")] = (
+                f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds} | "
+                f"🧬 {prog.population_size} variants | Best: {prog.best_score:.4f} | "
+                f"Anchors: {prog.n_anchors} | Diversity: {prog.diversity_entropy:.2f}"
+            )
 
     return _callback
 
