@@ -18,6 +18,7 @@ from scipy.stats import spearmanr  # noqa: E402
 from vhh_library.background import (
     is_task_running,
     make_progress_callback,
+    recover_task,
     render_task_status,
     reset_task,
     set_progress,
@@ -195,6 +196,11 @@ def init_state():
     if st.session_state.get("vhh_seq") is None:
         _try_auto_restore()
 
+    # Recover orphaned background-task results that completed while the
+    # WebSocket was disconnected (e.g. laptop sleep/wake cycle).  Each
+    # task maps to a specific session-state key.
+    _recover_background_tasks()
+
     # Clean up stale checkpoint files (>24 h) on each session start.
     try:
         from vhh_library.checkpoint import cleanup_stale_checkpoints
@@ -321,6 +327,40 @@ def _try_auto_restore() -> None:
         logger.info("Auto-restored session state from %s", path)
     except Exception:
         logger.warning("Auto-restore failed", exc_info=True)
+
+
+# Background task names and the session-state keys they populate.
+_RECOVERABLE_TASKS: dict[str, str] = {
+    "library_gen": "library",
+    "construct_build": "constructs",
+}
+
+
+def _recover_background_tasks() -> None:
+    """Check for orphaned background-task results and restore them.
+
+    Called during :func:`init_state`.  For each recoverable task, if a
+    persisted result file exists on disk and the corresponding session-state
+    key is still empty, the result is loaded into session state and a flag
+    is set so the UI can inform the user.
+    """
+    for task_name, state_key in _RECOVERABLE_TASKS.items():
+        # Skip if the session already has a result for this task.
+        # DataFrames expose .empty; other types (lists, dicts) do not.
+        existing = st.session_state.get(state_key)
+        if existing is not None:
+            if not hasattr(existing, "empty") or not existing.empty:
+                continue
+
+        result = recover_task(task_name)
+        if result is not None:
+            st.session_state[state_key] = result
+            st.session_state["_bg_recovered"] = task_name
+            auto_save_session()
+            # Safe to clear the persisted file: the result is now held in
+            # session_state and (best-effort) in the auto-save file.
+            reset_task(task_name)
+            logger.info("Recovered background task %r result into session key %r.", task_name, state_key)
 
 
 # ---------------------------------------------------------------------------
@@ -2203,6 +2243,13 @@ def main():
     # Show a one-time notification when session state was auto-restored.
     if st.session_state.pop("_auto_restored", False):
         st.toast("♻️ Session auto-restored from previous run.", icon="♻️")
+
+    # Show a one-time notification when a background task result was recovered.
+    recovered_task = st.session_state.pop("_bg_recovered", None)
+    if recovered_task:
+        _friendly = {"library_gen": "Library generation", "construct_build": "Construct building"}
+        label = _friendly.get(recovered_task, recovered_task)
+        st.toast(f"♻️ {label} result recovered after connection loss.", icon="♻️")
 
     # Sidebar must run first so that cfg_* session-state keys exist.
     sidebar()

@@ -6,6 +6,11 @@
 [server]
 maxMessageSize = 500
 enableWebsocketCompression = false
+# Keep the WebSocket alive for up to 5 minutes without a pong response.
+# This covers brief laptop-sleep / network-blip scenarios.  For longer
+# disconnects, background.py persists results to disk and app.py recovers
+# them on the next session init.
+pingTimeout = 300
 scriptRunnerCommandTimeout = 600
 
 [runner]
