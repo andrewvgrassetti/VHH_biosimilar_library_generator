@@ -468,6 +468,8 @@ class TestEvolutionaryIterativeStrategy:
                 "exploration",
                 "anchor_identification",
                 "exploitation",
+                "scoring_stability",
+                "scoring_nativeness",
                 "validation",
             )
             assert p.round_number >= 1
@@ -1508,3 +1510,85 @@ class TestBatchStabilityScoring:
         batch_calls = [c for c in call_log if c.startswith("score_batch")]
         assert len(single_calls) == 0, f"NanoMelt score_sequence called {len(single_calls)} times (should be 0)"
         assert len(batch_calls) >= 1, "NanoMelt score_batch should be called at least once"
+
+
+class TestIterativeBatchScoring:
+    """Verify iterative strategy batch-scores once at the end, not per round."""
+
+    @staticmethod
+    def _make_vhh_no_anarci(sequence: str) -> VHHSequence:
+        vhh = object.__new__(VHHSequence)
+        vhh.sequence = sequence.upper()
+        vhh.length = len(vhh.sequence)
+        vhh.strict = False
+        vhh.chain_type = "H"
+        vhh.species = "camelid"
+        imgt_numbered = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh.imgt_numbered = imgt_numbered
+        vhh._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt_numbered)}
+        vhh.validation_result = {"valid": True, "errors": [], "warnings": []}
+        return vhh
+
+    @staticmethod
+    def _make_top_muts(vhh: VHHSequence, positions: list[str]) -> pd.DataFrame:
+        rows = []
+        for pos_key in positions:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:2]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_iterative_uses_single_batch_nativeness_call(self) -> None:
+        """Iterative strategy should batch-score nativeness once, not per round."""
+        call_log: list[str] = []
+
+        class _TrackingScorer(_MockNativenessScorer):
+            def score(self_, vhh):
+                call_log.append("score")
+                return super().score(vhh)
+
+            def score_batch(self_, sequences):
+                call_log.append(f"score_batch({len(sequences)})")
+                return super().score_batch(sequences)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_TrackingScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQAGGSLRL"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3", "4", "5", "6", "7", "8"])
+
+        call_log.clear()
+        lib = engine.generate_library(
+            vhh,
+            top_muts,
+            n_mutations=3,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=4,
+        )
+        assert isinstance(lib, pd.DataFrame)
+
+        # There should be exactly ONE score_batch call — at the end of the
+        # iterative strategy — not one per round.
+        batch_calls = [c for c in call_log if c.startswith("score_batch")]
+        assert len(batch_calls) == 1, (
+            f"Expected exactly 1 score_batch call (end of iterative), got {len(batch_calls)}: {batch_calls}"
+        )
+
+        # No per-variant score() calls during library generation.
+        individual_calls = [c for c in call_log if c == "score"]
+        assert len(individual_calls) == 0, f"Expected no per-variant score() calls, got {len(individual_calls)}"

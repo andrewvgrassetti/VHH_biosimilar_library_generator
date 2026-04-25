@@ -274,19 +274,26 @@ def _imgt_key_to_int(pos_key: str) -> int:
     return int("".join(c for c in pos_key if c.isdigit()) or "0")
 
 
-def _mutation_entropy(rows: list[dict]) -> float:
+def _mutation_entropy(rows: list[dict], parsed_mutations: list[set[tuple[int, str]]] | None = None) -> float:
     """Compute Shannon entropy of mutation frequencies across all rows.
 
     Higher entropy indicates more diverse variants (more unique mutation
     combinations).  Returns 0.0 for empty input.
+
+    Parameters
+    ----------
+    parsed_mutations : list[set[tuple[int, str]]] | None
+        Pre-parsed mutation sets aligned with *rows*.  When provided,
+        avoids re-parsing the ``"mutations"`` string for each row.
     """
     if not rows:
         return 0.0
     counts: Counter[tuple[int, str]] = Counter()
     total = 0
-    for r in rows:
-        for pos, aa in _parse_mut_str(r["mutations"]):
-            counts[(pos, aa)] += 1
+    for i, r in enumerate(rows):
+        muts = parsed_mutations[i] if parsed_mutations is not None else _parse_mut_str(r["mutations"])
+        for pos_aa in muts:
+            counts[pos_aa] += 1
             total += 1
     if total == 0:
         return 0.0
@@ -302,20 +309,27 @@ def _compute_epistasis(
     rows: list[dict],
     mut_a: tuple[int, str],
     mut_b: tuple[int, str],
+    parsed_mutations: list[set[tuple[int, str]]] | None = None,
 ) -> float:
     """Compute epistatic interaction score between two mutations.
 
     interaction = score(A+B) - score(A_only) - score(B_only) + score(neither)
 
     Positive → synergistic; Negative → antagonistic.
+
+    Parameters
+    ----------
+    parsed_mutations : list[set[tuple[int, str]]] | None
+        Pre-parsed mutation sets aligned with *rows*.  When provided,
+        avoids re-parsing the ``"mutations"`` string for each row.
     """
     scores_ab: list[float] = []
     scores_a: list[float] = []
     scores_b: list[float] = []
     scores_none: list[float] = []
 
-    for r in rows:
-        muts = set(_parse_mut_str(r["mutations"]))
+    for i, r in enumerate(rows):
+        muts = parsed_mutations[i] if parsed_mutations is not None else set(_parse_mut_str(r["mutations"]))
         has_a = mut_a in muts
         has_b = mut_b in muts
         s = r["combined_score"]
@@ -1431,6 +1445,8 @@ class MutationEngine:
         k_max: int,
         max_variants: int,
         anchors: dict[int, str],
+        *,
+        _batch_score: bool = True,
     ) -> list[dict]:
         anchor_muts = [m for m in mutation_list if anchors.get(int(m.position)) == m.suggested_aa]
         non_anchor = [m for m in mutation_list if int(m.position) not in anchors]
@@ -1471,7 +1487,9 @@ class MutationEngine:
             rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
 
-        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        if _batch_score:
+            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        return rows
 
     # ------------------------------------------------------------------
     # Private: iterative anchor-and-explore (Evolutionary Stability
@@ -1583,7 +1601,14 @@ class MutationEngine:
         logger.info("Phase 1: Broad exploration (%d rounds)", n_explore)
         for _ in range(n_explore):
             global_round += 1
-            new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_explore)
+            new = self._generate_sampled(
+                vhh_sequence,
+                mutation_list,
+                k_min,
+                k_max,
+                per_round_explore,
+                _batch_score=False,
+            )
             new = _esm_score_rows(new)
             _add_rows(new)
             _report("exploration", f"Exploring ({len(all_rows)} variants)")
@@ -1600,7 +1625,14 @@ class MutationEngine:
         logger.info("Phase 2: Anchor identification (%d rounds)", n_anchor_id)
         for _ in range(n_anchor_id):
             global_round += 1
-            new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_explore)
+            new = self._generate_sampled(
+                vhh_sequence,
+                mutation_list,
+                k_min,
+                k_max,
+                per_round_explore,
+                _batch_score=False,
+            )
             new = _esm_score_rows(new)
             _add_rows(new)
 
@@ -1628,10 +1660,23 @@ class MutationEngine:
 
             if anchors:
                 new = self._generate_constrained_sampled(
-                    vhh_sequence, mutation_list, k_min, k_max, per_round_exploit, anchors
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    per_round_exploit,
+                    anchors,
+                    _batch_score=False,
                 )
             else:
-                new = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, per_round_exploit)
+                new = self._generate_sampled(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    per_round_exploit,
+                    _batch_score=False,
+                )
 
             new = _esm_score_rows(new)
             _add_rows(new)
@@ -1640,7 +1685,14 @@ class MutationEngine:
             diversity = _mutation_entropy(all_rows)
             if diversity < _MIN_DIVERSITY_ENTROPY and mutation_list:
                 inject_n = max(int(per_round_exploit * _DIVERSITY_INJECTION_FRAC), 5)
-                inject = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, inject_n)
+                inject = self._generate_sampled(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    inject_n,
+                    _batch_score=False,
+                )
                 inject = _esm_score_rows(inject)
                 _add_rows(inject)
                 logger.debug(
@@ -1686,10 +1738,19 @@ class MutationEngine:
                 break
 
         # ==================================================================
-        # PHASE 4 — Final Validation
+        # PHASE 4 — Final Validation & Batch Scoring
         # ==================================================================
         global_round += 1
         logger.info("Phase 4: Final validation")
+
+        # Batch-score stability and nativeness once for all accumulated
+        # variants.  Per-round sampling used _batch_score=False to avoid
+        # redundant AbNatiV / ML calls on every round — this single pass
+        # replaces all of those.
+        _report("scoring_stability", "Batch scoring stability…")
+        all_rows = self._batch_fill_stability(all_rows)
+        _report("scoring_nativeness", "Batch scoring nativeness…")
+        all_rows = self._batch_fill_nativeness(all_rows)
 
         # ESM-2 full PLL for top candidates
         _esm_rescore_full(all_rows, rescore_top_n * 2)
@@ -1714,21 +1775,29 @@ class MutationEngine:
         """Identify anchor mutations with marginal contribution + pairwise epistasis.
 
         Returns a list of :class:`AnchorCandidate` with confidence scores.
+
+        Mutation strings are pre-parsed once and reused across the
+        frequency, marginal-contribution, and epistasis analyses to avoid
+        redundant O(candidates × rows) string splitting.
         """
         if not rows:
             return []
 
         sorted_rows = sorted(rows, key=lambda r: r["combined_score"], reverse=True)
         n_top = max(len(sorted_rows) // 4, 1)
-        top_quartile = sorted_rows[:n_top]
         all_scores = [r["combined_score"] for r in sorted_rows]
         median_all = sorted(all_scores)[len(all_scores) // 2]
 
+        # Pre-parse mutation strings once to avoid repeated string splitting
+        # in the O(candidates × rows) loops below.
+        parsed_all: list[set[tuple[int, str]]] = [set(_parse_mut_str(r["mutations"])) for r in sorted_rows]
+        parsed_top: list[set[tuple[int, str]]] = parsed_all[:n_top]
+
         # 1. Frequency analysis
         pa_counts: Counter[tuple[int, str]] = Counter()
-        for r in top_quartile:
-            for pos, aa in _parse_mut_str(r["mutations"]):
-                pa_counts[(pos, aa)] += 1
+        for muts in parsed_top:
+            for pos_aa in muts:
+                pa_counts[pos_aa] += 1
 
         # Candidate anchors: those exceeding a relaxed frequency threshold.
         # _ANCHOR_FREQ_SCALE (0.8×) softens the user-set anchor_threshold so
@@ -1748,9 +1817,8 @@ class MutationEngine:
         for key, cand in candidates.items():
             with_scores = []
             without_scores = []
-            for r in sorted_rows:
-                muts = set(_parse_mut_str(r["mutations"]))
-                if key in muts:
+            for idx, r in enumerate(sorted_rows):
+                if key in parsed_all[idx]:
                     with_scores.append(r["combined_score"])
                 else:
                     without_scores.append(r["combined_score"])
@@ -1774,6 +1842,7 @@ class MutationEngine:
                     sorted_rows,
                     (ca.position, ca.amino_acid),
                     (cb.position, cb.amino_acid),
+                    parsed_mutations=parsed_all,
                 )
                 key_a = (ca.position, ca.amino_acid)
                 key_b = (cb.position, cb.amino_acid)
