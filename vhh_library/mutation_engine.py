@@ -936,7 +936,48 @@ class MutationEngine:
             total,
         )
 
+        # Progress helper for non-iterative strategies.  The iterative
+        # strategy has its own internal ``_report`` function with richer
+        # phase semantics; these high-level reports cover the phases that
+        # bookend all strategies (variant generation, batch scoring, etc.).
+        has_ml_stability = (
+            self._stability_scorer.nanomelt_predictor is not None or self._stability_scorer.esm_scorer is not None
+        )
+        has_esm_progressive = self._esm_scorer is not None
+
+        def _report_progress(
+            phase: str,
+            step: int,
+            total_steps: int,
+            n_variants: int = 0,
+            message: str = "",
+        ) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                IterativeProgress(
+                    phase=phase,
+                    round_number=step,
+                    total_rounds=total_steps,
+                    best_score=0.0,
+                    mean_score=0.0,
+                    population_size=n_variants,
+                    n_anchors=0,
+                    diversity_entropy=0.0,
+                    message=message,
+                )
+            )
+
         if strategy == "exhaustive":
+            # Steps: generate → (batch stability) → batch nativeness → (ESM-2)
+            total_steps = 2 + (1 if has_ml_stability else 0) + (1 if has_esm_progressive else 0)
+            step = 1
+            _report_progress(
+                "generating_variants",
+                step,
+                total_steps,
+                message=f"Building exhaustive combinations ({total:,} max)…",
+            )
             rows = self._generate_exhaustive(
                 vhh_sequence,
                 mutation_list,
@@ -944,9 +985,63 @@ class MutationEngine:
                 k_max,
                 max_variants,
                 position_groups=position_groups,
+                _batch_score=False,
             )
+            if has_ml_stability:
+                step += 1
+                _report_progress(
+                    "scoring_stability",
+                    step,
+                    total_steps,
+                    len(rows),
+                    message=f"Scoring stability for {len(rows):,} variants…",
+                )
+                rows = self._batch_fill_stability(rows)
+            step += 1
+            _report_progress(
+                "scoring_nativeness",
+                step,
+                total_steps,
+                len(rows),
+                message=f"Scoring nativeness for {len(rows):,} variants…",
+            )
+            rows = self._batch_fill_nativeness(rows)
         elif strategy == "random":
-            rows = self._generate_sampled(vhh_sequence, mutation_list, k_min, k_max, max_variants)
+            total_steps = 2 + (1 if has_ml_stability else 0) + (1 if has_esm_progressive else 0)
+            step = 1
+            _report_progress(
+                "generating_variants",
+                step,
+                total_steps,
+                message=f"Sampling up to {max_variants:,} random variants…",
+            )
+            rows = self._generate_sampled(
+                vhh_sequence,
+                mutation_list,
+                k_min,
+                k_max,
+                max_variants,
+                _batch_score=False,
+            )
+            if has_ml_stability:
+                step += 1
+                _report_progress(
+                    "scoring_stability",
+                    step,
+                    total_steps,
+                    len(rows),
+                    message=f"Scoring stability for {len(rows):,} variants…",
+                )
+                rows = self._batch_fill_stability(rows)
+            step += 1
+            _report_progress(
+                "scoring_nativeness",
+                step,
+                total_steps,
+                len(rows),
+                message=f"Scoring nativeness for {len(rows):,} variants…",
+            )
+            rows = self._batch_fill_nativeness(rows)
         elif strategy == "iterative":
             rows = self._generate_iterative(
                 vhh_sequence,
@@ -968,6 +1063,14 @@ class MutationEngine:
 
         # ESM-2 progressive scoring (when scorer is available)
         if self._esm_scorer is not None and not df.empty:
+            if strategy != "iterative":
+                _report_progress(
+                    "esm2_scoring",
+                    total_steps,
+                    total_steps,
+                    len(df),
+                    message=f"ESM-2 progressive scoring for {len(df):,} variants…",
+                )
             df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
 
         return df
@@ -1227,6 +1330,8 @@ class MutationEngine:
         k_max: int,
         max_variants: int,
         position_groups: dict[int, list] | None = None,
+        *,
+        _batch_score: bool = True,
     ) -> list[dict]:
         # Build position groups if not provided.
         if position_groups is None:
@@ -1256,8 +1361,12 @@ class MutationEngine:
                     )
                     counter += 1
                     if len(rows) >= max_variants:
-                        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
-        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+                        if _batch_score:
+                            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+                        return rows
+        if _batch_score:
+            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        return rows
 
     # ------------------------------------------------------------------
     # Private: random sampling (position-deduplicated)
@@ -1270,6 +1379,8 @@ class MutationEngine:
         k_min: int,
         k_max: int,
         max_variants: int,
+        *,
+        _batch_score: bool = True,
     ) -> list[dict]:
         # Build position groups for position-aware sampling.
         position_groups: dict[int, list] = {}
@@ -1304,7 +1415,9 @@ class MutationEngine:
             rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
 
-        return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        if _batch_score:
+            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+        return rows
 
     # ------------------------------------------------------------------
     # Private: constrained sampling (anchor-fixed)

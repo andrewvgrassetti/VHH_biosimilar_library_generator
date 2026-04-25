@@ -493,6 +493,74 @@ class TestEvolutionaryIterativeStrategy:
         assert elapsed < 300, f"Iterative strategy took {elapsed:.1f}s (>5 min)"
         assert isinstance(lib, pd.DataFrame)
 
+    def test_exhaustive_with_progress_callback(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
+    ) -> None:
+        """Progress callback should be invoked with phases for exhaustive strategy."""
+        top3 = ranked.head(3)
+        if top3.empty:
+            pytest.skip("No mutations ranked")
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        lib = engine.generate_library(
+            vhh,
+            top3,
+            n_mutations=2,
+            strategy="exhaustive",
+            max_variants=50,
+            progress_callback=_on_progress,
+        )
+        assert isinstance(lib, pd.DataFrame)
+        assert len(progress_events) > 0, "No progress events reported for exhaustive strategy"
+
+        phases_seen = {p.phase for p in progress_events}
+        # Exhaustive must always report generating_variants and scoring_nativeness
+        assert "generating_variants" in phases_seen
+        assert "scoring_nativeness" in phases_seen
+
+        # All events should have round_number >= 1 and total_rounds >= 2
+        for p in progress_events:
+            assert p.round_number >= 1
+            assert p.total_rounds >= 2
+            assert p.message, "Message should be non-empty for non-iterative phases"
+
+    def test_random_with_progress_callback(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
+    ) -> None:
+        """Progress callback should be invoked with phases for random strategy."""
+        top5 = ranked.head(5)
+        if top5.empty:
+            pytest.skip("No mutations ranked")
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        lib = engine.generate_library(
+            vhh,
+            top5,
+            n_mutations=2,
+            strategy="random",
+            max_variants=30,
+            progress_callback=_on_progress,
+        )
+        assert isinstance(lib, pd.DataFrame)
+        assert len(progress_events) > 0, "No progress events reported for random strategy"
+
+        phases_seen = {p.phase for p in progress_events}
+        assert "generating_variants" in phases_seen
+        assert "scoring_nativeness" in phases_seen
+
+        for p in progress_events:
+            assert p.round_number >= 1
+            assert p.total_rounds >= 2
+            assert p.message
+
 
 class TestEpistasisDetection:
     """Tests for epistasis detection with synthetic data."""
