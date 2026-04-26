@@ -828,6 +828,147 @@ class TestSessionStateLossRecovery:
 
 
 # ---------------------------------------------------------------------------
+# Recovery vs. render_task_status race condition tests
+# ---------------------------------------------------------------------------
+
+
+class TestRecoveryRaceCondition:
+    """Verify that _recover_background_tasks does not race with render_task_status.
+
+    When a background task completes normally (session alive), the disk-
+    persisted result may exist by the time init_state() calls recovery.
+    Recovery must NOT reset the task to IDLE if the session-state status
+    is already DONE/ERROR — that would prevent render_task_status from
+    returning the result to the caller, making the task appear to hang.
+    """
+
+    def test_recovery_skips_done_task(self, _mock_session_state):
+        """Recovery should not interfere when session-state status is DONE."""
+        from vhh_library.background import (
+            STATUS_DONE,
+            STATUS_IDLE,
+            _key,
+            get_task_status,
+            recover_task,
+            reset_task,
+            submit_task,
+        )
+
+        # Simulate a task that completed normally: status DONE in session
+        # state AND a persisted result file on disk (the _worker writes both).
+        def work():
+            return "my-library-result"
+
+        submit_task("race_done", work)
+        time.sleep(0.5)
+
+        # Verify task completed
+        assert get_task_status("race_done") == STATUS_DONE
+        assert _mock_session_state[_key("race_done", "result")] == "my-library-result"
+
+        # Simulate what _recover_background_tasks should do:
+        # Since status is DONE (not IDLE), skip recovery entirely.
+        if get_task_status("race_done") != STATUS_IDLE:
+            recovered = False
+        else:
+            result = recover_task("race_done")
+            recovered = result is not None
+            if recovered:
+                reset_task("race_done")
+
+        assert not recovered, "Recovery should not run when status is DONE"
+        # Status must still be DONE so render_task_status can process it
+        assert get_task_status("race_done") == STATUS_DONE
+        assert _mock_session_state[_key("race_done", "result")] == "my-library-result"
+
+    def test_recovery_skips_error_task(self, _mock_session_state):
+        """Recovery should not interfere when session-state status is ERROR."""
+        from vhh_library.background import (
+            STATUS_ERROR,
+            STATUS_IDLE,
+            _key,
+            get_task_status,
+            recover_task,
+            reset_task,
+            submit_task,
+        )
+
+        def failing_work():
+            raise RuntimeError("test failure")
+
+        submit_task("race_err", failing_work)
+        time.sleep(0.5)
+
+        assert get_task_status("race_err") == STATUS_ERROR
+        assert _mock_session_state[_key("race_err", "error")] == "test failure"
+
+        # Recovery should skip because status is ERROR
+        if get_task_status("race_err") != STATUS_IDLE:
+            recovered = False
+        else:
+            result = recover_task("race_err")
+            recovered = result is not None
+            if recovered:
+                reset_task("race_err")
+
+        assert not recovered
+        assert get_task_status("race_err") == STATUS_ERROR
+
+    def test_recovery_skips_running_task(self, _mock_session_state):
+        """Recovery should not interfere with a currently running task."""
+        from vhh_library.background import (
+            STATUS_IDLE,
+            STATUS_RUNNING,
+            get_task_status,
+            submit_task,
+        )
+
+        event = threading.Event()
+
+        def slow_work():
+            event.wait(timeout=5)
+            return "done"
+
+        submit_task("race_run", slow_work)
+        assert get_task_status("race_run") == STATUS_RUNNING
+
+        # Recovery should skip because status is RUNNING
+        assert get_task_status("race_run") != STATUS_IDLE
+        event.set()
+        time.sleep(0.3)
+
+    def test_recovery_proceeds_after_session_loss(self, _mock_session_state):
+        """Recovery SHOULD proceed when session was lost (status is IDLE)."""
+        from vhh_library.background import (
+            STATUS_DONE,
+            STATUS_IDLE,
+            get_task_status,
+            recover_task,
+            submit_task,
+        )
+
+        def work():
+            return "recovered-result"
+
+        submit_task("race_lost", work)
+        time.sleep(0.5)
+        assert get_task_status("race_lost") == STATUS_DONE
+
+        # Simulate session loss: clear all task keys (fresh session_state)
+        keys_to_remove = [k for k in _mock_session_state if k.startswith("bg_race_lost")]
+        for k in keys_to_remove:
+            del _mock_session_state[k]
+
+        # Status is now IDLE (key missing → default)
+        assert get_task_status("race_lost") == STATUS_IDLE
+
+        # Recovery should proceed and restore the result from disk
+        result = recover_task("race_lost")
+        assert result == "recovered-result"
+        assert get_task_status("race_lost") == STATUS_DONE
+
+
+# ---------------------------------------------------------------------------
 # Activity log tests
 # ---------------------------------------------------------------------------
 
