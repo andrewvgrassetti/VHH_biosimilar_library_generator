@@ -476,6 +476,7 @@ class TestEvolutionaryIterativeStrategy:
             "scoring_nativeness_start",
             "scoring_nativeness_progress",
             "scoring_nativeness_done",
+            "sampling_variants",
             "validation",
             "generating_variants",
             "esm2_scoring_stage1",
@@ -483,7 +484,7 @@ class TestEvolutionaryIterativeStrategy:
         }
         for p in progress_events:
             assert p.phase in _VALID_PHASES, f"Unexpected phase: {p.phase!r}"
-            assert p.round_number >= 1
+            assert p.round_number >= 0
             assert p.population_size >= 0
 
     def test_iterative_benchmark_under_5_min(

@@ -1035,6 +1035,7 @@ class MutationEngine:
                 max_variants,
                 position_groups=position_groups,
                 _batch_score=False,
+                progress_callback=progress_callback,
             )
             if has_ml_stability:
                 step += 1
@@ -1071,6 +1072,7 @@ class MutationEngine:
                 k_max,
                 max_variants,
                 _batch_score=False,
+                progress_callback=progress_callback,
             )
             if has_ml_stability:
                 step += 1
@@ -1171,6 +1173,8 @@ class MutationEngine:
         """
         mutations: list[tuple[int, str]] = [(int(m.position), m.suggested_aa) for m in selected]
         mut_labels = [f"{m.original_aa}{m.position}{m.suggested_aa}" for m in selected]
+
+        logger.debug("Building variant V%06d with %d mutations", variant_counter, len(mutations))
 
         # Use fast-path VHHSequence.mutate() to avoid redundant ANARCI calls.
         current = vhh_sequence
@@ -1689,6 +1693,22 @@ class MutationEngine:
                         )
                     )
                     counter += 1
+                    if counter % 100 == 0:
+                        logger.info("Exhaustive enumeration: %d variants generated…", len(rows))
+                        if progress_callback is not None:
+                            progress_callback(
+                                IterativeProgress(
+                                    phase="sampling_variants",
+                                    round_number=0,
+                                    total_rounds=0,
+                                    best_score=0.0,
+                                    mean_score=0.0,
+                                    population_size=len(rows),
+                                    n_anchors=0,
+                                    diversity_entropy=0.0,
+                                    message=f"Enumerating variant {len(rows)}/{max_variants}…",
+                                )
+                            )
                     if len(rows) >= max_variants:
                         if _batch_score:
                             return self._batch_fill_nativeness(
@@ -1779,6 +1799,24 @@ class MutationEngine:
             rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
 
+            # Intra-round progress: log every 100, callback every 50.
+            if len(rows) % 100 == 0:
+                logger.info("Sampled %d/%d variants (%d attempts)…", len(rows), max_variants, attempts)
+            if len(rows) % 50 == 0 and progress_callback is not None:
+                progress_callback(
+                    IterativeProgress(
+                        phase="sampling_variants",
+                        round_number=0,
+                        total_rounds=0,
+                        best_score=0.0,
+                        mean_score=0.0,
+                        population_size=len(rows),
+                        n_anchors=0,
+                        diversity_entropy=0.0,
+                        message=f"Sampling variant {len(rows)}/{max_variants}…",
+                    )
+                )
+
         logger.debug("Sampled %d variants in %d attempts", len(rows), attempts)
 
         if _batch_score:
@@ -1864,6 +1902,24 @@ class MutationEngine:
 
             rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
+
+            # Intra-round progress: log every 100, callback every 50.
+            if len(rows) % 100 == 0:
+                logger.info("Constrained-sampled %d/%d variants (%d attempts)…", len(rows), max_variants, attempts)
+            if len(rows) % 50 == 0 and progress_callback is not None:
+                progress_callback(
+                    IterativeProgress(
+                        phase="sampling_variants",
+                        round_number=0,
+                        total_rounds=0,
+                        best_score=0.0,
+                        mean_score=0.0,
+                        population_size=len(rows),
+                        n_anchors=len(anchors),
+                        diversity_entropy=0.0,
+                        message=f"Sampling variant {len(rows)}/{max_variants}…",
+                    )
+                )
 
         logger.debug("Constrained-sampled %d variants in %d attempts", len(rows), attempts)
 
@@ -2039,6 +2095,7 @@ class MutationEngine:
                 k_max,
                 per_round_explore,
                 _batch_score=False,
+                progress_callback=progress_callback,
                 exclude_keys=seen_keys,
             )
             new = _esm_score_rows(new)
@@ -2079,6 +2136,7 @@ class MutationEngine:
                 k_max,
                 per_round_explore,
                 _batch_score=False,
+                progress_callback=progress_callback,
                 exclude_keys=seen_keys,
             )
             new = _esm_score_rows(new)
@@ -2135,6 +2193,7 @@ class MutationEngine:
                     per_round_exploit,
                     anchors,
                     _batch_score=False,
+                    progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
             else:
@@ -2145,6 +2204,7 @@ class MutationEngine:
                     k_max,
                     per_round_exploit,
                     _batch_score=False,
+                    progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
 
@@ -2170,6 +2230,7 @@ class MutationEngine:
                     k_max,
                     inject_n,
                     _batch_score=False,
+                    progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
                 inject = _esm_score_rows(inject)
