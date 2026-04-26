@@ -24,6 +24,7 @@ into the fresh ``session_state``.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import tempfile
@@ -166,6 +167,7 @@ def submit_task(
     st.session_state[_key(name, "status")] = STATUS_RUNNING
     st.session_state[_key(name, "progress")] = 0.0
     st.session_state[_key(name, "progress_text")] = ""
+    st.session_state[_key(name, "log_entries")] = []
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
 
@@ -229,11 +231,43 @@ def get_task_error(name: str) -> str | None:
     return st.session_state.get(_key(name, "error"))
 
 
+def get_task_log(name: str) -> list[tuple[float, str]]:
+    """Return the accumulated log entries for *name*.
+
+    Each entry is a ``(timestamp, message)`` tuple.  Returns an empty list
+    when no entries exist.
+    """
+    return list(st.session_state.get(_key(name, "log_entries"), []))
+
+
+def append_log_entry(task_name: str, message: str, *, _state: Any = None) -> None:
+    """Append a timestamped message to the task's activity log.
+
+    Parameters
+    ----------
+    task_name:
+        Background task name.
+    message:
+        Human-readable log line.
+    _state:
+        Optional dict-like override for ``st.session_state`` (used by the
+        background thread which captures the state reference at submit time).
+    """
+    state = _state if _state is not None else st.session_state
+    key = _key(task_name, "log_entries")
+    entries = state.get(key)
+    if entries is None:
+        entries = []
+        state[key] = entries
+    entries.append((time.time(), message))
+
+
 def reset_task(name: str) -> None:
     """Reset all state keys for *name* back to idle."""
     st.session_state[_key(name, "status")] = STATUS_IDLE
     st.session_state[_key(name, "progress")] = 0.0
     st.session_state[_key(name, "progress_text")] = ""
+    st.session_state[_key(name, "log_entries")] = []
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
     _clear_persisted(name)
@@ -261,6 +295,7 @@ def recover_task(name: str) -> Any | None:
         st.session_state[_key(name, "result")] = result
         st.session_state[_key(name, "progress")] = 1.0
         st.session_state[_key(name, "progress_text")] = ""
+        st.session_state[_key(name, "log_entries")] = []
         st.session_state[_key(name, "error")] = None
         logger.info("Recovered completed result for background task %r from disk.", name)
         return result
@@ -272,6 +307,7 @@ def recover_task(name: str) -> Any | None:
         st.session_state[_key(name, "result")] = None
         st.session_state[_key(name, "progress")] = 0.0
         st.session_state[_key(name, "progress_text")] = ""
+        st.session_state[_key(name, "log_entries")] = []
         logger.info("Recovered error for background task %r from disk.", name)
         return None
 
@@ -294,6 +330,9 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     The returned callable accepts a single *prog* argument (the
     ``ProgressInfo`` named-tuple emitted by the mutation engine) and writes
     fractional progress + descriptive text into ``session_state``.
+
+    Each callback invocation also appends a timestamped entry to the task's
+    activity log so the UI can display a scrollable history of every step.
     """
     state = st.session_state
 
@@ -322,13 +361,18 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
 
         if prog.phase in _simple_phases:
             # Show the human-readable message for non-iterative phases.
-            state[_key(task_name, "progress_text")] = prog.message or f"Step {prog.round_number}/{prog.total_rounds}"
+            text = prog.message or f"Step {prog.round_number}/{prog.total_rounds}"
+            state[_key(task_name, "progress_text")] = text
         else:
-            state[_key(task_name, "progress_text")] = (
+            text = (
                 f"Phase: {prog.phase} — Round {prog.round_number}/{prog.total_rounds} | "
                 f"🧬 {prog.population_size} variants | Best: {prog.best_score:.4f} | "
                 f"Anchors: {prog.n_anchors} | Diversity: {prog.diversity_entropy:.2f}"
             )
+            state[_key(task_name, "progress_text")] = text
+
+        # Append to the activity log so the UI can show a scrollable history.
+        append_log_entry(task_name, text, _state=state)
 
     return _callback
 
@@ -343,6 +387,36 @@ def set_progress(task_name: str, fraction: float, text: str = "") -> None:
 # UI rendering helper
 # ---------------------------------------------------------------------------
 
+# Maximum number of log entries displayed in the activity log widget to
+# keep the DOM from growing unboundedly during very long runs.
+_ACTIVITY_LOG_MAX_LINES = 200
+
+
+def _render_activity_log(name: str, *, max_lines: int = _ACTIVITY_LOG_MAX_LINES) -> None:
+    """Render a scrollable activity-log container for a running task.
+
+    Shows the most recent *max_lines* log entries inside a styled
+    container so the user can watch processing steps stream in without
+    the page jumping around.
+    """
+    entries = get_task_log(name)
+    if not entries:
+        return
+
+    # Limit to the most recent entries.
+    display = entries[-max_lines:]
+
+    lines: list[str] = []
+    for ts, msg in display:
+        dt = datetime.datetime.fromtimestamp(ts)
+        stamp = dt.strftime("%H:%M:%S")
+        lines.append(f"[{stamp}]  {msg}")
+
+    log_text = "\n".join(lines)
+
+    with st.expander("📋 Activity Log", expanded=True):
+        st.code(log_text, language=None)
+
 
 def render_task_status(
     name: str,
@@ -350,6 +424,7 @@ def render_task_status(
     poll_interval: float = 3.0,
     success_message: str = "",
     show_progress: bool = True,
+    show_activity_log: bool = True,
 ) -> Any | None:
     """Render live progress / result UI for the named background task.
 
@@ -358,6 +433,9 @@ def render_task_status(
     * Show a progress bar + status text while the task is running via an
       ``@st.fragment(run_every=poll_interval)`` that reruns only the
       progress UI — **not** the entire app script.
+    * Optionally show a scrollable activity log (``show_activity_log``)
+      beneath the progress bar so the user can see every processing step
+      as it happens.
     * Trigger a full app rerun (``st.rerun(scope="app")``) once the task
       finishes so that calling code can pick up the result.
     * Show a success message (or error) when the task finishes.
@@ -374,6 +452,8 @@ def render_task_status(
                 frac, text = get_task_progress(name)
                 if show_progress:
                     st.progress(min(frac, 1.0), text=text or "Working…")
+                if show_activity_log:
+                    _render_activity_log(name)
             else:
                 # Task completed or errored — trigger a full app rerun so
                 # the caller picks up the result on the next execution.
