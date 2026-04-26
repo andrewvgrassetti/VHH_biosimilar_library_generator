@@ -1737,12 +1737,14 @@ class TestIterativeBatchScoring:
 
         # All score_batch calls should occur only during Phase 4 (final
         # validation).  The total number of sequences scored across all
-        # chunks must equal the number of library rows.
+        # chunks must equal the total unique variants generated (which
+        # may exceed len(lib) when the iterative strategy trims to
+        # max_variants at the end).
         batch_calls = [c for c in call_log if c.startswith("score_batch")]
         assert len(batch_calls) >= 1, f"Expected at least 1 score_batch call, got {len(batch_calls)}"
         total_scored = sum(int(c.split("(")[1].rstrip(")")) for c in batch_calls)
-        assert total_scored == len(lib) or total_scored > 0, (
-            f"Total scored sequences ({total_scored}) should match library size ({len(lib)})"
+        assert total_scored >= len(lib), (
+            f"Total scored sequences ({total_scored}) should be >= library size ({len(lib)})"
         )
 
         # No per-variant score() calls during library generation.

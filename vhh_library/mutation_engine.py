@@ -2145,10 +2145,6 @@ class MutationEngine:
         _report("validation", "Final scoring complete")
         logger.info("Phase 4 complete: %d variants scored", len(all_rows))
 
-        # ESM-2 full PLL for top candidates
-        _esm_rescore_full(all_rows, rescore_top_n * 2)
-        _report("validation", "Final scoring complete")
-
         # Trim to max_variants, keeping the best
         all_rows.sort(key=lambda r: r["combined_score"], reverse=True)
         if len(all_rows) > max_variants:
