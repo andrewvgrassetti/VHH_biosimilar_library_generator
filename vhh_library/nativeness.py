@@ -12,6 +12,14 @@ The scorer follows the same interface as other scorers in this project
 
 * ``score(vhh)`` → ``dict`` with at least ``"composite_score"``
 * ``predict_mutation_effect(vhh, position, new_aa)`` → ``float``
+
+Acceleration
+~~~~~~~~~~~~
+For batch scoring of variant libraries derived from a single parent sequence,
+:meth:`NativenessScorer.score_batch_prealigned` aligns the parent once via
+ANARCI and constructs pre-aligned AHo strings for all variants.  This bypasses
+the per-sequence ANARCI alignment bottleneck (~0.3–0.5 s each), reducing
+alignment cost from O(n_variants) to O(1).
 """
 
 from __future__ import annotations
@@ -26,6 +34,9 @@ if TYPE_CHECKING:
     from vhh_library.sequence import VHHSequence
 
 logger = logging.getLogger(__name__)
+
+# Expected length of an AHo-aligned antibody variable domain string.
+_AHO_ALIGNED_LENGTH = 149
 
 
 def _check_abnativ_deps() -> None:
@@ -71,11 +82,15 @@ class NativenessScorer:
         model_type: str = "VHH",
         batch_size: int = 128,
         cache_maxsize: int = 128,
+        ncpus: int = 1,
     ) -> None:
         _check_abnativ_deps()
         self._model_type = model_type
         self._batch_size = batch_size
+        self._ncpus = ncpus
         self._scoring_fn = None  # lazy-loaded
+        # Cache for parent AHo alignment — avoids re-aligning the same parent.
+        self._aho_cache: dict[str, tuple[str, dict[int, int]]] = {}
 
         # Build a per-instance LRU cache keyed by amino acid sequence string.
         # Using a wrapper + functools.lru_cache on a nested function gives us
@@ -168,11 +183,26 @@ class NativenessScorer:
                     is_VHH=True,
                     output_dir=tmpdir,
                     output_id="nativeness",
-                    run_parall_al=1,  # AbNatiV's API parameter name (upstream typo)
+                    run_parall_al=self._ncpus if self._ncpus > 1 else False,
+                    verbose=False,
                 )
         finally:
             anarci_logger.setLevel(previous_level)
 
+        return self._extract_scores(scores_df, len(sequences))
+
+    # ------------------------------------------------------------------
+    # Score extraction helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_scores(scores_df, expected_count: int) -> list[float]:
+        """Extract nativeness scores from an AbNatiV output DataFrame.
+
+        Handles varying column names across AbNatiV versions and pads
+        with a neutral score (0.5) when AbNatiV returns fewer rows than
+        expected (e.g. ANARCI silently rejects a sequence).
+        """
         # The scores DataFrame has a 'score' column (or similar).
         # Extract the nativeness score for each sequence.
         if "score" in scores_df.columns:
@@ -186,22 +216,225 @@ class NativenessScorer:
                 raw_scores = scores_df[numeric_cols[-1]].tolist()
             else:
                 logger.warning("Could not find score column in AbNatiV output; defaulting to 0.5")
-                raw_scores = [0.5] * len(sequences)
+                raw_scores = [0.5] * expected_count
 
         # Guard against AbNatiV returning fewer rows than input sequences
         # (e.g. its internal ANARCI alignment silently rejects a sequence).
-        if len(raw_scores) != len(sequences):
+        if len(raw_scores) != expected_count:
             logger.warning(
                 "AbNatiV returned %d scores for %d input sequences; missing scores will default to 0.5",
                 len(raw_scores),
-                len(sequences),
+                expected_count,
             )
             # Pad with neutral score for any sequences AbNatiV failed to score
-            raw_scores.extend([0.5] * (len(sequences) - len(raw_scores)))
+            raw_scores.extend([0.5] * (expected_count - len(raw_scores)))
 
         # AbNatiV scores are already in [0, 1] (approaching 1 for native).
         # Clamp to be safe.
         return [max(0.0, min(1.0, float(s))) for s in raw_scores]
+
+    # ------------------------------------------------------------------
+    # Pre-aligned scoring (ANARCI bypass for variant libraries)
+    # ------------------------------------------------------------------
+
+    def _align_parent(self, sequence: str) -> tuple[str, dict[int, int]]:
+        """Align *sequence* once with ANARCI and cache the AHo alignment.
+
+        Returns
+        -------
+        tuple[str, dict[int, int]]
+            ``(aho_aligned, seq_idx_to_aho_idx)`` where *aho_aligned* is
+            the 149-character AHo-aligned string and *seq_idx_to_aho_idx*
+            maps 0-based raw-sequence indices to their position in the
+            aligned string.
+        """
+        if sequence in self._aho_cache:
+            return self._aho_cache[sequence]
+
+        scoring_fn = self._load_scoring_fn()
+        seq_records = self._make_seq_records([sequence])
+
+        anarci_logger = logging.getLogger("anarci")
+        previous_level = anarci_logger.level
+        anarci_logger.setLevel(logging.WARNING)
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scores_df, _ = scoring_fn(
+                    model_type=self._model_type,
+                    seq_records=seq_records,
+                    batch_size=1,
+                    mean_score_only=True,
+                    do_align=True,
+                    is_VHH=True,
+                    output_dir=tmpdir,
+                    output_id="parent_align",
+                    run_parall_al=False,
+                    verbose=False,
+                )
+        finally:
+            anarci_logger.setLevel(previous_level)
+
+        if scores_df.empty or "aligned_seq" not in scores_df.columns:
+            raise ValueError("Failed to obtain AHo alignment for parent sequence")
+
+        aho_aligned: str = scores_df["aligned_seq"].iloc[0]
+
+        if len(aho_aligned) != _AHO_ALIGNED_LENGTH:
+            raise ValueError(
+                f"Parent AHo alignment has unexpected length {len(aho_aligned)} "
+                f"(expected {_AHO_ALIGNED_LENGTH})"
+            )
+
+        # Build mapping: raw sequence 0-based index → AHo aligned string index.
+        seq_idx_to_aho_idx: dict[int, int] = {}
+        seq_idx = 0
+        for aho_idx, char in enumerate(aho_aligned):
+            if char != "-":
+                seq_idx_to_aho_idx[seq_idx] = aho_idx
+                seq_idx += 1
+
+        self._aho_cache[sequence] = (aho_aligned, seq_idx_to_aho_idx)
+        logger.info(
+            "Cached AHo alignment for parent (%d residues → %d AHo positions)",
+            len(sequence),
+            len(seq_idx_to_aho_idx),
+        )
+        return aho_aligned, seq_idx_to_aho_idx
+
+    def score_batch_prealigned(
+        self,
+        parent_seq: str,
+        variant_seqs: list[str],
+    ) -> list[float]:
+        """Score variants by reusing the parent's AHo alignment — O(1) ANARCI.
+
+        For variant libraries derived from a single parent, this method
+        eliminates the per-sequence ANARCI alignment bottleneck:
+
+        1. Align the parent sequence **once** via ANARCI to obtain its
+           149-character AHo-aligned representation.
+        2. For each variant (which differs by only a few amino acids),
+           construct the AHo-aligned string by swapping mutated positions
+           in the parent alignment.
+        3. Score all pre-aligned variants in a single ``abnativ_scoring``
+           call with ``do_align=False``.
+
+        Falls back to :meth:`score_batch` if pre-alignment fails (e.g.
+        parent alignment error, length mismatch).
+
+        Parameters
+        ----------
+        parent_seq : str
+            Raw amino acid string of the parent / wild-type sequence.
+        variant_seqs : list[str]
+            Raw amino acid strings of the variant sequences.
+
+        Returns
+        -------
+        list[float]
+            Nativeness scores in [0, 1] for each variant.
+        """
+        if not variant_seqs:
+            return []
+
+        # Step 1: obtain parent AHo alignment
+        try:
+            aho_parent, seq_to_aho = self._align_parent(parent_seq)
+        except Exception:
+            logger.warning(
+                "Pre-alignment of parent failed; falling back to standard batch scoring",
+                exc_info=True,
+            )
+            return self._score_sequences(variant_seqs)
+
+        aho_parent_list = list(aho_parent)
+
+        # Step 2: build pre-aligned AHo strings for each variant
+        from Bio.Seq import Seq
+        from Bio.SeqRecord import SeqRecord
+
+        prealigned_records: list[tuple[int, SeqRecord]] = []
+        fallback_indices: list[int] = []
+
+        for i, variant_seq in enumerate(variant_seqs):
+            if len(variant_seq) != len(parent_seq):
+                # Length differs — alignment may change, fall back
+                fallback_indices.append(i)
+                continue
+
+            variant_aho = aho_parent_list.copy()
+            ok = True
+            for seq_idx, (p_aa, v_aa) in enumerate(zip(parent_seq, variant_seq)):
+                if p_aa != v_aa:
+                    aho_idx = seq_to_aho.get(seq_idx)
+                    if aho_idx is None:
+                        ok = False
+                        break
+                    variant_aho[aho_idx] = v_aa
+
+            if not ok:
+                fallback_indices.append(i)
+                continue
+
+            aho_str = "".join(variant_aho)
+            if len(aho_str) != _AHO_ALIGNED_LENGTH:
+                fallback_indices.append(i)
+                continue
+
+            prealigned_records.append(
+                (i, SeqRecord(Seq(aho_str), id=f"var_{i}", description=""))
+            )
+
+        # Step 3: score pre-aligned variants (no ANARCI)
+        scores: list[float] = [0.5] * len(variant_seqs)
+
+        if prealigned_records:
+            scoring_fn = self._load_scoring_fn()
+            ordered_records = [rec for _, rec in prealigned_records]
+            ordered_indices = [idx for idx, _ in prealigned_records]
+
+            anarci_logger = logging.getLogger("anarci")
+            previous_level = anarci_logger.level
+            anarci_logger.setLevel(logging.WARNING)
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    result_df, _ = scoring_fn(
+                        model_type=self._model_type,
+                        seq_records=ordered_records,
+                        batch_size=self._batch_size,
+                        mean_score_only=True,
+                        do_align=False,
+                        is_VHH=True,
+                        output_dir=tmpdir,
+                        output_id="prealigned",
+                        run_parall_al=False,
+                        verbose=False,
+                    )
+            except Exception:
+                logger.warning(
+                    "Pre-aligned scoring failed; falling back to standard batch",
+                    exc_info=True,
+                )
+                return self._score_sequences(variant_seqs)
+            finally:
+                anarci_logger.setLevel(previous_level)
+
+            raw = self._extract_scores(result_df, len(ordered_records))
+            for idx, score in zip(ordered_indices, raw):
+                scores[idx] = score
+
+        # Step 4: handle fallback sequences (different length, mapping issues)
+        if fallback_indices:
+            fallback_seqs = [variant_seqs[i] for i in fallback_indices]
+            logger.info(
+                "Scoring %d fallback sequences with ANARCI alignment",
+                len(fallback_seqs),
+            )
+            fallback_scores = self._score_sequences(fallback_seqs)
+            for idx, score in zip(fallback_indices, fallback_scores):
+                scores[idx] = score
+
+        return scores
 
     # ------------------------------------------------------------------
     # Public interface

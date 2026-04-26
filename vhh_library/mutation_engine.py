@@ -1049,7 +1049,7 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback)
+            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
         elif strategy == "random":
             total_steps = 2 + (1 if has_ml_stability else 0) + (1 if has_esm_progressive else 0)
             step = 1
@@ -1085,7 +1085,7 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback)
+            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
         elif strategy == "iterative":
             rows = self._generate_iterative(
                 vhh_sequence,
@@ -1215,12 +1215,21 @@ class MutationEngine:
         self,
         rows: list[dict],
         progress_callback: Callable[[IterativeProgress], None] | None = None,
+        vhh_sequence: VHHSequence | None = None,
     ) -> list[dict]:
         """Batch-score nativeness for library rows and recompute combined scores.
 
         This replaces per-variant AbNatiV calls with a single batch call,
         avoiding repeated ANARCI alignment overhead that caused Streamlit
         timeouts during library generation.
+
+        When *vhh_sequence* is provided, the scorer's pre-aligned path is
+        used: the parent is aligned once via ANARCI and all variants reuse
+        that alignment with ``do_align=False``, reducing alignment cost
+        from O(n) to O(1).
+
+        Identical sequences are deduplicated before scoring so that the
+        same variant is never sent to AbNatiV twice.
 
         Sequences are scored in chunks (default 50) so that the progress
         callback fires between chunks, providing visible feedback during
@@ -1231,6 +1240,9 @@ class MutationEngine:
         progress_callback : Callable[[IterativeProgress], None] | None
             Optional callback fired before, during, and after the batch
             scoring operation.
+        vhh_sequence : VHHSequence | None
+            Parent/wild-type sequence.  When provided, enables the
+            pre-aligned scoring fast path that bypasses per-variant ANARCI.
         """
         if not rows:
             return rows
@@ -1255,65 +1267,128 @@ class MutationEngine:
             )
 
         sequences = [r["aa_sequence"] for r in rows]
-        if hasattr(self._nativeness_scorer, "score_batch"):
-            chunk_size = _NATIVENESS_BATCH_CHUNK
-            n_chunks = (n_seqs + chunk_size - 1) // chunk_size
-            logger.info("Scoring nativeness for %d sequences in %d chunk(s)", n_seqs, n_chunks)
+
+        # ------------------------------------------------------------------
+        # Deduplicate sequences — avoid scoring identical variants twice.
+        # ------------------------------------------------------------------
+        unique_seqs: list[str] = []
+        seq_to_index: dict[str, int] = {}
+        row_to_unique: list[int] = []
+        for seq in sequences:
+            if seq not in seq_to_index:
+                seq_to_index[seq] = len(unique_seqs)
+                unique_seqs.append(seq)
+            row_to_unique.append(seq_to_index[seq])
+
+        n_unique = len(unique_seqs)
+        dedup_saved = n_seqs - n_unique
+        if dedup_saved > 0:
+            logger.info(
+                "Deduplication: %d unique sequences from %d total (saved %d AbNatiV calls)",
+                n_unique,
+                n_seqs,
+                dedup_saved,
+            )
+
+        # ------------------------------------------------------------------
+        # Choose scoring path: pre-aligned (fast) or standard (fallback).
+        # ------------------------------------------------------------------
+        parent_seq = vhh_sequence.sequence if vhh_sequence is not None else None
+        use_prealigned = (
+            parent_seq is not None
+            and hasattr(self._nativeness_scorer, "score_batch_prealigned")
+        )
+
+        if use_prealigned:
+            logger.info(
+                "Using pre-aligned scoring path (%d unique sequences, parent length %d)",
+                n_unique,
+                len(parent_seq),
+            )
             _report(
                 "scoring_nativeness_start",
-                f"Scoring nativeness ({n_seqs:,} sequences, {n_chunks} chunk(s))…",
+                f"Scoring nativeness — pre-aligned ({n_unique:,} unique sequences)…",
                 step=0,
-                total=n_chunks,
+                total=1,
             )
-            nat_scores: list[float] = []
-            for chunk_idx in range(n_chunks):
-                start = chunk_idx * chunk_size
-                end = min(start + chunk_size, n_seqs)
-                chunk_seqs = sequences[start:end]
-                logger.info(
-                    "Nativeness chunk %d/%d: scoring sequences %d–%d",
-                    chunk_idx + 1,
-                    n_chunks,
-                    start + 1,
-                    end,
+            try:
+                unique_scores = self._nativeness_scorer.score_batch_prealigned(
+                    parent_seq, unique_seqs,
                 )
-                chunk_scores = self._nativeness_scorer.score_batch(chunk_seqs)
-                nat_scores.extend(chunk_scores)
+            except Exception:
+                logger.warning(
+                    "Pre-aligned scoring failed; falling back to chunked batch",
+                    exc_info=True,
+                )
+                use_prealigned = False
+            else:
                 _report(
-                    "scoring_nativeness_progress",
-                    f"Scoring nativeness: {end:,}/{n_seqs:,} sequences…",
-                    step=chunk_idx + 1,
+                    "scoring_nativeness_done",
+                    f"Nativeness scoring complete ({n_unique:,} unique sequences, pre-aligned)",
+                    step=1,
+                    total=1,
+                )
+
+        if not use_prealigned:
+            # Standard chunked batch scoring path.
+            if hasattr(self._nativeness_scorer, "score_batch"):
+                chunk_size = _NATIVENESS_BATCH_CHUNK
+                n_chunks = (n_unique + chunk_size - 1) // chunk_size
+                logger.info("Scoring nativeness for %d unique sequences in %d chunk(s)", n_unique, n_chunks)
+                _report(
+                    "scoring_nativeness_start",
+                    f"Scoring nativeness ({n_unique:,} unique sequences, {n_chunks} chunk(s))…",
+                    step=0,
                     total=n_chunks,
                 )
-            _report(
-                "scoring_nativeness_done",
-                f"Nativeness scoring complete ({n_seqs:,} sequences)",
-                step=n_chunks,
-                total=n_chunks,
-            )
-        else:
-            # Fallback: score individually through the cached scorer interface.
-            # This path is only reached when the scorer lacks score_batch()
-            # (NativenessScorer always has it; custom/mock scorers might not).
-            # The dummy object is intentionally minimal — NativenessScorer.score()
-            # only reads vhh.sequence via _cached_score(vhh.sequence).
-            logger.info("Scoring nativeness for %d sequences individually (no score_batch)", n_seqs)
-            _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
-            nat_scores = []
-            _progress_interval = max(n_seqs // 20, 1)
-            for i, seq in enumerate(sequences):
-                dummy = object.__new__(VHHSequence)
-                dummy.sequence = seq
-                nat_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
-                if (i + 1) % _progress_interval == 0:
-                    logger.info("Nativeness scoring: %d/%d sequences", i + 1, n_seqs)
+                unique_scores: list[float] = []
+                for chunk_idx in range(n_chunks):
+                    start = chunk_idx * chunk_size
+                    end = min(start + chunk_size, n_unique)
+                    chunk_seqs = unique_seqs[start:end]
+                    logger.info(
+                        "Nativeness chunk %d/%d: scoring sequences %d–%d",
+                        chunk_idx + 1,
+                        n_chunks,
+                        start + 1,
+                        end,
+                    )
+                    chunk_scores = self._nativeness_scorer.score_batch(chunk_seqs)
+                    unique_scores.extend(chunk_scores)
                     _report(
                         "scoring_nativeness_progress",
-                        f"Scoring nativeness: {i + 1:,}/{n_seqs:,} sequences…",
-                        step=i + 1,
-                        total=n_seqs,
+                        f"Scoring nativeness: {end:,}/{n_unique:,} sequences…",
+                        step=chunk_idx + 1,
+                        total=n_chunks,
                     )
-            _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_seqs:,} sequences)")
+                _report(
+                    "scoring_nativeness_done",
+                    f"Nativeness scoring complete ({n_unique:,} unique sequences)",
+                    step=n_chunks,
+                    total=n_chunks,
+                )
+            else:
+                # Fallback: score individually through the cached scorer interface.
+                logger.info("Scoring nativeness for %d unique sequences individually (no score_batch)", n_unique)
+                _report("scoring_nativeness_start", f"Scoring nativeness ({n_unique:,} unique sequences)…")
+                unique_scores = []
+                _progress_interval = max(n_unique // 20, 1)
+                for i, seq in enumerate(unique_seqs):
+                    dummy = object.__new__(VHHSequence)
+                    dummy.sequence = seq
+                    unique_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
+                    if (i + 1) % _progress_interval == 0:
+                        logger.info("Nativeness scoring: %d/%d sequences", i + 1, n_unique)
+                        _report(
+                            "scoring_nativeness_progress",
+                            f"Scoring nativeness: {i + 1:,}/{n_unique:,} sequences…",
+                            step=i + 1,
+                            total=n_unique,
+                        )
+                _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_unique:,} unique sequences)")
+
+        # Map unique scores back to all rows (undoing deduplication).
+        nat_scores = [unique_scores[row_to_unique[i]] for i in range(n_seqs)]
 
         for row, nat in zip(rows, nat_scores):
             row["nativeness_score"] = nat
@@ -1606,12 +1681,14 @@ class MutationEngine:
                             return self._batch_fill_nativeness(
                                 self._batch_fill_stability(rows, progress_callback=progress_callback),
                                 progress_callback=progress_callback,
+                                vhh_sequence=vhh_sequence,
                             )
                         return rows
         if _batch_score:
             return self._batch_fill_nativeness(
                 self._batch_fill_stability(rows, progress_callback=progress_callback),
                 progress_callback=progress_callback,
+                vhh_sequence=vhh_sequence,
             )
         return rows
 
@@ -1695,6 +1772,7 @@ class MutationEngine:
             return self._batch_fill_nativeness(
                 self._batch_fill_stability(rows, progress_callback=progress_callback),
                 progress_callback=progress_callback,
+                vhh_sequence=vhh_sequence,
             )
         return rows
 
@@ -1780,6 +1858,7 @@ class MutationEngine:
             return self._batch_fill_nativeness(
                 self._batch_fill_stability(rows, progress_callback=progress_callback),
                 progress_callback=progress_callback,
+                vhh_sequence=vhh_sequence,
             )
         return rows
 
@@ -2138,7 +2217,7 @@ class MutationEngine:
         _report("scoring_stability", f"Phase 4 — Batch scoring stability ({len(all_rows):,} variants)…")
         all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
         _report("scoring_nativeness", f"Phase 4 — Batch scoring nativeness ({len(all_rows):,} variants)…")
-        all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback)
+        all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
 
         # ESM-2 full PLL for top candidates
         _esm_rescore_full(all_rows, rescore_top_n * 2)
