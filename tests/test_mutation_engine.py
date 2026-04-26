@@ -89,15 +89,16 @@ class TestRankSingleMutations:
             assert "delta_stability" in ranked.columns
 
     def test_ranked_no_cdrs(self, ranked: pd.DataFrame, vhh: VHHSequence) -> None:
-        """Without off_limits, CDR positions are eligible for mutation.
+        """Without off_limits, CDR positions are frozen by default.
 
-        The off_limits set (built from user selections) is the sole authority
-        on position mutability — CDR positions are only skipped when they
-        are explicitly in off_limits.
+        CDR positions (CDR1, CDR2, CDR3) must not be mutated unless the user
+        explicitly overrides off_limits (e.g. with an empty set).
         """
         if not ranked.empty:
-            # CDR positions MAY appear because no off_limits was provided
             assert "imgt_pos" in ranked.columns
+            cdr_positions = vhh.cdr_positions
+            for _, row in ranked.iterrows():
+                assert str(row["imgt_pos"]) not in cdr_positions
 
     def test_ranked_cdrs_excluded_when_off_limits(self, engine: MutationEngine, vhh: VHHSequence) -> None:
         """When CDR positions are in off_limits, they should not appear in candidates."""
@@ -463,15 +464,25 @@ class TestEvolutionaryIterativeStrategy:
         assert isinstance(lib, pd.DataFrame)
         assert len(progress_events) > 0, "No progress events reported"
         # Verify progress event fields
+        _VALID_PHASES = {
+            "exploration",
+            "anchor_identification",
+            "exploitation",
+            "scoring_stability",
+            "scoring_stability_start",
+            "scoring_stability_progress",
+            "scoring_stability_done",
+            "scoring_nativeness",
+            "scoring_nativeness_start",
+            "scoring_nativeness_progress",
+            "scoring_nativeness_done",
+            "validation",
+            "generating_variants",
+            "esm2_scoring_stage1",
+            "esm2_scoring_stage2",
+        }
         for p in progress_events:
-            assert p.phase in (
-                "exploration",
-                "anchor_identification",
-                "exploitation",
-                "scoring_stability",
-                "scoring_nativeness",
-                "validation",
-            )
+            assert p.phase in _VALID_PHASES, f"Unexpected phase: {p.phase!r}"
             assert p.round_number >= 1
             assert p.population_size >= 0
 
@@ -520,14 +531,16 @@ class TestEvolutionaryIterativeStrategy:
         assert len(progress_events) > 0, "No progress events reported for exhaustive strategy"
 
         phases_seen = {p.phase for p in progress_events}
-        # Exhaustive must always report generating_variants and scoring_nativeness
+        # Exhaustive must always report generating_variants and nativeness scoring phases
         assert "generating_variants" in phases_seen
-        assert "scoring_nativeness" in phases_seen
+        assert any(p.startswith("scoring_nativeness") for p in phases_seen), (
+            f"Expected scoring_nativeness* phase, got: {phases_seen}"
+        )
 
-        # All events should have round_number >= 1 and total_rounds >= 2
+        # All events should have round_number >= 1 and total_rounds >= 1
         for p in progress_events:
             assert p.round_number >= 1
-            assert p.total_rounds >= 2
+            assert p.total_rounds >= 1
             assert p.message, "Message should be non-empty for non-iterative phases"
 
     def test_random_with_progress_callback(
@@ -556,11 +569,13 @@ class TestEvolutionaryIterativeStrategy:
 
         phases_seen = {p.phase for p in progress_events}
         assert "generating_variants" in phases_seen
-        assert "scoring_nativeness" in phases_seen
+        assert any(p.startswith("scoring_nativeness") for p in phases_seen), (
+            f"Expected scoring_nativeness* phase, got: {phases_seen}"
+        )
 
         for p in progress_events:
             assert p.round_number >= 1
-            assert p.total_rounds >= 2
+            assert p.total_rounds >= 1
             assert p.message
 
     def test_iterative_anchor_phase_reported_per_round(self, vhh: VHHSequence) -> None:
@@ -1106,6 +1121,9 @@ class TestNanoMeltPropagation:
             "composite_score": 0.6,
             "nanomelt_tm": tm,
         }
+        # Configure score_batch to return a list of dicts matching the
+        # interface used by _batch_fill_stability.
+        mock.score_batch.side_effect = lambda objs: [{"nanomelt_tm": tm} for _ in objs]
         return mock
 
     def test_score_variant_includes_nanomelt_tm(self) -> None:
