@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest import mock
 
 import pytest
@@ -21,6 +22,22 @@ SAMPLE_VHH = (
 )
 
 
+def _abnativ_weights_available() -> bool:
+    """Return True when AbNatiV pre-trained weights are present on disk."""
+    try:
+        from abnativ.init import PRETRAINED_MODELS_DIR
+
+        return os.path.isdir(PRETRAINED_MODELS_DIR)
+    except Exception:
+        return False
+
+
+_skip_no_weights = pytest.mark.skipif(
+    not _abnativ_weights_available(),
+    reason="AbNatiV model weights not downloaded (run: vhh-init)",
+)
+
+
 @pytest.fixture(scope="module")
 def scorer() -> NativenessScorer:
     return NativenessScorer(model_type="VHH")
@@ -35,12 +52,14 @@ class TestNativenessScorer:
     def test_instantiation(self, scorer: NativenessScorer) -> None:
         assert scorer is not None
 
+    @_skip_no_weights
     def test_score_returns_dict_with_composite(self, scorer: NativenessScorer, vhh: VHHSequence) -> None:
         result = scorer.score(vhh)
         assert isinstance(result, dict)
         assert "composite_score" in result
         assert 0.0 <= result["composite_score"] <= 1.0
 
+    @_skip_no_weights
     def test_predict_mutation_effect_returns_float(self, scorer: NativenessScorer, vhh: VHHSequence) -> None:
         # Pick a framework position to mutate
         pos = list(vhh.imgt_numbered.keys())[0]
@@ -49,6 +68,7 @@ class TestNativenessScorer:
         delta = scorer.predict_mutation_effect(vhh, pos, new_aa)
         assert isinstance(delta, float)
 
+    @_skip_no_weights
     def test_score_batch(self, scorer: NativenessScorer) -> None:
         sequences = [SAMPLE_VHH, SAMPLE_VHH[:60] + "A" + SAMPLE_VHH[61:]]
         scores = scorer.score_batch(sequences)
@@ -57,6 +77,7 @@ class TestNativenessScorer:
             assert isinstance(s, float)
             assert 0.0 <= s <= 1.0
 
+    @_skip_no_weights
     def test_score_batch_empty(self, scorer: NativenessScorer) -> None:
         assert scorer.score_batch([]) == []
 

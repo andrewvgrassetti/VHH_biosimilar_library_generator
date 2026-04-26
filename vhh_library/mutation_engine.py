@@ -790,7 +790,10 @@ class MutationEngine:
         max_per_position: int = 1,
     ) -> pd.DataFrame:
         if off_limits is None:
-            off_limits = set()
+            # CDR positions are frozen by default — the mutation engine must
+            # not propose mutations inside CDR loops unless the caller
+            # explicitly provides a custom off_limits set.
+            off_limits = vhh_sequence.cdr_positions
 
         # Normalise off_limits to string keys
         off_limits_str = {str(p) for p in off_limits}
@@ -1307,7 +1310,7 @@ class MutationEngine:
             _report(
                 "scoring_nativeness_start",
                 f"Scoring nativeness — pre-aligned ({n_unique:,} unique sequences)…",
-                step=0,
+                step=1,
                 total=1,
             )
             try:
@@ -1338,7 +1341,7 @@ class MutationEngine:
                 _report(
                     "scoring_nativeness_start",
                     f"Scoring nativeness ({n_unique:,} unique sequences, {n_chunks} chunk(s))…",
-                    step=0,
+                    step=1,
                     total=n_chunks,
                 )
                 unique_scores: list[float] = []
@@ -1370,7 +1373,12 @@ class MutationEngine:
             else:
                 # Fallback: score individually through the cached scorer interface.
                 logger.info("Scoring nativeness for %d unique sequences individually (no score_batch)", n_unique)
-                _report("scoring_nativeness_start", f"Scoring nativeness ({n_unique:,} unique sequences)…")
+                _report(
+                    "scoring_nativeness_start",
+                    f"Scoring nativeness ({n_unique:,} unique sequences)…",
+                    step=1,
+                    total=n_unique,
+                )
                 unique_scores = []
                 _progress_interval = max(n_unique // 20, 1)
                 for i, seq in enumerate(unique_seqs):
@@ -1385,7 +1393,12 @@ class MutationEngine:
                             step=i + 1,
                             total=n_unique,
                         )
-                _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_unique:,} unique sequences)")
+                _report(
+                    "scoring_nativeness_done",
+                    f"Nativeness scoring complete ({n_unique:,} unique sequences)",
+                    step=n_unique,
+                    total=n_unique,
+                )
 
         # Map unique scores back to all rows (undoing deduplication).
         nat_scores = [unique_scores[row_to_unique[i]] for i in range(n_seqs)]
@@ -1475,7 +1488,7 @@ class MutationEngine:
                 _report(
                     "scoring_stability_start",
                     f"Scoring stability via NanoMelt ({n_seqs:,} sequences)…",
-                    step=0,
+                    step=1,
                     total=n_chunks,
                 )
 
@@ -1562,7 +1575,7 @@ class MutationEngine:
                 _report(
                     "scoring_stability_start",
                     f"Scoring stability via ESM-2 ({n_seqs:,} sequences)…",
-                    step=0,
+                    step=1,
                     total=n_chunks,
                 )
 
