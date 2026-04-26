@@ -299,6 +299,12 @@ class NativenessScorer:
                 seq_idx_to_aho_idx[seq_idx] = aho_idx
                 seq_idx += 1
 
+        if len(seq_idx_to_aho_idx) != len(sequence):
+            raise ValueError(
+                f"AHo alignment maps {len(seq_idx_to_aho_idx)} residues "
+                f"but parent sequence has {len(sequence)} — alignment is incomplete"
+            )
+
         self._aho_cache[sequence] = (aho_aligned, seq_idx_to_aho_idx)
         logger.info(
             "Cached AHo alignment for parent (%d residues → %d AHo positions)",

@@ -1,17 +1,16 @@
-# Defense-in-depth: generous server timeouts to prevent WebSocket drops
-# during long-running background tasks.  The background worker pattern in
+# Defense-in-depth: generous server settings to support long-running
+# background tasks.  The background worker pattern in
 # vhh_library/background.py is the primary mitigation; these settings are
 # a safety net.
+#
+# NOTE: server.pingTimeout and server.scriptRunnerCommandTimeout were
+# removed in recent Streamlit versions.  For longer disconnects,
+# background.py persists results to disk and app.py recovers them on the
+# next session init.
 
 [server]
 maxMessageSize = 500
 enableWebsocketCompression = false
-# Keep the WebSocket alive for up to 5 minutes without a pong response.
-# This covers brief laptop-sleep / network-blip scenarios.  For longer
-# disconnects, background.py persists results to disk and app.py recovers
-# them on the next session init.
-pingTimeout = 300
-scriptRunnerCommandTimeout = 600
 
 [runner]
 fastReruns = true
