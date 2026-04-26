@@ -1851,18 +1851,20 @@ class TestBatchProgressCallbacks:
             nativeness_scorer=_MockNativenessScorer(),
         )
 
-        # Create enough rows to trigger multiple chunks.
+        # Create enough *unique* rows to trigger multiple chunks.
+        # Deduplication means identical sequences are scored once, so
+        # each row must have a distinct aa_sequence.
         n_rows = _NATIVENESS_BATCH_CHUNK + 10
         rows = [
             {
-                "aa_sequence": "QVQLVESGGGLVQ",
+                "aa_sequence": f"QVQLVESGGGLVQ{chr(65 + (i % 26))}{i:04d}",
                 "nativeness_score": 0.0,
                 "stability_score": 0.5,
                 "surface_hydrophobicity_score": 0.0,
                 "orthogonal_stability_score": 0.5,
                 "combined_score": 0.0,
             }
-            for _ in range(n_rows)
+            for i in range(n_rows)
         ]
 
         engine._batch_fill_nativeness(rows, progress_callback=_on_progress)
@@ -2127,3 +2129,186 @@ class TestBatchProgressCallbacks:
         phases = [p.phase for p in progress_events]
         assert "scoring_nativeness_start" in phases, f"Expected scoring_nativeness_start, got {phases}"
         assert "scoring_nativeness_done" in phases, f"Expected scoring_nativeness_done, got {phases}"
+
+
+class TestDeduplication:
+    """Tests for sequence deduplication in batch nativeness scoring."""
+
+    def test_deduplication_reduces_scoring_calls(self) -> None:
+        """Identical sequences should be scored only once."""
+        call_count = 0
+        original_score_batch = _MockNativenessScorer.score_batch
+
+        class _CountingScorer(_MockNativenessScorer):
+            def score_batch(self, sequences: list[str]) -> list[float]:
+                nonlocal call_count
+                call_count += len(sequences)
+                return original_score_batch(self, sequences)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_CountingScorer(),
+        )
+
+        # 10 rows but only 3 unique sequences.
+        rows = []
+        for i in range(10):
+            seq = f"SEQVARIANT{i % 3}"
+            rows.append(
+                {
+                    "aa_sequence": seq,
+                    "nativeness_score": 0.0,
+                    "stability_score": 0.5,
+                    "surface_hydrophobicity_score": 0.0,
+                    "orthogonal_stability_score": 0.5,
+                    "combined_score": 0.0,
+                }
+            )
+
+        engine._batch_fill_nativeness(rows)
+
+        # Only 3 unique sequences should have been scored.
+        assert call_count == 3, f"Expected 3 scored sequences, got {call_count}"
+        # All rows should have non-zero nativeness scores.
+        for r in rows:
+            assert r["nativeness_score"] != 0.0
+
+    def test_deduplication_preserves_score_mapping(self) -> None:
+        """Rows with identical sequences must receive the same nativeness score."""
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq_a = "AAASEQAAA"
+        seq_b = "BBBSEQBBB"
+        rows = [
+            {
+                "aa_sequence": seq_a,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": seq_b,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": seq_a,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+        ]
+
+        engine._batch_fill_nativeness(rows)
+
+        # rows[0] and rows[2] have the same sequence → same score.
+        assert rows[0]["nativeness_score"] == rows[2]["nativeness_score"]
+        # rows[1] has a different sequence → may differ.
+        assert rows[1]["nativeness_score"] != 0.0
+
+
+class TestPrealignedScoring:
+    """Tests for the pre-aligned scoring fast path."""
+
+    def test_prealigned_path_selected_when_parent_provided(self) -> None:
+        """When vhh_sequence is provided and scorer has score_batch_prealigned,
+        the pre-aligned path should be attempted."""
+        called_prealigned = False
+        called_standard = False
+
+        class _TrackingScorer(_MockNativenessScorer):
+            def score_batch_prealigned(self, parent_seq: str, variant_seqs: list[str]) -> list[float]:
+                nonlocal called_prealigned
+                called_prealigned = True
+                return self.score_batch(variant_seqs)
+
+            def score_batch(self, sequences: list[str]) -> list[float]:
+                nonlocal called_standard
+                called_standard = True
+                return super().score_batch(sequences)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_TrackingScorer(),
+        )
+
+        # Create a minimal VHHSequence-like object.
+        class _FakeVHH:
+            sequence = "PARENT_SEQ"
+
+        rows = [
+            {
+                "aa_sequence": "PARENT_SEQ_V1",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            }
+        ]
+
+        engine._batch_fill_nativeness(rows, vhh_sequence=_FakeVHH())
+
+        assert called_prealigned, "Expected pre-aligned scoring path to be used"
+
+    def test_fallback_when_no_parent(self) -> None:
+        """Without vhh_sequence, standard batch scoring should be used."""
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        rows = [
+            {
+                "aa_sequence": "SOMEVARIANTA",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            }
+        ]
+
+        # No vhh_sequence → standard path.
+        engine._batch_fill_nativeness(rows)
+        assert rows[0]["nativeness_score"] != 0.0
+
+    def test_fallback_on_prealigned_error(self) -> None:
+        """If score_batch_prealigned raises, fallback to standard scoring."""
+
+        class _FailingPrealignedScorer(_MockNativenessScorer):
+            def score_batch_prealigned(self, parent_seq: str, variant_seqs: list[str]) -> list[float]:
+                raise RuntimeError("Pre-aligned scoring failed")
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_FailingPrealignedScorer(),
+        )
+
+        class _FakeVHH:
+            sequence = "PARENT_SEQ"
+
+        rows = [
+            {
+                "aa_sequence": "PARENT_SEQ_V1",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            }
+        ]
+
+        # Should not raise — falls back to standard scoring.
+        engine._batch_fill_nativeness(rows, vhh_sequence=_FakeVHH())
+        assert rows[0]["nativeness_score"] != 0.0
