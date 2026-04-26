@@ -69,14 +69,27 @@ _ANTAGONISTIC_SCALE = 2.0  # Penalty multiplier for antagonistic interactions
 # degrade gracefully — they return partial results instead of hanging.
 _OPERATION_TIMEOUT_SECONDS: int = 300  # 5 minutes
 
+# Length of the truncated sequence used for backend health check probes.
+# Short enough to be fast, long enough to exercise the model pipeline.
+_HEALTH_CHECK_SEQ_LENGTH: int = 50
+
 
 class OperationTimeoutError(Exception):
     """Raised when a library generation sub-operation exceeds its time budget."""
 
 
 @contextlib.contextmanager
-def _timed_operation(description: str, progress_callback: object | None = None):
-    """Log wall-clock time for an operation.  Always prints to stdout."""
+def _timed_operation(description: str, progress_callback: object | None = None):  # noqa: ARG001
+    """Log wall-clock time for an operation.  Always prints to stdout.
+
+    Parameters
+    ----------
+    description : str
+        Human-readable label for the operation being timed.
+    progress_callback : object | None
+        Reserved for future use — not currently consumed but accepted
+        so callers can forward their callback without extra logic.
+    """
     start = _time.monotonic()
     print(f"[TIMING] START: {description}", flush=True)
     logger.info("[TIMING] START: %s", description)
@@ -968,6 +981,7 @@ class MutationEngine:
 
         # ---- BACKEND HEALTH CHECK ---- probe each backend before generation
         _backend_status: dict[str, str] = {}
+        _probe_seq = vhh_sequence.sequence[:_HEALTH_CHECK_SEQ_LENGTH]
         if self._stability_scorer.nanomelt_predictor is not None:
             try:
                 _test_result = self._stability_scorer.nanomelt_predictor.score_sequence(vhh_sequence)
@@ -980,7 +994,7 @@ class MutationEngine:
 
         if self._stability_scorer.esm_scorer is not None:
             try:
-                _test_pll = self._stability_scorer.esm_scorer.score_batch([vhh_sequence.sequence[:50]])
+                _test_pll = self._stability_scorer.esm_scorer.score_batch([_probe_seq])
                 _backend_status["esm2"] = f"OK (pll={_test_pll[0]:.4f})" if _test_pll else "OK (empty)"
             except Exception as _exc:
                 _backend_status["esm2"] = f"FAILED: {_exc}"
@@ -990,7 +1004,7 @@ class MutationEngine:
 
         if hasattr(self._nativeness_scorer, "score_batch"):
             try:
-                _test_nat = self._nativeness_scorer.score_batch([vhh_sequence.sequence[:50]])
+                _test_nat = self._nativeness_scorer.score_batch([_probe_seq])
                 _backend_status["nativeness"] = f"OK (score={_test_nat[0]:.4f})" if _test_nat else "OK (empty)"
             except Exception as _exc:
                 _backend_status["nativeness"] = f"FAILED: {_exc}"

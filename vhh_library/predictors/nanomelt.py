@@ -346,16 +346,19 @@ class NanoMeltPredictor(Predictor):
 
     def score_batch_prealigned(
         self,
-        parent_sequence: str,
+        parent_sequence: str,  # noqa: ARG002
         variant_sequences: list[str],
     ) -> list[dict[str, float]]:
         """Score variants using NanoMelt with ``do_align=False``.
 
-        The parent sequence is aligned once (when ``do_align=True``) to
-        establish the alignment frame.  Variant sequences — which differ
-        from the parent only at a few point-mutation sites — are then
-        scored *without* re-running ANARCI alignment, reducing the cost
-        from O(n) ANARCI calls to O(1).
+        Variant sequences — which differ from the parent only at a few
+        point-mutation sites — are scored *without* re-running ANARCI
+        alignment, reducing the cost from O(n) ANARCI calls to O(1).
+
+        The ``parent_sequence`` parameter is accepted for API consistency
+        with :meth:`NativenessScorer.score_batch_prealigned` but is not
+        used by this implementation.  NanoMelt's ``do_align=False`` mode
+        does not require a reference alignment.
 
         Parameters
         ----------

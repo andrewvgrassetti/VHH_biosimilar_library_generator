@@ -324,7 +324,7 @@ class TestIntraLoopProgress:
 
 
 class TestTimeoutGracefulDegradation:
-    def test_batch_fill_stability_timeout_returns_partial(self, mock_vhh, capsys):
+    def test_batch_fill_stability_timeout_returns_partial(self, mock_vhh, capsys, monkeypatch):
         """When NanoMelt is slow, _batch_fill_stability should return with heuristic scores."""
         slow_predictor = _SlowNanoMeltPredictor(sleep_seconds=1.5)
         engine = _make_engine(nanomelt_predictor=slow_predictor)
@@ -357,19 +357,15 @@ class TestTimeoutGracefulDegradation:
         # should fire before chunk 2.
         import vhh_library.mutation_engine as me
 
-        original_timeout = me._OPERATION_TIMEOUT_SECONDS
-        me._OPERATION_TIMEOUT_SECONDS = 1  # 1 second timeout
-        try:
-            result = engine._batch_fill_stability(rows)
-        finally:
-            me._OPERATION_TIMEOUT_SECONDS = original_timeout
+        monkeypatch.setattr(me, "_OPERATION_TIMEOUT_SECONDS", 1)
+        result = engine._batch_fill_stability(rows)
 
         # Should return all 250 rows (some scored by NanoMelt, rest with heuristic)
         assert len(result) == 250
         captured = capsys.readouterr()
         assert "[TIMEOUT]" in captured.out
 
-    def test_batch_fill_nativeness_timeout_fills_neutral(self, mock_vhh, capsys):
+    def test_batch_fill_nativeness_timeout_fills_neutral(self, mock_vhh, capsys, monkeypatch):
         """When nativeness scorer is slow, should fill remaining with 0.5."""
 
         class _SlowNativenessScorer:
@@ -413,12 +409,8 @@ class TestTimeoutGracefulDegradation:
 
         import vhh_library.mutation_engine as me
 
-        original_timeout = me._OPERATION_TIMEOUT_SECONDS
-        me._OPERATION_TIMEOUT_SECONDS = 1
-        try:
-            result = engine._batch_fill_nativeness(rows)
-        finally:
-            me._OPERATION_TIMEOUT_SECONDS = original_timeout
+        monkeypatch.setattr(me, "_OPERATION_TIMEOUT_SECONDS", 1)
+        result = engine._batch_fill_nativeness(rows)
 
         # Should have returned rows — some nativeness may be 0.5 (timeout-filled)
         assert len(result) == 150
@@ -474,6 +466,8 @@ class TestBackendHealthCheck:
 class TestBackgroundDiagnostics:
     def test_worker_prints_start_and_completion(self, capsys):
         """submit_task _worker should print start and completion messages."""
+        import threading
+
         import vhh_library.background as bg
 
         # Set up mock session state
@@ -484,15 +478,18 @@ class TestBackgroundDiagnostics:
         original_st = bg.st
         bg.st = mock_st
         try:
+            done = threading.Event()
 
             def _test_work():
+                done.set()
                 return 42
 
             ok = bg.submit_task("test_diag", _test_work)
             assert ok is True
 
-            # Wait for thread to complete
-            time.sleep(1.0)
+            # Wait for thread to complete (fast — no sleeping)
+            done.wait(timeout=5.0)
+            time.sleep(0.1)  # brief settle for print buffer
 
             captured = capsys.readouterr()
             assert "[BG-THREAD] Background thread started for task 'test_diag'" in captured.out
@@ -502,6 +499,8 @@ class TestBackgroundDiagnostics:
 
     def test_worker_prints_failure(self, capsys):
         """submit_task _worker should print failure messages."""
+        import threading
+
         import vhh_library.background as bg
 
         state: dict = {}
@@ -511,14 +510,17 @@ class TestBackgroundDiagnostics:
         original_st = bg.st
         bg.st = mock_st
         try:
+            done = threading.Event()
 
             def _failing_work():
+                done.set()
                 raise ValueError("intentional test error")
 
             ok = bg.submit_task("test_fail", _failing_work)
             assert ok is True
 
-            time.sleep(1.0)
+            done.wait(timeout=5.0)
+            time.sleep(0.1)  # brief settle for print buffer
 
             captured = capsys.readouterr()
             assert "[BG-THREAD] Background thread started for task 'test_fail'" in captured.out
