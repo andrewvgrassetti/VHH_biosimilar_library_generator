@@ -284,6 +284,55 @@ class TestLazyLoading:
 
 
 # ---------------------------------------------------------------------------
+# Warm-up
+# ---------------------------------------------------------------------------
+
+
+class TestWarmUp:
+    """Verify warm_up() pre-loads the backend and runs a dummy prediction."""
+
+    def test_warm_up_loads_backend(self) -> None:
+        """warm_up() should trigger _ensure_backend and run a prediction."""
+        mock_backend = _make_mock_backend([65.0])
+        pred = _make_predictor_with_mock_backend(mock_backend)
+        pred.warm_up()
+        # The mock backend should have been called once with the warm-up sequence.
+        mock_backend.assert_called_once()
+        call_kwargs = mock_backend.call_args.kwargs
+        assert len(call_kwargs["seq_records"]) == 1
+        assert call_kwargs["seq_records"][0].id == "warmup"
+
+    def test_warm_up_is_non_fatal(self) -> None:
+        """If the backend raises during warm-up, it should not propagate."""
+
+        def _failing_backend(**kwargs):
+            raise RuntimeError("GPU unavailable")
+
+        mock_backend = MagicMock(side_effect=_failing_backend)
+        pred = _make_predictor_with_mock_backend(mock_backend)
+        # Must not raise — warm_up is non-fatal.
+        pred.warm_up()
+
+    def test_warm_up_before_score_batch(self, vhh: VHHSequence) -> None:
+        """After warm_up, score_batch still works normally."""
+        call_count = 0
+
+        def _counting_backend(**kwargs):
+            nonlocal call_count
+            n = len(kwargs["seq_records"])
+            call_count += 1
+            return pd.DataFrame({"NanoMelt Tm (C)": [70.0] * n})
+
+        mock_backend = MagicMock(side_effect=_counting_backend)
+        pred = _make_predictor_with_mock_backend(mock_backend)
+        pred.warm_up()
+        assert call_count == 1  # warm-up call
+        results = pred.score_batch([vhh, vhh])
+        assert call_count == 2  # score_batch call
+        assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
 # Device handling
 # ---------------------------------------------------------------------------
 
