@@ -12,7 +12,7 @@ import pytest
 
 abnativ = pytest.importorskip("abnativ", reason="abnativ not installed")
 
-from vhh_library.nativeness import NativenessScorer  # noqa: E402
+from vhh_library.nativeness import _AHO_ALIGNED_LENGTH, NativenessScorer  # noqa: E402
 from vhh_library.sequence import VHHSequence  # noqa: E402
 
 SAMPLE_VHH = (
@@ -140,15 +140,19 @@ class TestCacheMaxsize:
 class TestAlignParentValidation:
     """_align_parent must reject alignments that don't cover the full parent."""
 
+    @staticmethod
+    def _fake_aho(non_gap: str) -> str:
+        """Build a fake AHo-aligned string padded to _AHO_ALIGNED_LENGTH."""
+        return non_gap + "-" * (_AHO_ALIGNED_LENGTH - len(non_gap))
+
     def test_incomplete_mapping_raises(self) -> None:
         """If AHo alignment has fewer non-gap chars than the parent, raise."""
         import pandas as pd
 
         scorer = NativenessScorer(model_type="VHH")
 
-        # Build a fake 149-char AHo string with only 5 non-gap chars
-        # (parent has 10 chars → mismatch).
-        fake_aho = "ABCDE" + "-" * 144  # 5 non-gap + 144 gaps = 149
+        # 5 non-gap chars padded to _AHO_ALIGNED_LENGTH; parent has 10 → mismatch.
+        fake_aho = self._fake_aho("ABCDE")
 
         fake_df = pd.DataFrame({"aligned_seq": [fake_aho], "score": [0.9]})
         mock_fn = mock.Mock(return_value=(fake_df, pd.DataFrame()))
@@ -164,9 +168,9 @@ class TestAlignParentValidation:
         scorer = NativenessScorer(model_type="VHH")
 
         parent = "ABC"
-        # 3 non-gap + 146 gaps = 149
-        fake_aho = "A-B-C" + "-" * 144
-        assert len(fake_aho) == 149
+        # 5-char pattern "A-B-C" has 3 non-gap chars matching parent length.
+        fake_aho = "A-B-C" + "-" * (_AHO_ALIGNED_LENGTH - 5)
+        assert len(fake_aho) == _AHO_ALIGNED_LENGTH
 
         fake_df = pd.DataFrame({"aligned_seq": [fake_aho], "score": [0.9]})
         mock_fn = mock.Mock(return_value=(fake_df, pd.DataFrame()))
@@ -183,7 +187,7 @@ class TestAlignParentValidation:
         scorer = NativenessScorer(model_type="VHH")
 
         parent = "ABC"
-        fake_aho = "A-B-C" + "-" * 144
+        fake_aho = "A-B-C" + "-" * (_AHO_ALIGNED_LENGTH - 5)
         fake_df = pd.DataFrame({"aligned_seq": [fake_aho], "score": [0.9]})
         mock_fn = mock.Mock(return_value=(fake_df, pd.DataFrame()))
         scorer._scoring_fn = mock_fn
@@ -219,7 +223,7 @@ class TestScoreBatchPrealigned:
         parent = "ABC"
 
         # Set up parent alignment
-        fake_aho = "A-B-C" + "-" * 144
+        fake_aho = "A-B-C" + "-" * (_AHO_ALIGNED_LENGTH - 5)
         scorer._aho_cache[parent] = (fake_aho, {0: 0, 1: 2, 2: 4})
 
         # Mock _score_sequences for fallback path
