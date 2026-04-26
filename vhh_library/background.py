@@ -24,6 +24,7 @@ into the fresh ``session_state``.
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import tempfile
@@ -391,21 +392,19 @@ def set_progress(task_name: str, fraction: float, text: str = "") -> None:
 _ACTIVITY_LOG_MAX_LINES = 200
 
 
-def _render_activity_log(name: str) -> None:
+def _render_activity_log(name: str, *, max_lines: int = _ACTIVITY_LOG_MAX_LINES) -> None:
     """Render a scrollable activity-log container for a running task.
 
-    Shows the most recent log entries inside a styled container with a
-    fixed height so the user can watch processing steps stream in
-    without the page jumping around.
+    Shows the most recent *max_lines* log entries inside a styled
+    container so the user can watch processing steps stream in without
+    the page jumping around.
     """
-    import datetime
-
     entries = get_task_log(name)
     if not entries:
         return
 
     # Limit to the most recent entries.
-    display = entries[-_ACTIVITY_LOG_MAX_LINES:]
+    display = entries[-max_lines:]
 
     lines: list[str] = []
     for ts, msg in display:
