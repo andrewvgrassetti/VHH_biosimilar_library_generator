@@ -2183,12 +2183,30 @@ class TestDeduplication:
         seq_a = "AAASEQAAA"
         seq_b = "BBBSEQBBB"
         rows = [
-            {"aa_sequence": seq_a, "nativeness_score": 0.0, "stability_score": 0.5,
-             "surface_hydrophobicity_score": 0.0, "orthogonal_stability_score": 0.5, "combined_score": 0.0},
-            {"aa_sequence": seq_b, "nativeness_score": 0.0, "stability_score": 0.5,
-             "surface_hydrophobicity_score": 0.0, "orthogonal_stability_score": 0.5, "combined_score": 0.0},
-            {"aa_sequence": seq_a, "nativeness_score": 0.0, "stability_score": 0.5,
-             "surface_hydrophobicity_score": 0.0, "orthogonal_stability_score": 0.5, "combined_score": 0.0},
+            {
+                "aa_sequence": seq_a,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": seq_b,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": seq_a,
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
         ]
 
         engine._batch_fill_nativeness(rows)

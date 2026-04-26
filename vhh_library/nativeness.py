@@ -31,6 +31,8 @@ import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from vhh_library.sequence import VHHSequence
 
 logger = logging.getLogger(__name__)
@@ -183,7 +185,7 @@ class NativenessScorer:
                     is_VHH=True,
                     output_dir=tmpdir,
                     output_id="nativeness",
-                    run_parall_al=self._ncpus if self._ncpus > 1 else False,
+                    run_parall_al=self._ncpus if self._ncpus > 1 else 1,
                     verbose=False,
                 )
         finally:
@@ -196,7 +198,7 @@ class NativenessScorer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_scores(scores_df, expected_count: int) -> list[float]:
+    def _extract_scores(scores_df: "pd.DataFrame", expected_count: int) -> list[float]:
         """Extract nativeness scores from an AbNatiV output DataFrame.
 
         Handles varying column names across AbNatiV versions and pads
@@ -240,6 +242,11 @@ class NativenessScorer:
     def _align_parent(self, sequence: str) -> tuple[str, dict[int, int]]:
         """Align *sequence* once with ANARCI and cache the AHo alignment.
 
+        Results are cached per instance keyed by the raw amino acid string,
+        so repeated calls with the same parent (e.g. across chunked batches)
+        are essentially free.  The cache is **not** thread-safe; concurrent
+        callers should use separate scorer instances.
+
         Returns
         -------
         tuple[str, dict[int, int]]
@@ -281,8 +288,7 @@ class NativenessScorer:
 
         if len(aho_aligned) != _AHO_ALIGNED_LENGTH:
             raise ValueError(
-                f"Parent AHo alignment has unexpected length {len(aho_aligned)} "
-                f"(expected {_AHO_ALIGNED_LENGTH})"
+                f"Parent AHo alignment has unexpected length {len(aho_aligned)} (expected {_AHO_ALIGNED_LENGTH})"
             )
 
         # Build mapping: raw sequence 0-based index → AHo aligned string index.
@@ -381,9 +387,7 @@ class NativenessScorer:
                 fallback_indices.append(i)
                 continue
 
-            prealigned_records.append(
-                (i, SeqRecord(Seq(aho_str), id=f"var_{i}", description=""))
-            )
+            prealigned_records.append((i, SeqRecord(Seq(aho_str), id=f"var_{i}", description="")))
 
         # Step 3: score pre-aligned variants (no ANARCI)
         scores: list[float] = [0.5] * len(variant_seqs)

@@ -1294,10 +1294,7 @@ class MutationEngine:
         # Choose scoring path: pre-aligned (fast) or standard (fallback).
         # ------------------------------------------------------------------
         parent_seq = vhh_sequence.sequence if vhh_sequence is not None else None
-        use_prealigned = (
-            parent_seq is not None
-            and hasattr(self._nativeness_scorer, "score_batch_prealigned")
-        )
+        use_prealigned = vhh_sequence is not None and hasattr(self._nativeness_scorer, "score_batch_prealigned")
 
         if use_prealigned:
             logger.info(
@@ -1313,7 +1310,8 @@ class MutationEngine:
             )
             try:
                 unique_scores = self._nativeness_scorer.score_batch_prealigned(
-                    parent_seq, unique_seqs,
+                    parent_seq,
+                    unique_seqs,
                 )
             except Exception:
                 logger.warning(
