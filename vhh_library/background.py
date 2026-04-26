@@ -307,6 +307,7 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
             "esm2_scoring",
             "scoring_stability_start",
             "scoring_stability_done",
+            "scoring_stability_progress",
             "scoring_nativeness_start",
             "scoring_nativeness_progress",
             "scoring_nativeness_done",
