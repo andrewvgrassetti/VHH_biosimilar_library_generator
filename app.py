@@ -4,12 +4,16 @@ import json
 import logging
 import tempfile
 import time
+import warnings
 
 import matplotlib
 import pandas as pd
 import streamlit as st
 
 matplotlib.use("Agg")
+# Suppress noisy ``transformers`` lazy-module __path__ warnings triggered by
+# Streamlit's file-watcher (see PR #50 context — ML backend noise suppression).
+warnings.filterwarnings("ignore", message=r"Accessing `__path__`", category=FutureWarning)
 from pathlib import Path  # noqa: E402
 
 import matplotlib.pyplot as plt  # noqa: E402
