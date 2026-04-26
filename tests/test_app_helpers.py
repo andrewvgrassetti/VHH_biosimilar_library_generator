@@ -831,3 +831,81 @@ class TestCSVForbiddenSubstitutionsOverride:
         assert pp.is_conservative
         assert "F" not in pp.allowed_aas
         assert "Y" not in pp.allowed_aas
+
+
+# ---------------------------------------------------------------------------
+# Background-thread closure safety — static analysis
+# ---------------------------------------------------------------------------
+
+
+class TestBackgroundClosureSafety:
+    """Verify that background-task closures in app.py do NOT access
+    ``st.session_state`` directly.
+
+    Streamlit's ``st.session_state`` is only available from the main
+    script-run thread.  Closures passed to ``submit_task`` run in daemon
+    threads where ``st.session_state`` raises ``StreamlitAPIException``.
+
+    This test performs a lightweight source-code scan to catch regressions.
+    """
+
+    @staticmethod
+    def _extract_closure_bodies(source: str) -> dict[str, str]:
+        """Extract the text body of each background-task closure.
+
+        Returns a dict mapping closure name to its source text.  The
+        extraction is heuristic (indentation-based) but sufficient for
+        catching ``st.session_state`` references.
+        """
+        import re
+
+        closures: dict[str, str] = {}
+        # Match 'def _xxx_work():' closures (4+ space indent)
+        pattern = re.compile(r"^( +)def (_\w+_work)\(\):", re.MULTILINE)
+        for match in pattern.finditer(source):
+            indent = match.group(1)
+            name = match.group(2)
+            start = match.end()
+            # Collect lines belonging to this function body
+            lines: list[str] = []
+            for line in source[start:].split("\n")[1:]:
+                # Stop at a line with equal or less indentation (not blank)
+                stripped = line.rstrip()
+                if stripped and not stripped.startswith(" "):
+                    break
+                if stripped and not line.startswith(indent + " ") and not line.startswith(indent + "\t"):
+                    # Line at same or lower indent level
+                    if not stripped.startswith(indent):
+                        break
+                    # Same indent — could be next statement at same level
+                    if not stripped.startswith(indent + " ") and stripped and not stripped.startswith("#"):
+                        break
+                lines.append(line)
+            closures[name] = "\n".join(lines)
+        return closures
+
+    def test_no_session_state_in_background_closures(self):
+        """Closures submitted to background threads must not use
+        ``st.session_state`` — they must use captured references."""
+        from pathlib import Path
+
+        app_path = Path(__file__).resolve().parent.parent / "app.py"
+        source = app_path.read_text()
+
+        closures = self._extract_closure_bodies(source)
+        assert len(closures) >= 4, (
+            f"Expected at least 4 background closures, found {len(closures)}: {list(closures.keys())}"
+        )
+
+        violations: list[str] = []
+        for name, body in closures.items():
+            if "st.session_state" in body:
+                violations.append(name)
+
+        assert not violations, (
+            f"Background-task closures must not access st.session_state directly "
+            f"(it fails from non-Streamlit threads). "
+            f"Violations: {violations}. "
+            f"Fix: snapshot session_state values before the closure definition, "
+            f"or use make_progress_setter() for progress updates."
+        )

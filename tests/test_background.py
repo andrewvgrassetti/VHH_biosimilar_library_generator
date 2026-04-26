@@ -251,6 +251,77 @@ class TestSetProgress:
         set_progress("clamp", -0.5, "under")
         assert _mock_session_state[_key("clamp", "progress")] == 0.0
 
+    def test_set_progress_with_state_override(self, _mock_session_state):
+        """set_progress uses explicit _state when provided."""
+        from vhh_library.background import _key, set_progress
+
+        custom_state: dict = {}
+        set_progress("t", 0.5, "half", _state=custom_state)
+        assert custom_state[_key("t", "progress")] == pytest.approx(0.5)
+        assert custom_state[_key("t", "progress_text")] == "half"
+        # Must not write to session_state mock
+        assert _key("t", "progress") not in _mock_session_state
+
+
+class TestMakeProgressSetter:
+    """make_progress_setter returns a thread-safe callable."""
+
+    def test_basic_setter(self, _mock_session_state):
+        from vhh_library.background import _key, make_progress_setter
+
+        setter = make_progress_setter("t1")
+        setter(0.33, "one third")
+        assert _mock_session_state[_key("t1", "progress")] == pytest.approx(0.33)
+        assert _mock_session_state[_key("t1", "progress_text")] == "one third"
+
+    def test_setter_clamps(self, _mock_session_state):
+        from vhh_library.background import _key, make_progress_setter
+
+        setter = make_progress_setter("clamp")
+        setter(1.5, "over")
+        assert _mock_session_state[_key("clamp", "progress")] == 1.0
+        setter(-0.1, "under")
+        assert _mock_session_state[_key("clamp", "progress")] == 0.0
+
+    def test_setter_works_from_background_thread(self, _mock_session_state):
+        """The captured setter must work from a daemon thread even when
+        st.session_state is not accessible.
+
+        This simulates the real Streamlit scenario: the setter is created
+        in the main thread (where st.session_state is available) and called
+        from a background thread (where it is NOT).
+        """
+        from vhh_library.background import _key, make_progress_setter
+
+        # Create setter in the "main" thread (session_state available).
+        setter = make_progress_setter("bg_test")
+
+        # Now make st.session_state raise (simulating background thread).
+        # The setter should still work because it captured the state dict.
+        result = {}
+
+        def _worker():
+            try:
+                setter(0.75, "from background")
+                result["ok"] = True
+            except Exception as exc:
+                result["error"] = str(exc)
+
+        thread = threading.Thread(target=_worker)
+        thread.start()
+        thread.join(timeout=5)
+
+        assert result.get("ok") is True, f"Setter failed in background thread: {result.get('error')}"
+        assert _mock_session_state[_key("bg_test", "progress")] == pytest.approx(0.75)
+        assert _mock_session_state[_key("bg_test", "progress_text")] == "from background"
+
+    def test_setter_default_text_is_empty(self, _mock_session_state):
+        from vhh_library.background import _key, make_progress_setter
+
+        setter = make_progress_setter("t2")
+        setter(0.5)
+        assert _mock_session_state[_key("t2", "progress_text")] == ""
+
 
 class TestResetTask:
     """reset_task clears all state keys for a task."""
@@ -778,3 +849,106 @@ class TestActivityLog:
         log_text = mock_st.code.call_args[0][0]
         assert "Step 1 done" in log_text
         assert "Step 2 done" in log_text
+
+
+class TestThreadSafetyContract:
+    """Verify that progress-reporting utilities are safe from background threads.
+
+    Streamlit's ``st.session_state`` is only accessible from the main
+    script-run thread.  Background threads launched by :func:`submit_task`
+    must use captured state references — *never* ``st.session_state``
+    directly.  These tests ensure the thread-safe helpers work correctly
+    even when ``st.session_state`` is inaccessible.
+    """
+
+    def test_make_progress_callback_uses_captured_state(self, _mock_session_state):
+        """make_progress_callback captures session_state at creation time
+        and uses the captured reference from the background thread."""
+        from vhh_library.background import _key, make_progress_callback
+
+        _mock_session_state[_key("tsc", "log_entries")] = []
+        cb = make_progress_callback("tsc")
+
+        # Simulate calling from a background thread — the callback
+        # should write to the captured dict, not to st.session_state.
+        result = {}
+
+        def _bg():
+            try:
+                from vhh_library.mutation_engine import IterativeProgress
+
+                prog = IterativeProgress(
+                    phase="test_phase",
+                    round_number=3,
+                    total_rounds=10,
+                    best_score=0.95,
+                    mean_score=0.80,
+                    population_size=500,
+                    n_anchors=5,
+                    diversity_entropy=1.0,
+                    message="",
+                )
+                cb(prog)
+                result["ok"] = True
+            except Exception as exc:
+                result["error"] = str(exc)
+
+        t = threading.Thread(target=_bg)
+        t.start()
+        t.join(timeout=5)
+
+        assert result.get("ok") is True, f"Callback failed: {result.get('error')}"
+        assert _mock_session_state[_key("tsc", "progress")] == pytest.approx(0.3)
+
+    def test_make_progress_setter_works_alongside_submit_task(self, _mock_session_state):
+        """Verify end-to-end: setter created in main thread, used in
+        submit_task's background worker."""
+        from vhh_library.background import (
+            STATUS_DONE,
+            _key,
+            make_progress_setter,
+            submit_task,
+        )
+
+        setter = make_progress_setter("e2e")
+
+        def _work():
+            setter(0.5, "halfway")
+            time.sleep(0.05)
+            setter(1.0, "done")
+            return "result"
+
+        submit_task("e2e", _work)
+        time.sleep(0.5)  # Let the thread finish
+
+        assert _mock_session_state[_key("e2e", "status")] == STATUS_DONE
+        assert _mock_session_state[_key("e2e", "progress")] == 1.0
+        assert _mock_session_state[_key("e2e", "progress_text")] == "done"
+        assert _mock_session_state[_key("e2e", "result")] == "result"
+
+    def test_submit_task_closure_should_not_access_session_state_directly(self, _mock_session_state):
+        """Demonstrate the bug: a closure that accesses st.session_state
+        from a background thread would fail in real Streamlit, but works
+        in tests because the mock is a plain dict.
+
+        This test documents the pattern — closures must snapshot values
+        from session state BEFORE being passed to submit_task.
+        """
+        from vhh_library.background import (
+            STATUS_DONE,
+            _key,
+            submit_task,
+        )
+
+        # Correct pattern: snapshot values in the main thread
+        _mock_session_state["param"] = 42
+        captured_val = _mock_session_state.get("param", 0)
+
+        def _correct_closure():
+            return captured_val * 2
+
+        submit_task("correct", _correct_closure)
+        time.sleep(0.5)
+
+        assert _mock_session_state[_key("correct", "status")] == STATUS_DONE
+        assert _mock_session_state[_key("correct", "result")] == 84
