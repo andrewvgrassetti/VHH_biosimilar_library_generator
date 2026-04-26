@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from functools import cached_property
 
 from vhh_library.numbering import NumberingError, number_sequence
 from vhh_library.utils import AMINO_ACIDS
+
+logger = logging.getLogger(__name__)
 
 # IMGT region boundaries (inclusive start and end positions).
 IMGT_REGIONS: dict[str, tuple[int, int]] = {
@@ -85,6 +88,13 @@ class VHHSequence:
         if seq_idx is None:
             raise ValueError(f"IMGT position {position!r} not found in source numbering")
 
+        logger.debug(
+            "Fast-path mutate: position=%s, %s→%s (ANARCI bypassed)",
+            pos_key,
+            source.imgt_numbered.get(pos_key, "?"),
+            new_aa,
+        )
+
         seq_list = list(source.sequence)
         seq_list[seq_idx] = new_aa.upper()
         mutated = object.__new__(cls)
@@ -129,9 +139,7 @@ class VHHSequence:
             # Build mapping from IMGT position key → 0-based sequence index.
             # The numbered dict is ordered by ANARCI output; each entry maps
             # to the next residue in the raw sequence string.
-            self._pos_to_seq_idx = {
-                pos_key: idx for idx, pos_key in enumerate(self.imgt_numbered)
-            }
+            self._pos_to_seq_idx = {pos_key: idx for idx, pos_key in enumerate(self.imgt_numbered)}
         except NumberingError as exc:
             errors.append(str(exc))
             return {"valid": False, "errors": errors, "warnings": warnings}

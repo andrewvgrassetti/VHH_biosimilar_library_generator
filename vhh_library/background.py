@@ -362,6 +362,7 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     _simple_phases = frozenset(
         {
             "generating_variants",
+            "sampling_variants",
             "scoring_stability",
             "scoring_nativeness",
             "esm2_scoring",
