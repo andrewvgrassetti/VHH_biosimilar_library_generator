@@ -2466,7 +2466,9 @@ class MutationEngine:
             all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
         _report("scoring_nativeness", f"Phase 4 — Batch scoring nativeness ({len(all_rows):,} variants)…")
         with _timed_operation(f"Phase 4 batch nativeness scoring ({len(all_rows)} variants)"):
-            all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
+            all_rows = self._batch_fill_nativeness(
+                all_rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence
+            )
 
         # ESM-2 full PLL for top candidates
         with _timed_operation(f"Phase 4 ESM-2 rescore (top {rescore_top_n * 2})"):
