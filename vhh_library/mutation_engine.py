@@ -791,8 +791,8 @@ class MutationEngine:
     ) -> pd.DataFrame:
         if off_limits is None:
             # CDR positions are frozen by default — the mutation engine must
-            # not propose mutations inside CDR loops unless the caller
-            # explicitly provides a custom off_limits set.
+            # not propose mutations inside CDR loops unless explicitly
+            # overridden via the off_limits parameter.
             off_limits = vhh_sequence.cdr_positions
 
         # Normalise off_limits to string keys

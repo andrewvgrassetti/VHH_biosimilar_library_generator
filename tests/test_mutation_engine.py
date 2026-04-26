@@ -92,7 +92,7 @@ class TestRankSingleMutations:
         """Without off_limits, CDR positions are frozen by default.
 
         CDR positions (CDR1, CDR2, CDR3) must not be mutated unless the user
-        explicitly opts in by providing a custom off_limits set.
+        explicitly overrides off_limits (e.g. with an empty set).
         """
         if not ranked.empty:
             assert "imgt_pos" in ranked.columns
