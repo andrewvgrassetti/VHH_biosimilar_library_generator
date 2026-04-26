@@ -205,6 +205,42 @@ class NanoMeltPredictor(Predictor):
         return self._backend
 
     # ------------------------------------------------------------------
+    # Warm-up (pre-load model in main thread)
+    # ------------------------------------------------------------------
+
+    def warm_up(self) -> None:
+        """Pre-load the NanoMelt backend and run a minimal prediction.
+
+        Forces the underlying ESM model to be loaded and transferred to
+        GPU in the **calling** thread.  Call this from the main thread
+        before dispatching work to background / daemon threads to avoid
+        CUDA context-initialisation hangs.
+
+        The method is non-fatal: if the warm-up prediction fails, a
+        warning is logged and the predictor remains usable (the real
+        prediction will attempt the load again later).
+        """
+        self._ensure_backend()
+
+        # Use a short but realistic VHH framework sequence.
+        _WARMUP_SEQ = (
+            "EVQLVESGGGLVQAGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAISGSGGSTYYADSVKGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCAK"
+        )
+
+        from Bio.Seq import Seq
+        from Bio.SeqRecord import SeqRecord
+
+        record = SeqRecord(Seq(_WARMUP_SEQ), id="warmup")
+        try:
+            self._predict_tm_for_records([record])
+            logger.info("NanoMeltPredictor warm-up complete (model loaded and GPU transfer done).")
+        except Exception:
+            logger.warning(
+                "NanoMeltPredictor warm-up prediction failed; model will be loaded on first real inference.",
+                exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 

@@ -163,6 +163,10 @@ def load_scorers(
             from vhh_library.predictors.nanomelt import NanoMeltPredictor
 
             nanomelt_predictor = NanoMeltPredictor(device=resolved)
+            # Pre-load the ESM model and transfer it to GPU in the main
+            # thread.  Library generation runs in a daemon thread where
+            # first-time CUDA context initialisation can hang.
+            nanomelt_predictor.warm_up()
         except ImportError:
             logger.warning("NanoMelt is not installed; falling back to ESM-2/heuristic scoring.")
         except Exception as exc:
