@@ -545,7 +545,9 @@ class MutationEngine:
                 if _introduces_ptm_liability(parent_seq, mutant.sequence, seq_idx):
                     continue
 
-                delta_stab = self._stability_scorer.predict_mutation_effect(vhh_sequence, pos_key, candidate_aa)
+                delta_stab = self._stability_scorer.predict_mutation_effect(
+                    vhh_sequence, pos_key, candidate_aa, _skip_ml=True
+                )
 
                 candidate_dict: dict = {
                     "position": pos_key,

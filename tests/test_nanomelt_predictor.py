@@ -237,6 +237,19 @@ class TestNanoMeltPredictor:
         assert len(records) == 1
         assert str(records[0].seq) == vhh.sequence
 
+    def test_backend_stdout_suppressed(self, vhh: VHHSequence, capsys: pytest.CaptureFixture[str]) -> None:
+        """NanoMelt backend stdout (e.g. 'Loading ESM data') must be suppressed."""
+
+        def _noisy_backend(**kwargs):
+            # Simulate NanoMelt printing to stdout
+            print("Loading ESM data")
+            return pd.DataFrame({"NanoMelt Tm (C)": [70.0]})
+
+        pred = _make_predictor_with_mock_backend(MagicMock(side_effect=_noisy_backend))
+        pred.score_sequence(vhh)
+        captured = capsys.readouterr()
+        assert "Loading ESM data" not in captured.out
+
 
 # ---------------------------------------------------------------------------
 # Lazy loading
@@ -252,9 +265,7 @@ class TestLazyLoading:
         assert pred._backend is None
 
     def test_backend_created_on_first_score(self, vhh: VHHSequence) -> None:
-        mock_pred_pipe = MagicMock(
-            return_value=pd.DataFrame({"NanoMelt Tm (C)": [70.0]})
-        )
+        mock_pred_pipe = MagicMock(return_value=pd.DataFrame({"NanoMelt Tm (C)": [70.0]}))
 
         with (
             patch("vhh_library.predictors.nanomelt.NANOMELT_AVAILABLE", True),

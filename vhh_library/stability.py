@@ -312,11 +312,22 @@ class StabilityScorer:
         per_residue_pll = pll / max(seq_len, 1)
         return self._pll_slope * per_residue_pll + self._pll_intercept
 
-    def predict_mutation_effect(self, vhh: VHHSequence, position: int | str, new_aa: str) -> float:
-        """Return the change in composite score when mutating *position* to *new_aa*."""
-        parent_score = self.score(vhh)["composite_score"]
+    def predict_mutation_effect(
+        self, vhh: VHHSequence, position: int | str, new_aa: str, *, _skip_ml: bool = False
+    ) -> float:
+        """Return the change in composite score when mutating *position* to *new_aa*.
+
+        Parameters
+        ----------
+        _skip_ml : bool
+            When ``True``, skip expensive ML backends (ESM-2, NanoMelt) and
+            use only the fast heuristic sub-scores.  This is used during
+            per-candidate stability scanning where many mutations are
+            evaluated individually; ML backends are batch-scored afterward.
+        """
+        parent_score = self.score(vhh, _skip_ml=_skip_ml)["composite_score"]
         mutant = VHHSequence.mutate(vhh, position, new_aa)
-        mutant_score = self.score(mutant)["composite_score"]
+        mutant_score = self.score(mutant, _skip_ml=_skip_ml)["composite_score"]
         return mutant_score - parent_score
 
     # ------------------------------------------------------------------
