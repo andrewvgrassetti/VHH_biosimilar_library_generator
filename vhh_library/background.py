@@ -30,6 +30,7 @@ import logging
 import tempfile
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -73,7 +74,14 @@ def _persist_path(task_name: str) -> Path:
     return _TASK_PERSIST_DIR / f"{task_name}.json"
 
 
-def _persist_result(task_name: str, *, status: str, result: Any = None, error: str | None = None) -> None:
+def _persist_result(
+    task_name: str,
+    *,
+    status: str,
+    result: Any = None,
+    error: str | None = None,
+    error_traceback: str | None = None,
+) -> None:
     """Write a completed task's outcome to disk so it survives session loss.
 
     The serialisation format mirrors the auto-save helpers in ``app.py``:
@@ -94,6 +102,7 @@ def _persist_result(task_name: str, *, status: str, result: Any = None, error: s
         "status": status,
         "result": _serialize(result),
         "error": error,
+        "error_traceback": error_traceback,
         "timestamp": time.time(),
     }
     try:
@@ -170,6 +179,7 @@ def submit_task(
     st.session_state[_key(name, "log_entries")] = []
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
+    st.session_state[_key(name, "error_traceback")] = None
 
     # Clear any stale persisted result from a previous run.
     _clear_persisted(name)
@@ -196,12 +206,14 @@ def submit_task(
             _persist_result(name, status=STATUS_DONE, result=result)
         except Exception as exc:
             error_msg = str(exc)
+            tb_str = traceback.format_exc()
             try:
                 state[_key(name, "error")] = error_msg
+                state[_key(name, "error_traceback")] = tb_str
                 state[_key(name, "status")] = STATUS_ERROR
             except Exception:
                 logger.warning("Could not write error to session_state for task %r.", name, exc_info=True)
-            _persist_result(name, status=STATUS_ERROR, error=error_msg)
+            _persist_result(name, status=STATUS_ERROR, error=error_msg, error_traceback=tb_str)
             logger.exception("Background task %r failed", name)
 
     thread = threading.Thread(target=_worker, daemon=True, name=f"bg-{name}")
@@ -229,6 +241,11 @@ def get_task_result(name: str) -> Any:
 def get_task_error(name: str) -> str | None:
     """Return the error message if the task failed."""
     return st.session_state.get(_key(name, "error"))
+
+
+def get_task_traceback(name: str) -> str | None:
+    """Return the full traceback string if the task failed, or ``None``."""
+    return st.session_state.get(_key(name, "error_traceback"))
 
 
 def get_task_log(name: str) -> list[tuple[float, str]]:
@@ -270,6 +287,7 @@ def reset_task(name: str) -> None:
     st.session_state[_key(name, "log_entries")] = []
     st.session_state[_key(name, "result")] = None
     st.session_state[_key(name, "error")] = None
+    st.session_state[_key(name, "error_traceback")] = None
     _clear_persisted(name)
 
 
@@ -297,13 +315,16 @@ def recover_task(name: str) -> Any | None:
         st.session_state[_key(name, "progress_text")] = ""
         st.session_state[_key(name, "log_entries")] = []
         st.session_state[_key(name, "error")] = None
+        st.session_state[_key(name, "error_traceback")] = None
         logger.info("Recovered completed result for background task %r from disk.", name)
         return result
 
     if persisted_status == STATUS_ERROR:
         error = payload.get("error", "Unknown error")
+        error_tb = payload.get("error_traceback")
         st.session_state[_key(name, "status")] = STATUS_ERROR
         st.session_state[_key(name, "error")] = error
+        st.session_state[_key(name, "error_traceback")] = error_tb
         st.session_state[_key(name, "result")] = None
         st.session_state[_key(name, "progress")] = 0.0
         st.session_state[_key(name, "progress_text")] = ""
@@ -508,6 +529,10 @@ def render_task_status(
     if status == STATUS_ERROR:
         err = get_task_error(name)
         st.error(f"Task failed: {err}")
+        tb = get_task_traceback(name)
+        if tb:
+            with st.expander("🔍 Full error traceback", expanded=False):
+                st.code(tb, language="python")
         return None
 
     # STATUS_IDLE — nothing to show

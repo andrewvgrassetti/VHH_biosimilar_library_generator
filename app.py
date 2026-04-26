@@ -4,6 +4,7 @@ import json
 import logging
 import tempfile
 import time
+import traceback
 import warnings
 
 import matplotlib
@@ -745,6 +746,8 @@ def sidebar():
                             st.rerun()
                     except Exception as exc:
                         st.error(f"Calibration failed: {exc}")
+                        with st.expander("🔍 Error details"):
+                            st.code(traceback.format_exc(), language="python")
 
             if st.button("Reset to Defaults", key="btn_reset_calibration"):
                 _reset_calibration()
@@ -1150,6 +1153,8 @@ def tab_mutations(stability_scorer):
                         )
                 except Exception as exc:
                     st.error(f"Failed to import policy: {exc}")
+                    with st.expander("🔍 Error details"):
+                        st.code(traceback.format_exc(), language="python")
 
     # -- Rank mutations --
     st.subheader("Rank Mutations")
@@ -1291,28 +1296,34 @@ def tab_mutations(stability_scorer):
                     combos.append(_total_grouped_combinations(groups, k_min, k_max))
                     ns.append(i)
 
-                fig, ax = plt.subplots(figsize=(8, 3))
-                ax.plot(ns, combos, linewidth=1.5)
-                ax.axhline(
-                    user_max_variants,
-                    color="red",
-                    linestyle="--",
-                    label=f"Requested variants ({user_max_variants:,})",
-                )
-                ax.axvline(
-                    top_n,
-                    color="gray",
-                    linestyle="--",
-                    label=f"Current Top N ({top_n})",
-                )
-                ax.set_yscale("log")
-                ax.set_xlabel("Top N mutations")
-                ax.set_ylabel("Unique combinations")
-                ax.set_title("Search space size vs. Top N mutations")
-                ax.legend(fontsize=8)
-                plt.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                try:
+                    fig, ax = plt.subplots(figsize=(8, 3))
+                    ax.plot(ns, combos, linewidth=1.5)
+                    ax.axhline(
+                        user_max_variants,
+                        color="red",
+                        linestyle="--",
+                        label=f"Requested variants ({user_max_variants:,})",
+                    )
+                    ax.axvline(
+                        top_n,
+                        color="gray",
+                        linestyle="--",
+                        label=f"Current Top N ({top_n})",
+                    )
+                    ax.set_yscale("log")
+                    ax.set_xlabel("Top N mutations")
+                    ax.set_ylabel("Unique combinations")
+                    ax.set_title("Search space size vs. Top N mutations")
+                    ax.legend(fontsize=8)
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+                except Exception:
+                    logger.warning("Failed to render search-space plot", exc_info=True)
+                    st.warning("⚠️ Could not render search-space plot.")
+                    with st.expander("🔍 Plot error details"):
+                        st.code(traceback.format_exc(), language="python")
 
         _lib_running = is_task_running("library_gen")
         if st.button("Generate library", type="primary", key="btn_gen_lib", disabled=_lib_running):
@@ -1425,27 +1436,33 @@ def tab_library(viz):
         if c in library.columns and library[c].notna().any()
     ]
     if score_cols:
-        fig, axes = plt.subplots(1, len(score_cols), figsize=(4 * len(score_cols), 3))
-        if len(score_cols) == 1:
-            axes = [axes]
-        for ax, col in zip(axes, score_cols):
-            ax.hist(library[col].dropna(), bins=30, edgecolor="white", alpha=0.8)
-            orig_val = original_scores.get(col)
-            if orig_val is not None:
-                ax.axvline(
-                    orig_val,
-                    color="red",
-                    linestyle="--",
-                    linewidth=1.5,
-                    label=f"Original ({orig_val:.3f})",
-                )
-                ax.legend(fontsize=7)
-            ax.set_title(col.replace("_", " ").title(), fontsize=10)
-            ax.set_xlabel("Score")
-            ax.set_ylabel("Count")
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        try:
+            fig, axes = plt.subplots(1, len(score_cols), figsize=(4 * len(score_cols), 3))
+            if len(score_cols) == 1:
+                axes = [axes]
+            for ax, col in zip(axes, score_cols):
+                ax.hist(library[col].dropna(), bins=30, edgecolor="white", alpha=0.8)
+                orig_val = original_scores.get(col)
+                if orig_val is not None:
+                    ax.axvline(
+                        orig_val,
+                        color="red",
+                        linestyle="--",
+                        linewidth=1.5,
+                        label=f"Original ({orig_val:.3f})",
+                    )
+                    ax.legend(fontsize=7)
+                ax.set_title(col.replace("_", " ").title(), fontsize=10)
+                ax.set_xlabel("Score")
+                ax.set_ylabel("Count")
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+        except Exception:
+            logger.warning("Failed to render score distribution plots", exc_info=True)
+            st.warning("⚠️ Could not render score distribution plots.")
+            with st.expander("🔍 Plot error details"):
+                st.code(traceback.format_exc(), language="python")
 
     # -- Correlation plot --
     if "nativeness_score" in library.columns and "stability_score" in library.columns:
@@ -1454,30 +1471,36 @@ def tab_library(viz):
         s_vals = library["stability_score"].dropna()
         common_idx = n_vals.index.intersection(s_vals.index)
         if len(common_idx) > 2:
-            rho, pval = spearmanr(n_vals.loc[common_idx], s_vals.loc[common_idx])
-            fig2, ax2 = plt.subplots(figsize=(5, 4))
-            ax2.scatter(n_vals.loc[common_idx], s_vals.loc[common_idx], alpha=0.4, s=10)
-            orig_nat = original_scores.get("nativeness_score")
-            orig_stab = original_scores.get("stability_score")
-            if orig_nat is not None and orig_stab is not None:
-                ax2.scatter(
-                    [orig_nat],
-                    [orig_stab],
-                    color="red",
-                    marker="*",
-                    s=200,
-                    zorder=5,
-                    label="Original",
-                    edgecolors="black",
-                    linewidths=0.5,
-                )
-                ax2.legend(fontsize=8)
-            ax2.set_xlabel("Nativeness Score")
-            ax2.set_ylabel("Stability Score")
-            ax2.set_title(f"Spearman ρ = {rho:.3f} (p = {pval:.2e})")
-            plt.tight_layout()
-            st.pyplot(fig2)
-            plt.close(fig2)
+            try:
+                rho, pval = spearmanr(n_vals.loc[common_idx], s_vals.loc[common_idx])
+                fig2, ax2 = plt.subplots(figsize=(5, 4))
+                ax2.scatter(n_vals.loc[common_idx], s_vals.loc[common_idx], alpha=0.4, s=10)
+                orig_nat = original_scores.get("nativeness_score")
+                orig_stab = original_scores.get("stability_score")
+                if orig_nat is not None and orig_stab is not None:
+                    ax2.scatter(
+                        [orig_nat],
+                        [orig_stab],
+                        color="red",
+                        marker="*",
+                        s=200,
+                        zorder=5,
+                        label="Original",
+                        edgecolors="black",
+                        linewidths=0.5,
+                    )
+                    ax2.legend(fontsize=8)
+                ax2.set_xlabel("Nativeness Score")
+                ax2.set_ylabel("Stability Score")
+                ax2.set_title(f"Spearman ρ = {rho:.3f} (p = {pval:.2e})")
+                plt.tight_layout()
+                st.pyplot(fig2)
+                plt.close(fig2)
+            except Exception:
+                logger.warning("Failed to render correlation plot", exc_info=True)
+                st.warning("⚠️ Could not render nativeness vs stability correlation plot.")
+                with st.expander("🔍 Plot error details"):
+                    st.code(traceback.format_exc(), language="python")
 
     # -- Advanced Re-Ranking --
     st.subheader("Advanced Re-Ranking")
@@ -1733,10 +1756,16 @@ def tab_barcoding():
 
     if ref_table is not None and barcode_gen is not None:
         st.subheader("Barcode Distributions")
-        fig = barcode_gen.plot_barcode_distributions(ref_table)
-        if fig is not None:
-            st.pyplot(fig)
-            plt.close(fig)
+        try:
+            fig = barcode_gen.plot_barcode_distributions(ref_table)
+            if fig is not None:
+                st.pyplot(fig)
+                plt.close(fig)
+        except Exception:
+            logger.warning("Failed to render barcode distribution plots", exc_info=True)
+            st.warning("⚠️ Could not render barcode distribution plots.")
+            with st.expander("🔍 Plot error details"):
+                st.code(traceback.format_exc(), language="python")
 
     # Downloads
     if barcoded is not None:
@@ -1968,6 +1997,8 @@ def tab_validation(stability_scorer):
             benchmark_vhhs = load_benchmark_dataset()
         except Exception as exc:
             st.error(f"Failed to load benchmark dataset: {exc}")
+            with st.expander("🔍 Error details"):
+                st.code(traceback.format_exc(), language="python")
             return
 
         seqs = [v["sequence"] for v in benchmark_vhhs]
@@ -2071,21 +2102,27 @@ def tab_validation(stability_scorer):
             pred_for_plot, label = None, ""
 
         if pred_for_plot is not None:
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = plot_correlation_scatter(
-                    pred_for_plot,
-                    exp_tms,
-                    metrics=m,
-                    xlabel=label,
-                    ylabel="Experimental Tm (°C)",
-                )
-                st.pyplot(fig)
-                plt.close(fig)
-            with col2:
-                fig2 = plot_residuals(pred_for_plot, exp_tms)
-                st.pyplot(fig2)
-                plt.close(fig2)
+            try:
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig = plot_correlation_scatter(
+                        pred_for_plot,
+                        exp_tms,
+                        metrics=m,
+                        xlabel=label,
+                        ylabel="Experimental Tm (°C)",
+                    )
+                    st.pyplot(fig)
+                    plt.close(fig)
+                with col2:
+                    fig2 = plot_residuals(pred_for_plot, exp_tms)
+                    st.pyplot(fig2)
+                    plt.close(fig2)
+            except Exception:
+                logger.warning("Failed to render benchmark scatter/residual plots", exc_info=True)
+                st.warning("⚠️ Could not render benchmark plots.")
+                with st.expander("🔍 Plot error details"):
+                    st.code(traceback.format_exc(), language="python")
 
         # Cross-validation
         if report.cross_validation is not None:
@@ -2135,9 +2172,15 @@ def tab_validation(stability_scorer):
                     for name, cm in comparison.items()
                 ]
                 st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
-                fig3 = plot_scoring_comparison(comparison)
-                st.pyplot(fig3)
-                plt.close(fig3)
+                try:
+                    fig3 = plot_scoring_comparison(comparison)
+                    st.pyplot(fig3)
+                    plt.close(fig3)
+                except Exception:
+                    logger.warning("Failed to render scoring comparison plot", exc_info=True)
+                    st.warning("⚠️ Could not render scoring comparison plot.")
+                    with st.expander("🔍 Plot error details"):
+                        st.code(traceback.format_exc(), language="python")
 
     # --- Section 2: Upload experimental results ---
     st.divider()
@@ -2169,6 +2212,8 @@ def tab_validation(stability_scorer):
                 st.session_state["lib_validation_metrics"] = lib_metrics
             except Exception as exc:
                 st.error(f"Validation failed: {exc}")
+                with st.expander("🔍 Error details"):
+                    st.code(traceback.format_exc(), language="python")
 
         lib_metrics = st.session_state.get("lib_validation_metrics")
         if lib_metrics is not None:
