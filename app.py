@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
 from vhh_library.background import (
+    STATUS_IDLE,
+    get_task_status,
     is_task_running,
     make_progress_callback,
     make_progress_setter,
@@ -354,8 +356,22 @@ def _recover_background_tasks() -> None:
     persisted result file exists on disk and the corresponding session-state
     key is still empty, the result is loaded into session state and a flag
     is set so the UI can inform the user.
+
+    Only tasks with IDLE status are eligible for recovery.  A non-IDLE
+    status (RUNNING, DONE, ERROR) means the task is still tracked in the
+    current session and :func:`render_task_status` will handle it on
+    this rerun.  Recovering here would race with that function — the
+    recovery resets the task to IDLE before ``render_task_status`` can
+    return the result to the caller, making library generation appear to
+    hang with no feedback.
     """
     for task_name, state_key in _RECOVERABLE_TASKS.items():
+        # Only recover tasks whose session-state status is IDLE.  Non-IDLE
+        # means the current session is actively tracking the task and
+        # render_task_status() will handle the result/error.
+        if get_task_status(task_name) != STATUS_IDLE:
+            continue
+
         # Skip if the session already has a result for this task.
         # DataFrames expose .empty; other types (lists, dicts) do not.
         existing = st.session_state.get(state_key)
