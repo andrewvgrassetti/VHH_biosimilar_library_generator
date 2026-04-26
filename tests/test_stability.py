@@ -336,6 +336,47 @@ class TestNanoMeltScoring:
         delta = scorer.predict_mutation_effect(vhh, 1, "A")
         assert isinstance(delta, float)
 
+    def test_predict_mutation_effect_skip_ml_skips_nanomelt(self, vhh: VHHSequence) -> None:
+        """predict_mutation_effect(_skip_ml=True) must not call NanoMelt."""
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        # Build a VHH with _pos_to_seq_idx so VHHSequence.mutate() works
+        vhh_obj = object.__new__(VHHSequence)
+        vhh_obj.sequence = vhh.sequence
+        vhh_obj.length = len(vhh.sequence)
+        vhh_obj.strict = False
+        vhh_obj.chain_type = "H"
+        vhh_obj.species = "camelid"
+        imgt = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh_obj.imgt_numbered = imgt
+        vhh_obj._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt)}
+        vhh_obj.validation_result = {"valid": True, "errors": [], "warnings": []}
+        delta = scorer.predict_mutation_effect(vhh_obj, 1, "A", _skip_ml=True)
+        assert isinstance(delta, float)
+        # NanoMelt should NOT have been called
+        mock_nm.score_sequence.assert_not_called()
+
+    def test_predict_mutation_effect_skip_ml_skips_esm(self, vhh: VHHSequence) -> None:
+        """predict_mutation_effect(_skip_ml=True) must not call ESM-2."""
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        # Build a VHH with _pos_to_seq_idx so VHHSequence.mutate() works
+        vhh_obj = object.__new__(VHHSequence)
+        vhh_obj.sequence = vhh.sequence
+        vhh_obj.length = len(vhh.sequence)
+        vhh_obj.strict = False
+        vhh_obj.chain_type = "H"
+        vhh_obj.species = "camelid"
+        imgt = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh_obj.imgt_numbered = imgt
+        vhh_obj._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt)}
+        vhh_obj.validation_result = {"valid": True, "errors": [], "warnings": []}
+        delta = scorer.predict_mutation_effect(vhh_obj, 1, "A", _skip_ml=True)
+        assert isinstance(delta, float)
+        # ESM-2 should NOT have been called
+        mock_esm.score_single.assert_not_called()
+
     def test_esm2_path_unchanged_without_nanomelt(self, vhh: VHHSequence) -> None:
         """ESM-2-only path should remain identical when no nanomelt_predictor is given."""
         mock_esm = MagicMock()

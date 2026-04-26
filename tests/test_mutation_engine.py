@@ -1471,6 +1471,29 @@ class TestBatchStabilityScoring:
         scorer.score(vhh)
         mock_esm.score_single.assert_called_once()
 
+    def test_generate_stability_candidates_skips_ml(self) -> None:
+        """_generate_stability_candidates must not call NanoMelt per-candidate.
+
+        Previously, each candidate triggered predict_mutation_effect → score()
+        without _skip_ml, causing NanoMelt to run per-candidate and producing
+        hundreds of 'Loading ESM data' messages.
+        """
+        from unittest.mock import MagicMock
+
+        mock_nm = MagicMock()
+        mock_nm.score_sequence.return_value = {"composite_score": 0.6, "nanomelt_tm": 70.0}
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
+
+        engine = MutationEngine(scorer, _MockNativenessScorer())
+
+        # Only a few positions so the test stays fast.
+        off_limits = {str(i) for i in range(1, len(vhh.sequence) + 1) if i > 3}
+        engine._generate_stability_candidates(vhh, off_limits=off_limits)
+
+        # NanoMelt must NOT have been called — _skip_ml=True is in effect.
+        mock_nm.score_sequence.assert_not_called()
+
     def test_batch_fill_stability_with_esm(self) -> None:
         """_batch_fill_stability should batch-score ESM and update rows."""
         from unittest.mock import MagicMock

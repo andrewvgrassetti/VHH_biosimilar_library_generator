@@ -39,7 +39,9 @@ All inference happens locally.  No calls are made to external web servers.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import logging
 import warnings
 from typing import TYPE_CHECKING, Any
@@ -207,7 +209,13 @@ class NanoMeltPredictor(Predictor):
     # ------------------------------------------------------------------
 
     def _predict_tm_for_records(self, seq_records: list[Any]) -> pd.DataFrame:
-        """Run the NanoMelt pipeline on a list of BioPython ``SeqRecord`` objects."""
+        """Run the NanoMelt pipeline on a list of BioPython ``SeqRecord`` objects.
+
+        NanoMelt v1.3.0 prints ``"Loading ESM data"`` and similar status
+        messages to stdout for every batch it processes.  These messages
+        are suppressed here by redirecting stdout so they do not flood
+        the console during large scoring runs.
+        """
         backend = self._ensure_backend()
         kwargs: dict[str, Any] = {
             "seq_records": seq_records,
@@ -216,7 +224,8 @@ class NanoMeltPredictor(Predictor):
         }
         if self._batch_size is not None:
             kwargs["batch_size"] = self._batch_size
-        return backend(**kwargs)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return backend(**kwargs)
 
     # ------------------------------------------------------------------
     # Public helpers (exposed per requirements)
