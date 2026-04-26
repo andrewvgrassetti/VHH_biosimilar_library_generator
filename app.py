@@ -22,10 +22,10 @@ from scipy.stats import spearmanr  # noqa: E402
 from vhh_library.background import (
     is_task_running,
     make_progress_callback,
+    make_progress_setter,
     recover_task,
     render_task_status,
     reset_task,
-    set_progress,
     submit_task,
 )
 from vhh_library.barcodes import BarcodeGenerator
@@ -1326,17 +1326,28 @@ def tab_mutations(stability_scorer):
             _progress_cb = make_progress_callback("library_gen")
             _checkpoint_root = Path(tempfile.gettempdir())
 
+            # Snapshot all session-state values now (in the main Streamlit
+            # thread).  The background thread has no Streamlit script-run
+            # context, so ``st.session_state`` is not accessible there.
+            _n_mutations = st.session_state.get("n_mutations", 3)
+            _max_variants = st.session_state.get("max_variants", 1000)
+            _min_mutations = st.session_state.get("min_mutations", 1)
+            _anchor_threshold = st.session_state.get("anchor_threshold", 0.6)
+            _max_rounds = st.session_state.get("max_rounds", 15)
+            _rescore_top_n = st.session_state.get("rescore_top_n", 20)
+            _top_mutations = ranked.head(top_n)
+
             def _library_gen_work():
                 return engine.generate_library(
                     vhh,
-                    ranked.head(top_n),
-                    n_mutations=st.session_state.get("n_mutations", 3),
-                    max_variants=st.session_state.get("max_variants", 1000),
-                    min_mutations=st.session_state.get("min_mutations", 1),
+                    _top_mutations,
+                    n_mutations=_n_mutations,
+                    max_variants=_max_variants,
+                    min_mutations=_min_mutations,
                     strategy=strategy,
-                    anchor_threshold=st.session_state.get("anchor_threshold", 0.6),
-                    max_rounds=st.session_state.get("max_rounds", 15),
-                    rescore_top_n=st.session_state.get("rescore_top_n", 20),
+                    anchor_threshold=_anchor_threshold,
+                    max_rounds=_max_rounds,
+                    rescore_top_n=_rescore_top_n,
                     progress_callback=_progress_cb,
                     checkpoint_dir=_checkpoint_root,
                 )
@@ -1503,16 +1514,19 @@ def tab_library(viz):
             variant_ids = subset["variant_id"].tolist()
             combined_scores = subset["combined_score"].tolist()
 
+            # Capture a thread-safe progress setter — st.session_state is
+            # not accessible from the background thread.
+            _nm_set_progress = make_progress_setter("nanomelt_rerank")
+
             def _nanomelt_rerank_work():
                 scorer = StabilityScorer(esm_scorer=None, device="auto")
-                set_progress("nanomelt_rerank", 0.1, "Computing NanoMelt Tm scores…")
+                _nm_set_progress(0.1, "Computing NanoMelt Tm scores…")
                 tm_scores = []
                 for i, seq_str in enumerate(seqs):
                     vhh_tmp = VHHSequence(seq_str)
                     result = scorer.score(vhh_tmp)
                     tm_scores.append(result.get("nanomelt_tm"))
-                    set_progress(
-                        "nanomelt_rerank",
+                    _nm_set_progress(
                         0.1 + 0.9 * (i + 1) / len(seqs),
                         f"Scoring variant {i + 1}/{len(seqs)}…",
                     )
@@ -1583,12 +1597,16 @@ def tab_library(viz):
                 variant_ids = subset["variant_id"].tolist()
                 combined_scores = subset["combined_score"].tolist()
 
+                # Capture a thread-safe progress setter — st.session_state
+                # is not accessible from the background thread.
+                _esm_set_progress = make_progress_setter("esm2_rerank")
+
                 def _esm2_rerank_work():
-                    set_progress("esm2_rerank", 0.0, "Initialising ESM-2 model…")
+                    _esm_set_progress(0.0, "Initialising ESM-2 model…")
                     scorer = ESMStabilityScorer(model_tier=model_tier, device="auto")
-                    set_progress("esm2_rerank", 0.1, "Computing ESM-2 PLL scores…")
+                    _esm_set_progress(0.1, "Computing ESM-2 PLL scores…")
                     pll_scores = scorer.score_batch(seqs)
-                    set_progress("esm2_rerank", 1.0, "Done!")
+                    _esm_set_progress(1.0, "Done!")
                     import pandas as _pd
 
                     pll_df = _pd.DataFrame(
@@ -1821,6 +1839,10 @@ def tab_construct(optimizer, tag_manager):
 
         _is_library = source_df is not None and not source_df.empty
 
+        # Capture a thread-safe progress setter — st.session_state is
+        # not accessible from the background thread.
+        _construct_set_progress = make_progress_setter("construct_build")
+
         def _construct_build_work():
             constructs_out: list[dict] = []
             total = len(_rows)
@@ -1843,8 +1865,7 @@ def tab_construct(optimizer, tag_manager):
                         "cai": opt["cai"],
                     }
                 )
-                set_progress(
-                    "construct_build",
+                _construct_set_progress(
                     (idx + 1) / total,
                     f"Building construct {idx + 1}/{total}…",
                 )
@@ -1953,6 +1974,10 @@ def tab_validation(stability_scorer):
         exp_tms = [float(v["experimental_tm"]) for v in benchmark_vhhs]
         names = [v["name"] for v in benchmark_vhhs]
 
+        # Capture a thread-safe progress setter — st.session_state is
+        # not accessible from the background thread.
+        _bench_set_progress = make_progress_setter("benchmark")
+
         def _benchmark_work():
             composite_scores: list[float] = []
             predicted_tms: list[float] = []
@@ -1960,8 +1985,7 @@ def tab_validation(stability_scorer):
             scoring_results: dict[str, list[float]] = {}
 
             for i, seq in enumerate(seqs):
-                set_progress(
-                    "benchmark",
+                _bench_set_progress(
                     (i + 1) / len(seqs),
                     f"Scoring {names[i]}…",
                 )

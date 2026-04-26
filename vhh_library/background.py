@@ -377,10 +377,47 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     return _callback
 
 
-def set_progress(task_name: str, fraction: float, text: str = "") -> None:
-    """Directly set progress for a task (useful for simple loops)."""
-    st.session_state[_key(task_name, "progress")] = min(max(fraction, 0.0), 1.0)
-    st.session_state[_key(task_name, "progress_text")] = text
+def set_progress(task_name: str, fraction: float, text: str = "", *, _state: dict[str, Any] | None = None) -> None:
+    """Directly set progress for a task (useful for simple loops).
+
+    Parameters
+    ----------
+    _state:
+        Optional dict-like override for ``st.session_state``.  When
+        called from a background thread, pass the state reference captured
+        at submit time — ``st.session_state`` is not available outside the
+        Streamlit script-run context and will raise an error.
+    """
+    state = _state if _state is not None else st.session_state
+    state[_key(task_name, "progress")] = min(max(fraction, 0.0), 1.0)
+    state[_key(task_name, "progress_text")] = text
+
+
+def make_progress_setter(task_name: str) -> Callable[[float, str], None]:
+    """Return a thread-safe progress setter for *task_name*.
+
+    Unlike :func:`set_progress` which accesses ``st.session_state``
+    directly (and fails from background threads where no Streamlit
+    script-run context exists), the returned callable captures the
+    ``session_state`` reference at creation time and is safe to call
+    from daemon threads launched by :func:`submit_task`.
+
+    Usage::
+
+        _set_progress = make_progress_setter("my_task")
+        def _worker():
+            _set_progress(0.5, "Half done…")
+        submit_task("my_task", _worker)
+    """
+    state = st.session_state
+    progress_key = _key(task_name, "progress")
+    text_key = _key(task_name, "progress_text")
+
+    def _setter(fraction: float, text: str = "") -> None:
+        state[progress_key] = min(max(fraction, 0.0), 1.0)
+        state[text_key] = text
+
+    return _setter
 
 
 # ---------------------------------------------------------------------------
