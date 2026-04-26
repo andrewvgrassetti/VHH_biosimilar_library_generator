@@ -563,9 +563,7 @@ class TestEvolutionaryIterativeStrategy:
             assert p.total_rounds >= 2
             assert p.message
 
-    def test_iterative_anchor_phase_reported_per_round(
-        self, vhh: VHHSequence
-    ) -> None:
+    def test_iterative_anchor_phase_reported_per_round(self, vhh: VHHSequence) -> None:
         """Phase 2 anchor identification should report progress per round, not just once."""
 
         # Build a VHH with manual IMGT numbering so we don't need ANARCI.
@@ -704,10 +702,13 @@ class TestEvolutionaryIterativeStrategy:
         )
 
         phases_seen = {p.phase for p in progress_events}
-        assert "esm2_scoring" in phases_seen, (
-            "esm2_scoring phase should be reported for iterative strategy when ESM scorer is available"
+        assert "esm2_scoring_stage1" in phases_seen, (
+            "esm2_scoring_stage1 phase should be reported for iterative strategy when ESM scorer is available"
         )
-        esm_event = next(p for p in progress_events if p.phase == "esm2_scoring")
+        assert "esm2_scoring_stage2" in phases_seen, (
+            "esm2_scoring_stage2 phase should be reported for iterative strategy when ESM scorer is available"
+        )
+        esm_event = next(p for p in progress_events if p.phase == "esm2_scoring_stage1")
         assert esm_event.message, "ESM-2 scoring progress should have a descriptive message"
 
 
@@ -1739,3 +1740,343 @@ class TestIterativeBatchScoring:
         # No per-variant score() calls during library generation.
         individual_calls = [c for c in call_log if c == "score"]
         assert len(individual_calls) == 0, f"Expected no per-variant score() calls, got {len(individual_calls)}"
+
+
+# ---------------------------------------------------------------------------
+# Progress callback firing during batch scoring phases
+# ---------------------------------------------------------------------------
+
+
+class TestBatchProgressCallbacks:
+    """Verify that progress_callback fires during _batch_fill_stability,
+    _batch_fill_nativeness, and during ESM-2 progressive scoring sub-steps.
+    """
+
+    @staticmethod
+    def _make_vhh_no_anarci(sequence: str) -> VHHSequence:
+        vhh = object.__new__(VHHSequence)
+        vhh.sequence = sequence.upper()
+        vhh.length = len(vhh.sequence)
+        vhh.strict = False
+        vhh.chain_type = "H"
+        vhh.species = "camelid"
+        imgt_numbered = {str(i + 1): aa for i, aa in enumerate(vhh.sequence)}
+        vhh.imgt_numbered = imgt_numbered
+        vhh._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt_numbered)}
+        vhh.validation_result = {"valid": True, "errors": [], "warnings": []}
+        return vhh
+
+    @staticmethod
+    def _make_top_muts(vhh: VHHSequence, positions: list[str]) -> pd.DataFrame:
+        rows = []
+        for pos_key in positions:
+            orig = vhh.imgt_numbered[pos_key]
+            for aa in sorted(AMINO_ACIDS - {orig})[:2]:
+                rows.append(
+                    {
+                        "position": int(pos_key),
+                        "imgt_pos": pos_key,
+                        "original_aa": orig,
+                        "suggested_aa": aa,
+                        "delta_stability": 0.1,
+                        "delta_nativeness": 0.01,
+                        "combined_score": 0.5,
+                        "reason": "test",
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def test_batch_fill_nativeness_fires_progress(self) -> None:
+        """_batch_fill_nativeness should fire start/done callbacks when progress_callback given."""
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+            {
+                "aa_sequence": "AVQLVESGGGLVQ",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+        ]
+
+        engine._batch_fill_nativeness(rows, progress_callback=_on_progress)
+
+        phases = [p.phase for p in progress_events]
+        assert "scoring_nativeness_start" in phases, f"Expected scoring_nativeness_start, got {phases}"
+        assert "scoring_nativeness_done" in phases, f"Expected scoring_nativeness_done, got {phases}"
+        # Start should come before done.
+        start_idx = phases.index("scoring_nativeness_start")
+        done_idx = phases.index("scoring_nativeness_done")
+        assert start_idx < done_idx
+
+    def test_batch_fill_nativeness_no_callback_noop(self) -> None:
+        """_batch_fill_nativeness without progress_callback should not raise."""
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            },
+        ]
+        # Should work without progress_callback (backward compatible).
+        result = engine._batch_fill_nativeness(rows)
+        assert result[0]["nativeness_score"] != 0.0
+
+    def test_batch_fill_nativeness_fallback_fires_progress(self) -> None:
+        """Fallback (no score_batch) path should fire start/done and intermediate progress."""
+
+        class _NoScoreBatchScorer:
+            """Mock scorer that lacks score_batch, triggering the fallback path."""
+
+            def score(self, vhh: VHHSequence) -> dict:
+                return {"composite_score": 0.75}
+
+            def predict_mutation_effect(self, vhh, position, new_aa):
+                return 0.01
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_NoScoreBatchScorer(),
+        )
+
+        # Use 15 rows so that with _progress_interval = max(15 // 10, 1) = 1,
+        # intermediate progress events fire on every sequence.
+        rows = [
+            {
+                "aa_sequence": f"QVQLVESGGGLVQ{chr(65 + (i % 26))}",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            }
+            for i in range(15)
+        ]
+
+        engine._batch_fill_nativeness(rows, progress_callback=_on_progress)
+
+        phases = [p.phase for p in progress_events]
+        assert "scoring_nativeness_start" in phases
+        assert "scoring_nativeness_done" in phases
+        # With interval=1, intermediate progress events should fire.
+        progress_phases = [p for p in phases if p == "scoring_nativeness_progress"]
+        assert len(progress_phases) >= 1, f"Expected at least 1 intermediate progress event, got {len(progress_phases)}"
+
+    def test_batch_fill_stability_fires_progress_with_esm(self) -> None:
+        """_batch_fill_stability should fire start/done callbacks with ESM backend."""
+        from unittest.mock import MagicMock
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        mock_esm = MagicMock()
+        mock_esm.score_batch.return_value = [-50.0, -45.0]
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.7,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+            {
+                "aa_sequence": "QVQLVESGGGLAQ",
+                "stability_score": 0.5,
+                "nativeness_score": 0.6,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "vhh_hallmark_score": 0.5,
+                "disulfide_score": 1.0,
+                "aggregation_score": 0.8,
+                "charge_balance_score": 0.9,
+                "scoring_method": "legacy",
+                "combined_score": 0.5,
+            },
+        ]
+
+        engine._batch_fill_stability(rows, progress_callback=_on_progress)
+
+        phases = [p.phase for p in progress_events]
+        assert "scoring_stability_start" in phases, f"Expected scoring_stability_start, got {phases}"
+        assert "scoring_stability_done" in phases, f"Expected scoring_stability_done, got {phases}"
+        start_idx = phases.index("scoring_stability_start")
+        done_idx = phases.index("scoring_stability_done")
+        assert start_idx < done_idx
+
+    def test_batch_fill_stability_no_ml_no_callback(self) -> None:
+        """_batch_fill_stability with no ML backends should not fire callbacks."""
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "stability_score": 0.5,
+                "scoring_method": "legacy",
+            }
+        ]
+        engine._batch_fill_stability(rows, progress_callback=_on_progress)
+        # No ML backends → no callbacks fired.
+        assert len(progress_events) == 0
+
+    def test_iterative_phase4_fires_batch_progress(self) -> None:
+        """Iterative strategy Phase 4 should fire scoring_nativeness_start/done."""
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQAGGSLRL"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3", "4", "5", "6", "7", "8"])
+
+        engine.generate_library(
+            vhh,
+            top_muts,
+            n_mutations=3,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=4,
+            progress_callback=_on_progress,
+        )
+
+        phases = [p.phase for p in progress_events]
+        assert "scoring_nativeness_start" in phases, (
+            f"Expected scoring_nativeness_start from Phase 4 batch scoring, got {phases}"
+        )
+        assert "scoring_nativeness_done" in phases, (
+            f"Expected scoring_nativeness_done from Phase 4 batch scoring, got {phases}"
+        )
+
+    def test_esm2_progressive_substeps_reported(self) -> None:
+        """ESM-2 progressive scoring should fire stage1 and stage2 sub-step phases."""
+
+        class _MockESMScorer:
+            def score_delta(self, parent_seq, variants):
+                return [0.01] * len(variants)
+
+            def score_batch(self, sequences):
+                return [0.5] * len(sequences)
+
+            def score_library_progressive(self, parent, library_df, **kwargs):
+                df = library_df.copy()
+                df["esm2_pll"] = 0.5
+                df["esm2_delta_pll"] = 0.01
+                df["esm2_rank"] = range(1, len(df) + 1)
+                return df
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+            esm_scorer=_MockESMScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQAGGSLRL"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3", "4"])
+
+        engine.generate_library(
+            vhh,
+            top_muts,
+            n_mutations=2,
+            strategy="exhaustive",
+            max_variants=20,
+            progress_callback=_on_progress,
+        )
+
+        phases = [p.phase for p in progress_events]
+        assert "esm2_scoring_stage1" in phases, f"Expected esm2_scoring_stage1, got {phases}"
+        assert "esm2_scoring_stage2" in phases, f"Expected esm2_scoring_stage2, got {phases}"
+        stage1_event = next(p for p in progress_events if p.phase == "esm2_scoring_stage1")
+        assert "delta-PLL" in stage1_event.message
+        stage2_event = next(p for p in progress_events if p.phase == "esm2_scoring_stage2")
+        assert "complete" in stage2_event.message
+
+    def test_random_strategy_fires_batch_progress(self) -> None:
+        """Random strategy should fire scoring_nativeness_start/done via progress_callback."""
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQAGGSLRL"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3", "4"])
+
+        engine.generate_library(
+            vhh,
+            top_muts,
+            n_mutations=2,
+            strategy="random",
+            max_variants=20,
+            progress_callback=_on_progress,
+        )
+
+        phases = [p.phase for p in progress_events]
+        assert "scoring_nativeness_start" in phases, f"Expected scoring_nativeness_start, got {phases}"
+        assert "scoring_nativeness_done" in phases, f"Expected scoring_nativeness_done, got {phases}"

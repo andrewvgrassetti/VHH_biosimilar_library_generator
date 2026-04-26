@@ -1035,7 +1035,7 @@ class MutationEngine:
                     len(rows),
                     message=f"Scoring stability for {len(rows):,} variants…",
                 )
-                rows = self._batch_fill_stability(rows)
+                rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
             step += 1
             _report_progress(
                 "scoring_nativeness",
@@ -1044,7 +1044,7 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows)
+            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback)
         elif strategy == "random":
             total_steps = 2 + (1 if has_ml_stability else 0) + (1 if has_esm_progressive else 0)
             step = 1
@@ -1071,7 +1071,7 @@ class MutationEngine:
                     len(rows),
                     message=f"Scoring stability for {len(rows):,} variants…",
                 )
-                rows = self._batch_fill_stability(rows)
+                rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
             step += 1
             _report_progress(
                 "scoring_nativeness",
@@ -1080,7 +1080,7 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows)
+            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback)
         elif strategy == "iterative":
             rows = self._generate_iterative(
                 vhh_sequence,
@@ -1103,18 +1103,24 @@ class MutationEngine:
             df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
 
         # ESM-2 progressive scoring (when scorer is available).
-        # Reported as a single-step phase (step 1 of 1) because the
-        # deprecated score_library_progressive runs as one atomic block
-        # after all strategy-specific rounds have completed.
+        # Reports sub-step phases so the UI can show progress during
+        # the multi-stage score_library_progressive operation.
         if self._esm_scorer is not None and not df.empty:
             _report_progress(
-                "esm2_scoring",
+                "esm2_scoring_stage1",
                 1,
-                1,
+                2,
                 len(df),
-                message=f"ESM-2 progressive scoring for {len(df):,} variants…",
+                message=f"ESM-2 delta-PLL scoring for {len(df):,} variants…",
             )
             df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
+            _report_progress(
+                "esm2_scoring_stage2",
+                2,
+                2,
+                len(df),
+                message=f"ESM-2 progressive scoring complete ({len(df):,} variants)",
+            )
 
         # Persist final result and clean up intermediate checkpoint.
         if checkpoint_dir is not None and _run_id is not None:
@@ -1200,30 +1206,70 @@ class MutationEngine:
     # Private: batch nativeness scoring for library rows
     # ------------------------------------------------------------------
 
-    def _batch_fill_nativeness(self, rows: list[dict]) -> list[dict]:
+    def _batch_fill_nativeness(
+        self,
+        rows: list[dict],
+        progress_callback: Callable[[IterativeProgress], None] | None = None,
+    ) -> list[dict]:
         """Batch-score nativeness for library rows and recompute combined scores.
 
         This replaces per-variant AbNatiV calls with a single batch call,
         avoiding repeated ANARCI alignment overhead that caused Streamlit
         timeouts during library generation.
+
+        Parameters
+        ----------
+        progress_callback : Callable[[IterativeProgress], None] | None
+            Optional callback fired before and after the batch scoring
+            operation, and periodically during the individual-scoring
+            fallback path.
         """
         if not rows:
             return rows
 
+        n_seqs = len(rows)
+
+        def _report(phase: str, message: str) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                IterativeProgress(
+                    phase=phase,
+                    round_number=0,
+                    total_rounds=0,
+                    best_score=0.0,
+                    mean_score=0.0,
+                    population_size=n_seqs,
+                    n_anchors=0,
+                    diversity_entropy=0.0,
+                    message=message,
+                )
+            )
+
         sequences = [r["aa_sequence"] for r in rows]
         if hasattr(self._nativeness_scorer, "score_batch"):
+            _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
             nat_scores = self._nativeness_scorer.score_batch(sequences)
+            _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_seqs:,} sequences)")
         else:
             # Fallback: score individually through the cached scorer interface.
             # This path is only reached when the scorer lacks score_batch()
             # (NativenessScorer always has it; custom/mock scorers might not).
             # The dummy object is intentionally minimal — NativenessScorer.score()
             # only reads vhh.sequence via _cached_score(vhh.sequence).
+            _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
             nat_scores = []
-            for seq in sequences:
+            _progress_interval = max(n_seqs // 10, 1)
+            for i, seq in enumerate(sequences):
                 dummy = object.__new__(VHHSequence)
                 dummy.sequence = seq
                 nat_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
+                if (i + 1) % _progress_interval == 0:
+                    _report(
+                        "scoring_nativeness_progress",
+                        f"Scoring nativeness: {i + 1:,}/{n_seqs:,} sequences…",
+                    )
+            _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_seqs:,} sequences)")
 
         for row, nat in zip(rows, nat_scores):
             row["nativeness_score"] = nat
@@ -1242,7 +1288,11 @@ class MutationEngine:
     # Private: batch ML stability scoring for library rows
     # ------------------------------------------------------------------
 
-    def _batch_fill_stability(self, rows: list[dict]) -> list[dict]:
+    def _batch_fill_stability(
+        self,
+        rows: list[dict],
+        progress_callback: Callable[[IterativeProgress], None] | None = None,
+    ) -> list[dict]:
         """Batch-score stability with ML backends and update library rows.
 
         When the stability scorer has NanoMelt or ESM-2 available, this
@@ -1254,6 +1304,12 @@ class MutationEngine:
         This mirrors :meth:`_batch_fill_nativeness` and avoids the
         per-variant ML inference calls that caused Streamlit timeouts
         during library generation.
+
+        Parameters
+        ----------
+        progress_callback : Callable[[IterativeProgress], None] | None
+            Optional callback fired before and after the batch scoring
+            operation to provide UI feedback.
         """
         if not rows:
             return rows
@@ -1263,6 +1319,25 @@ class MutationEngine:
 
         if not has_nanomelt and not has_esm:
             return rows  # No ML backends — heuristic scores are already set
+
+        n_seqs = len(rows)
+
+        def _report(phase: str, message: str) -> None:
+            if progress_callback is None:
+                return
+            progress_callback(
+                IterativeProgress(
+                    phase=phase,
+                    round_number=0,
+                    total_rounds=0,
+                    best_score=0.0,
+                    mean_score=0.0,
+                    population_size=n_seqs,
+                    n_anchors=0,
+                    diversity_entropy=0.0,
+                    message=message,
+                )
+            )
 
         from vhh_library.stability import _sigmoid_normalize
 
@@ -1281,7 +1356,9 @@ class MutationEngine:
                     obj.sequence = seq
                     batch_vhh_objects.append(obj)
 
+                _report("scoring_stability_start", f"Scoring stability via NanoMelt ({n_seqs:,} sequences)…")
                 nm_results = predictor.score_batch(batch_vhh_objects)
+                _report("scoring_stability_done", f"NanoMelt stability scoring complete ({n_seqs:,} sequences)")
 
                 for row, nm in zip(rows, nm_results):
                     nm_tm = nm["nanomelt_tm"]
@@ -1328,7 +1405,9 @@ class MutationEngine:
         if has_esm:
             try:
                 esm = scorer.esm_scorer
+                _report("scoring_stability_start", f"Scoring stability via ESM-2 ({n_seqs:,} sequences)…")
                 plls = esm.score_batch(sequences)
+                _report("scoring_stability_done", f"ESM-2 stability scoring complete ({n_seqs:,} sequences)")
 
                 for row, pll in zip(rows, plls):
                     seq = row["aa_sequence"]
@@ -1382,6 +1461,7 @@ class MutationEngine:
         position_groups: dict[int, list] | None = None,
         *,
         _batch_score: bool = True,
+        progress_callback: Callable[[IterativeProgress], None] | None = None,
     ) -> list[dict]:
         # Build position groups if not provided.
         if position_groups is None:
@@ -1412,10 +1492,16 @@ class MutationEngine:
                     counter += 1
                     if len(rows) >= max_variants:
                         if _batch_score:
-                            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+                            return self._batch_fill_nativeness(
+                                self._batch_fill_stability(rows, progress_callback=progress_callback),
+                                progress_callback=progress_callback,
+                            )
                         return rows
         if _batch_score:
-            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+            return self._batch_fill_nativeness(
+                self._batch_fill_stability(rows, progress_callback=progress_callback),
+                progress_callback=progress_callback,
+            )
         return rows
 
     # ------------------------------------------------------------------
@@ -1431,6 +1517,7 @@ class MutationEngine:
         max_variants: int,
         *,
         _batch_score: bool = True,
+        progress_callback: Callable[[IterativeProgress], None] | None = None,
     ) -> list[dict]:
         # Build position groups for position-aware sampling.
         position_groups: dict[int, list] = {}
@@ -1466,7 +1553,10 @@ class MutationEngine:
             counter += 1
 
         if _batch_score:
-            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+            return self._batch_fill_nativeness(
+                self._batch_fill_stability(rows, progress_callback=progress_callback),
+                progress_callback=progress_callback,
+            )
         return rows
 
     # ------------------------------------------------------------------
@@ -1483,6 +1573,7 @@ class MutationEngine:
         anchors: dict[int, str],
         *,
         _batch_score: bool = True,
+        progress_callback: Callable[[IterativeProgress], None] | None = None,
     ) -> list[dict]:
         anchor_muts = [m for m in mutation_list if anchors.get(int(m.position)) == m.suggested_aa]
         non_anchor = [m for m in mutation_list if int(m.position) not in anchors]
@@ -1524,7 +1615,10 @@ class MutationEngine:
             counter += 1
 
         if _batch_score:
-            return self._batch_fill_nativeness(self._batch_fill_stability(rows))
+            return self._batch_fill_nativeness(
+                self._batch_fill_stability(rows, progress_callback=progress_callback),
+                progress_callback=progress_callback,
+            )
         return rows
 
     # ------------------------------------------------------------------
@@ -1836,9 +1930,9 @@ class MutationEngine:
         # redundant AbNatiV / ML calls on every round — this single pass
         # replaces all of those.
         _report("scoring_stability", "Batch scoring stability…")
-        all_rows = self._batch_fill_stability(all_rows)
+        all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
         _report("scoring_nativeness", "Batch scoring nativeness…")
-        all_rows = self._batch_fill_nativeness(all_rows)
+        all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback)
 
         # ESM-2 full PLL for top candidates
         _esm_rescore_full(all_rows, rescore_top_n * 2)
