@@ -636,3 +636,145 @@ class TestSessionStateLossRecovery:
         result = recover_task("survive")
         assert result == "computed-result"
         assert _mock_session_state[_key("survive", "status")] == STATUS_DONE
+
+
+# ---------------------------------------------------------------------------
+# Activity log tests
+# ---------------------------------------------------------------------------
+
+
+class TestActivityLog:
+    """Tests for the log accumulation / activity log feature."""
+
+    def test_submit_initialises_log_entries(self, _mock_session_state):
+        from vhh_library.background import _key, submit_task
+
+        event = threading.Event()
+        submit_task("lg1", lambda: event.wait(timeout=2) or "done")
+        assert _mock_session_state[_key("lg1", "log_entries")] == []
+        event.set()
+        time.sleep(0.2)
+
+    def test_reset_clears_log_entries(self, _mock_session_state):
+        from vhh_library.background import _key, reset_task
+
+        _mock_session_state[_key("lg2", "status")] = "done"
+        _mock_session_state[_key("lg2", "log_entries")] = [(1.0, "hello")]
+        _mock_session_state[_key("lg2", "progress")] = 1.0
+        _mock_session_state[_key("lg2", "progress_text")] = ""
+        _mock_session_state[_key("lg2", "result")] = None
+        _mock_session_state[_key("lg2", "error")] = None
+        reset_task("lg2")
+        assert _mock_session_state[_key("lg2", "log_entries")] == []
+
+    def test_append_log_entry(self, _mock_session_state):
+        from vhh_library.background import _key, append_log_entry
+
+        _mock_session_state[_key("lg3", "log_entries")] = []
+        append_log_entry("lg3", "step one")
+        append_log_entry("lg3", "step two")
+        entries = _mock_session_state[_key("lg3", "log_entries")]
+        assert len(entries) == 2
+        assert entries[0][1] == "step one"
+        assert entries[1][1] == "step two"
+        # Timestamps should be floats
+        assert isinstance(entries[0][0], float)
+        assert isinstance(entries[1][0], float)
+
+    def test_append_log_entry_creates_list_if_missing(self, _mock_session_state):
+        from vhh_library.background import _key, append_log_entry
+
+        # No prior initialisation of log_entries
+        append_log_entry("lg4", "first")
+        entries = _mock_session_state[_key("lg4", "log_entries")]
+        assert len(entries) == 1
+        assert entries[0][1] == "first"
+
+    def test_append_log_entry_with_state_override(self, _mock_session_state):
+        from vhh_library.background import _key, append_log_entry
+
+        custom_state: dict = {_key("lg5", "log_entries"): []}
+        append_log_entry("lg5", "via state", _state=custom_state)
+        assert len(custom_state[_key("lg5", "log_entries")]) == 1
+        # Should NOT have written to session_state
+        assert _key("lg5", "log_entries") not in _mock_session_state
+
+    def test_get_task_log_returns_copy(self, _mock_session_state):
+        from vhh_library.background import _key, append_log_entry, get_task_log
+
+        _mock_session_state[_key("lg6", "log_entries")] = []
+        append_log_entry("lg6", "msg")
+        log = get_task_log("lg6")
+        # Mutating the returned list should not affect the original
+        log.append((0.0, "extra"))
+        assert len(get_task_log("lg6")) == 1
+
+    def test_get_task_log_empty_when_no_entries(self, _mock_session_state):
+        from vhh_library.background import get_task_log
+
+        assert get_task_log("nonexistent") == []
+
+    def test_progress_callback_appends_log_entries(self, _mock_session_state):
+        """make_progress_callback should append to the activity log."""
+        from vhh_library.background import _key, make_progress_callback
+
+        _mock_session_state[_key("lgcb", "log_entries")] = []
+        cb = make_progress_callback("lgcb")
+
+        # Simulate two progress events
+        prog1 = MagicMock()
+        prog1.round_number = 1
+        prog1.total_rounds = 3
+        prog1.phase = "generating_variants"
+        prog1.message = "Building combinations…"
+
+        prog2 = MagicMock()
+        prog2.round_number = 2
+        prog2.total_rounds = 3
+        prog2.phase = "scoring_nativeness"
+        prog2.message = "Scoring nativeness for 100 variants…"
+
+        cb(prog1)
+        cb(prog2)
+
+        entries = _mock_session_state[_key("lgcb", "log_entries")]
+        assert len(entries) == 2
+        assert "Building combinations" in entries[0][1]
+        assert "Scoring nativeness" in entries[1][1]
+
+    def test_recover_task_initialises_log_entries(self, _mock_session_state):
+        """recover_task should set log_entries to an empty list."""
+        from vhh_library.background import (
+            STATUS_DONE,
+            _key,
+            _persist_result,
+            recover_task,
+        )
+
+        _persist_result("lgr", status=STATUS_DONE, result="recovered")
+        recover_task("lgr")
+        assert _mock_session_state[_key("lgr", "log_entries")] == []
+
+    def test_render_activity_log_renders_entries(self, _mock_session_state):
+        """_render_activity_log should call st.expander and st.code."""
+        from vhh_library.background import _key, _render_activity_log
+
+        mock_st = _mock_session_state["__mock_st__"]
+
+        _mock_session_state[_key("lgr2", "log_entries")] = [
+            (1000000.0, "Step 1 done"),
+            (1000001.0, "Step 2 done"),
+        ]
+
+        # Set up the expander mock as a context manager
+        expander_ctx = MagicMock()
+        mock_st.expander.return_value.__enter__ = MagicMock(return_value=expander_ctx)
+        mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
+
+        _render_activity_log("lgr2")
+
+        mock_st.expander.assert_called_once()
+        mock_st.code.assert_called_once()
+        log_text = mock_st.code.call_args[0][0]
+        assert "Step 1 done" in log_text
+        assert "Step 2 done" in log_text
