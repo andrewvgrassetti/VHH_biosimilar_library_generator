@@ -377,7 +377,7 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     return _callback
 
 
-def set_progress(task_name: str, fraction: float, text: str = "", *, _state: Any = None) -> None:
+def set_progress(task_name: str, fraction: float, text: str = "", *, _state: dict[str, Any] | None = None) -> None:
     """Directly set progress for a task (useful for simple loops).
 
     Parameters
