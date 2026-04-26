@@ -343,3 +343,60 @@ class NanoMeltPredictor(Predictor):
                 }
             )
         return results
+
+    def score_batch_prealigned(
+        self,
+        parent_sequence: str,
+        variant_sequences: list[str],
+    ) -> list[dict[str, float]]:
+        """Score variants using NanoMelt with ``do_align=False``.
+
+        The parent sequence is aligned once (when ``do_align=True``) to
+        establish the alignment frame.  Variant sequences — which differ
+        from the parent only at a few point-mutation sites — are then
+        scored *without* re-running ANARCI alignment, reducing the cost
+        from O(n) ANARCI calls to O(1).
+
+        Parameters
+        ----------
+        parent_sequence : str
+            Wild-type amino-acid string.
+        variant_sequences : list[str]
+            List of variant amino-acid strings to score.
+
+        Returns
+        -------
+        list[dict[str, float]]
+            One result dict per variant (``composite_score``, ``nanomelt_tm``).
+        """
+        if not variant_sequences:
+            return []
+
+        from Bio.Seq import Seq
+        from Bio.SeqRecord import SeqRecord
+
+        records = [SeqRecord(Seq(seq), id=f"var_{i}") for i, seq in enumerate(variant_sequences)]
+
+        # Score with do_align=False to skip per-variant ANARCI
+        backend = self._ensure_backend()
+        kwargs: dict[str, Any] = {
+            "seq_records": records,
+            "do_align": False,
+            "ncpus": self._ncpus,
+        }
+        if self._batch_size is not None:
+            kwargs["batch_size"] = self._batch_size
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            df = backend(**kwargs)
+
+        results: list[dict[str, float]] = []
+        for tm_val in df[_TM_COLUMN]:
+            tm = float(tm_val)
+            results.append(
+                {
+                    "composite_score": _sigmoid_normalize_tm(tm),
+                    "nanomelt_tm": tm,
+                }
+            )
+        return results

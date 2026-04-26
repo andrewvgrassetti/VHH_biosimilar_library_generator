@@ -190,8 +190,10 @@ def submit_task(
     state = st.session_state
 
     def _worker() -> None:
+        print(f"[BG-THREAD] Background thread started for task {name!r}", flush=True)
         try:
             result = func(*args, **kwargs)
+            print(f"[BG-THREAD] Task {name!r} completed successfully", flush=True)
             # Write to session_state (may be a dead dict if session was lost).
             try:
                 state[_key(name, "result")] = result
@@ -205,6 +207,8 @@ def submit_task(
             # Always persist to disk so the result can be recovered.
             _persist_result(name, status=STATUS_DONE, result=result)
         except Exception as exc:
+            print(f"[BG-THREAD] Task {name!r} FAILED: {exc}", flush=True)
+            traceback.print_exc()
             error_msg = str(exc)
             tb_str = traceback.format_exc()
             try:
@@ -361,6 +365,7 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
     # and sub-step phases reported from within _batch_fill_* methods.
     _simple_phases = frozenset(
         {
+            "initializing",
             "generating_variants",
             "sampling_variants",
             "scoring_stability",
@@ -377,7 +382,17 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
         }
     )
 
+    _first_call = True
+
     def _callback(prog: Any) -> None:
+        nonlocal _first_call
+        if _first_call:
+            print(
+                f"[PROGRESS] First progress callback for {task_name!r}: phase={prog.phase}",
+                flush=True,
+            )
+            _first_call = False
+
         frac = prog.round_number / max(prog.total_rounds, 1)
         state[_key(task_name, "progress")] = min(frac, 1.0)
 
@@ -501,6 +516,7 @@ def render_task_status(
     * Return the task result when status is ``done``, or ``None`` otherwise.
     """
     status = get_task_status(name)
+    print(f"[UI-POLL] render_task_status({name!r}): status={status}", flush=True)
 
     if status == STATUS_RUNNING:
 
