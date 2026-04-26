@@ -114,6 +114,48 @@ class TestSubmitTask:
         assert _mock_session_state[_key("t3", "status")] == STATUS_ERROR
         assert "boom" in _mock_session_state[_key("t3", "error")]
 
+    def test_exception_stores_traceback(self, _mock_session_state):
+        from vhh_library.background import (
+            STATUS_ERROR,
+            _key,
+            submit_task,
+        )
+
+        def failing():
+            raise RuntimeError("traceback-test")
+
+        submit_task("t3_tb", failing)
+        time.sleep(0.3)
+
+        assert _mock_session_state[_key("t3_tb", "status")] == STATUS_ERROR
+        tb = _mock_session_state[_key("t3_tb", "error_traceback")]
+        assert tb is not None
+        assert "RuntimeError" in tb
+        assert "traceback-test" in tb
+        assert "Traceback" in tb
+
+    def test_get_task_traceback_returns_stored_traceback(self, _mock_session_state):
+        from vhh_library.background import (
+            get_task_traceback,
+            submit_task,
+        )
+
+        def failing():
+            raise TypeError("get-tb-test")
+
+        submit_task("t3_get_tb", failing)
+        time.sleep(0.3)
+
+        tb = get_task_traceback("t3_get_tb")
+        assert tb is not None
+        assert "TypeError" in tb
+        assert "get-tb-test" in tb
+
+    def test_get_task_traceback_returns_none_when_no_error(self, _mock_session_state):
+        from vhh_library.background import get_task_traceback
+
+        assert get_task_traceback("nonexistent") is None
+
     def test_duplicate_submission_rejected(self, _mock_session_state):
         from vhh_library.background import (
             submit_task,
@@ -342,6 +384,24 @@ class TestResetTask:
         assert _mock_session_state[_key("r1", "status")] == STATUS_IDLE
         assert _mock_session_state[_key("r1", "result")] is None
 
+    def test_reset_clears_traceback(self, _mock_session_state):
+        from vhh_library.background import (
+            STATUS_ERROR,
+            STATUS_IDLE,
+            _key,
+            reset_task,
+        )
+
+        _mock_session_state[_key("r_tb", "status")] = STATUS_ERROR
+        _mock_session_state[_key("r_tb", "error")] = "oops"
+        _mock_session_state[_key("r_tb", "error_traceback")] = "Traceback ..."
+
+        reset_task("r_tb")
+
+        assert _mock_session_state[_key("r_tb", "status")] == STATUS_IDLE
+        assert _mock_session_state[_key("r_tb", "error")] is None
+        assert _mock_session_state[_key("r_tb", "error_traceback")] is None
+
 
 class TestIsTaskRunning:
     """is_task_running checks the status key."""
@@ -396,6 +456,30 @@ class TestRenderTaskStatus:
 
         result = render_task_status("e1")
         assert result is None
+
+    def test_error_renders_traceback_expander(self, _mock_session_state):
+        """When a traceback is available, render_task_status shows it in an expander."""
+        from vhh_library.background import (
+            STATUS_ERROR,
+            _key,
+            render_task_status,
+        )
+
+        _mock_session_state[_key("e_tb", "status")] = STATUS_ERROR
+        _mock_session_state[_key("e_tb", "error")] = "boom"
+        _mock_session_state[_key("e_tb", "error_traceback")] = "Traceback (most recent call last):\n  ..."
+
+        mock_st = _mock_session_state["__mock_st__"]
+        # Make st.expander return a context manager mock
+        expander_ctx = MagicMock()
+        expander_ctx.__enter__ = MagicMock(return_value=expander_ctx)
+        expander_ctx.__exit__ = MagicMock(return_value=False)
+        mock_st.expander.return_value = expander_ctx
+
+        result = render_task_status("e_tb")
+        assert result is None
+        mock_st.error.assert_called_once()
+        mock_st.expander.assert_called_once()
 
     def test_returns_none_when_running(self, _mock_session_state):
         """While running the fragment renders progress and returns None."""
@@ -547,6 +631,23 @@ class TestDiskPersistence:
         assert payload["status"] == "error"
         assert "disk-test-error" in payload["error"]
 
+    def test_failed_task_persists_traceback_to_disk(self, _mock_session_state):
+        from vhh_library.background import _persist_path, submit_task
+
+        def failing():
+            raise RuntimeError("disk-tb-error")
+
+        submit_task("persist_err_tb", failing)
+        time.sleep(0.5)
+
+        path = _persist_path("persist_err_tb")
+        assert path.is_file()
+        payload = json.loads(path.read_text())
+        assert payload["status"] == "error"
+        assert payload.get("error_traceback") is not None
+        assert "RuntimeError" in payload["error_traceback"]
+        assert "disk-tb-error" in payload["error_traceback"]
+
     def test_dataframe_result_persists_and_round_trips(self, _mock_session_state):
         import pandas as pd
 
@@ -634,6 +735,23 @@ class TestRecoverTask:
         assert result is None
         assert _mock_session_state[_key("rec_err", "status")] == STATUS_ERROR
         assert "something broke" in _mock_session_state[_key("rec_err", "error")]
+
+    def test_recover_error_task_with_traceback(self, _mock_session_state):
+        from vhh_library.background import (
+            STATUS_ERROR,
+            _key,
+            _persist_result,
+            recover_task,
+        )
+
+        tb_text = "Traceback (most recent call last):\n  File ...\nRuntimeError: kaboom"
+        _persist_result("rec_err_tb", status="error", error="kaboom", error_traceback=tb_text)
+
+        result = recover_task("rec_err_tb")
+        assert result is None
+        assert _mock_session_state[_key("rec_err_tb", "status")] == STATUS_ERROR
+        assert _mock_session_state[_key("rec_err_tb", "error")] == "kaboom"
+        assert _mock_session_state[_key("rec_err_tb", "error_traceback")] == tb_text
 
     def test_recover_returns_none_when_no_file(self, _mock_session_state):
         from vhh_library.background import recover_task
