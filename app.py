@@ -79,6 +79,12 @@ from vhh_library.visualization import SequenceVisualizer
 
 logger = logging.getLogger(__name__)
 
+# Ensure vhh_library logs are visible in the terminal during Streamlit runs
+# so users can see library-generation progress even when the UI progress bar
+# callback is slow to update.
+logging.basicConfig(format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", level=logging.WARNING)
+logging.getLogger("vhh_library").setLevel(logging.INFO)
+
 _ESM2_PLL_DEFAULT_TOP_N = 10
 
 st.set_page_config(

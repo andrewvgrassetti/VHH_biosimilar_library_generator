@@ -1698,7 +1698,12 @@ class TestIterativeBatchScoring:
         return pd.DataFrame(rows)
 
     def test_iterative_uses_single_batch_nativeness_call(self) -> None:
-        """Iterative strategy should batch-score nativeness once, not per round."""
+        """Iterative strategy should batch-score nativeness only at the end, not per round.
+
+        The batch may be split into multiple chunks for progress reporting,
+        but total sequences scored should equal the number of generated
+        variants and no per-variant ``score()`` calls should occur.
+        """
         call_log: list[str] = []
 
         class _TrackingScorer(_MockNativenessScorer):
@@ -1730,11 +1735,16 @@ class TestIterativeBatchScoring:
         )
         assert isinstance(lib, pd.DataFrame)
 
-        # There should be exactly ONE score_batch call — at the end of the
-        # iterative strategy — not one per round.
+        # All score_batch calls should occur only during Phase 4 (final
+        # validation).  The total number of sequences scored across all
+        # chunks must equal the total unique variants generated (which
+        # may exceed len(lib) when the iterative strategy trims to
+        # max_variants at the end).
         batch_calls = [c for c in call_log if c.startswith("score_batch")]
-        assert len(batch_calls) == 1, (
-            f"Expected exactly 1 score_batch call (end of iterative), got {len(batch_calls)}: {batch_calls}"
+        assert len(batch_calls) >= 1, f"Expected at least 1 score_batch call, got {len(batch_calls)}"
+        total_scored = sum(int(c.split("(")[1].rstrip(")")) for c in batch_calls)
+        assert total_scored >= len(lib), (
+            f"Total scored sequences ({total_scored}) should be >= library size ({len(lib)})"
         )
 
         # No per-variant score() calls during library generation.
@@ -1826,6 +1836,43 @@ class TestBatchProgressCallbacks:
         start_idx = phases.index("scoring_nativeness_start")
         done_idx = phases.index("scoring_nativeness_done")
         assert start_idx < done_idx
+
+    def test_batch_fill_nativeness_chunked_progress(self) -> None:
+        """When sequences exceed chunk size, intermediate progress events fire."""
+        from vhh_library.mutation_engine import _NATIVENESS_BATCH_CHUNK
+
+        progress_events: list[IterativeProgress] = []
+
+        def _on_progress(prog: IterativeProgress) -> None:
+            progress_events.append(prog)
+
+        engine = MutationEngine(
+            stability_scorer=StabilityScorer(),
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        # Create enough rows to trigger multiple chunks.
+        n_rows = _NATIVENESS_BATCH_CHUNK + 10
+        rows = [
+            {
+                "aa_sequence": "QVQLVESGGGLVQ",
+                "nativeness_score": 0.0,
+                "stability_score": 0.5,
+                "surface_hydrophobicity_score": 0.0,
+                "orthogonal_stability_score": 0.5,
+                "combined_score": 0.0,
+            }
+            for _ in range(n_rows)
+        ]
+
+        engine._batch_fill_nativeness(rows, progress_callback=_on_progress)
+
+        phases = [p.phase for p in progress_events]
+        # Should have start, at least 2 progress updates (2 chunks), and done.
+        assert "scoring_nativeness_start" in phases
+        assert "scoring_nativeness_done" in phases
+        progress_count = phases.count("scoring_nativeness_progress")
+        assert progress_count >= 2, f"Expected ≥2 progress events for {n_rows} rows, got {progress_count}"
 
     def test_batch_fill_nativeness_no_callback_noop(self) -> None:
         """_batch_fill_nativeness without progress_callback should not raise."""

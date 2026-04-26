@@ -41,6 +41,11 @@ _ITERATIVE_THRESHOLD = 1_000_000
 _CONVERGENCE_THRESHOLD = 1e-4
 _ANCHOR_UNLOCK_THRESHOLD = 0.01
 
+# Batch scoring chunk sizes — keeps progress callbacks firing during
+# long-running AbNatiV / ML scoring passes so the UI doesn't appear frozen.
+_NATIVENESS_BATCH_CHUNK = 50
+_STABILITY_BATCH_CHUNK = 100
+
 # Iterative strategy constants
 _DEFAULT_MAX_ROUNDS = 15
 _MIN_DIVERSITY_ENTROPY = 0.5
@@ -1217,26 +1222,29 @@ class MutationEngine:
         avoiding repeated ANARCI alignment overhead that caused Streamlit
         timeouts during library generation.
 
+        Sequences are scored in chunks (default 50) so that the progress
+        callback fires between chunks, providing visible feedback during
+        long-running AbNatiV scoring runs.
+
         Parameters
         ----------
         progress_callback : Callable[[IterativeProgress], None] | None
-            Optional callback fired before and after the batch scoring
-            operation, and periodically during the individual-scoring
-            fallback path.
+            Optional callback fired before, during, and after the batch
+            scoring operation.
         """
         if not rows:
             return rows
 
         n_seqs = len(rows)
 
-        def _report(phase: str, message: str) -> None:
+        def _report(phase: str, message: str, *, step: int = 0, total: int = 0) -> None:
             if progress_callback is None:
                 return
             progress_callback(
                 IterativeProgress(
                     phase=phase,
-                    round_number=0,
-                    total_rounds=0,
+                    round_number=step,
+                    total_rounds=total,
                     best_score=0.0,
                     mean_score=0.0,
                     population_size=n_seqs,
@@ -1248,26 +1256,62 @@ class MutationEngine:
 
         sequences = [r["aa_sequence"] for r in rows]
         if hasattr(self._nativeness_scorer, "score_batch"):
-            _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
-            nat_scores = self._nativeness_scorer.score_batch(sequences)
-            _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_seqs:,} sequences)")
+            chunk_size = _NATIVENESS_BATCH_CHUNK
+            n_chunks = (n_seqs + chunk_size - 1) // chunk_size
+            logger.info("Scoring nativeness for %d sequences in %d chunk(s)", n_seqs, n_chunks)
+            _report(
+                "scoring_nativeness_start",
+                f"Scoring nativeness ({n_seqs:,} sequences, {n_chunks} chunk(s))…",
+                step=0,
+                total=n_chunks,
+            )
+            nat_scores: list[float] = []
+            for chunk_idx in range(n_chunks):
+                start = chunk_idx * chunk_size
+                end = min(start + chunk_size, n_seqs)
+                chunk_seqs = sequences[start:end]
+                logger.info(
+                    "Nativeness chunk %d/%d: scoring sequences %d–%d",
+                    chunk_idx + 1,
+                    n_chunks,
+                    start + 1,
+                    end,
+                )
+                chunk_scores = self._nativeness_scorer.score_batch(chunk_seqs)
+                nat_scores.extend(chunk_scores)
+                _report(
+                    "scoring_nativeness_progress",
+                    f"Scoring nativeness: {end:,}/{n_seqs:,} sequences…",
+                    step=chunk_idx + 1,
+                    total=n_chunks,
+                )
+            _report(
+                "scoring_nativeness_done",
+                f"Nativeness scoring complete ({n_seqs:,} sequences)",
+                step=n_chunks,
+                total=n_chunks,
+            )
         else:
             # Fallback: score individually through the cached scorer interface.
             # This path is only reached when the scorer lacks score_batch()
             # (NativenessScorer always has it; custom/mock scorers might not).
             # The dummy object is intentionally minimal — NativenessScorer.score()
             # only reads vhh.sequence via _cached_score(vhh.sequence).
+            logger.info("Scoring nativeness for %d sequences individually (no score_batch)", n_seqs)
             _report("scoring_nativeness_start", f"Scoring nativeness ({n_seqs:,} sequences)…")
             nat_scores = []
-            _progress_interval = max(n_seqs // 10, 1)
+            _progress_interval = max(n_seqs // 20, 1)
             for i, seq in enumerate(sequences):
                 dummy = object.__new__(VHHSequence)
                 dummy.sequence = seq
                 nat_scores.append(self._nativeness_scorer.score(dummy)["composite_score"])
                 if (i + 1) % _progress_interval == 0:
+                    logger.info("Nativeness scoring: %d/%d sequences", i + 1, n_seqs)
                     _report(
                         "scoring_nativeness_progress",
                         f"Scoring nativeness: {i + 1:,}/{n_seqs:,} sequences…",
+                        step=i + 1,
+                        total=n_seqs,
                     )
             _report("scoring_nativeness_done", f"Nativeness scoring complete ({n_seqs:,} sequences)")
 
@@ -1296,10 +1340,13 @@ class MutationEngine:
         """Batch-score stability with ML backends and update library rows.
 
         When the stability scorer has NanoMelt or ESM-2 available, this
-        method batch-scores all variants in one pass and updates each
-        row's ``stability_score``, ``scoring_method``, and optional ML
-        columns (``nanomelt_tm``, ``predicted_tm``).  ``combined_score``
-        is recomputed afterward.
+        method batch-scores all variants and updates each row's
+        ``stability_score``, ``scoring_method``, and optional ML columns
+        (``nanomelt_tm``, ``predicted_tm``).  ``combined_score`` is
+        recomputed afterward.
+
+        Sequences are scored in chunks so the progress callback fires
+        periodically, keeping the UI responsive during long scoring runs.
 
         This mirrors :meth:`_batch_fill_nativeness` and avoids the
         per-variant ML inference calls that caused Streamlit timeouts
@@ -1308,8 +1355,8 @@ class MutationEngine:
         Parameters
         ----------
         progress_callback : Callable[[IterativeProgress], None] | None
-            Optional callback fired before and after the batch scoring
-            operation to provide UI feedback.
+            Optional callback fired before, during, and after the batch
+            scoring operation to provide UI feedback.
         """
         if not rows:
             return rows
@@ -1322,14 +1369,14 @@ class MutationEngine:
 
         n_seqs = len(rows)
 
-        def _report(phase: str, message: str) -> None:
+        def _report(phase: str, message: str, *, step: int = 0, total: int = 0) -> None:
             if progress_callback is None:
                 return
             progress_callback(
                 IterativeProgress(
                     phase=phase,
-                    round_number=0,
-                    total_rounds=0,
+                    round_number=step,
+                    total_rounds=total,
                     best_score=0.0,
                     mean_score=0.0,
                     population_size=n_seqs,
@@ -1342,25 +1389,54 @@ class MutationEngine:
         from vhh_library.stability import _sigmoid_normalize
 
         scorer = self._stability_scorer
-        sequences = [r["aa_sequence"] for r in rows]
 
         # --- NanoMelt batch scoring (preferred stability backend) ---
         if has_nanomelt:
             try:
                 predictor = scorer.nanomelt_predictor
-                # Create minimal VHHSequence objects for the batch API.
-                # NanoMeltPredictor.score_batch only accesses vhh.sequence.
-                batch_vhh_objects: list[VHHSequence] = []
-                for seq in sequences:
-                    obj = object.__new__(VHHSequence)
-                    obj.sequence = seq
-                    batch_vhh_objects.append(obj)
+                chunk_size = _STABILITY_BATCH_CHUNK
+                n_chunks = (n_seqs + chunk_size - 1) // chunk_size
+                logger.info("Scoring stability via NanoMelt for %d sequences in %d chunk(s)", n_seqs, n_chunks)
+                _report(
+                    "scoring_stability_start",
+                    f"Scoring stability via NanoMelt ({n_seqs:,} sequences)…",
+                    step=0,
+                    total=n_chunks,
+                )
 
-                _report("scoring_stability_start", f"Scoring stability via NanoMelt ({n_seqs:,} sequences)…")
-                nm_results = predictor.score_batch(batch_vhh_objects)
-                _report("scoring_stability_done", f"NanoMelt stability scoring complete ({n_seqs:,} sequences)")
+                all_nm_results: list[dict] = []
+                for chunk_idx in range(n_chunks):
+                    start = chunk_idx * chunk_size
+                    end = min(start + chunk_size, n_seqs)
+                    chunk_objects: list[VHHSequence] = []
+                    for row in rows[start:end]:
+                        obj = object.__new__(VHHSequence)
+                        obj.sequence = row["aa_sequence"]
+                        chunk_objects.append(obj)
+                    logger.info(
+                        "NanoMelt chunk %d/%d: scoring sequences %d–%d",
+                        chunk_idx + 1,
+                        n_chunks,
+                        start + 1,
+                        end,
+                    )
+                    chunk_results = predictor.score_batch(chunk_objects)
+                    all_nm_results.extend(chunk_results)
+                    _report(
+                        "scoring_stability_progress",
+                        f"Scoring stability: {end:,}/{n_seqs:,} sequences…",
+                        step=chunk_idx + 1,
+                        total=n_chunks,
+                    )
 
-                for row, nm in zip(rows, nm_results):
+                _report(
+                    "scoring_stability_done",
+                    f"NanoMelt stability scoring complete ({n_seqs:,} sequences)",
+                    step=n_chunks,
+                    total=n_chunks,
+                )
+
+                for row, nm in zip(rows, all_nm_results):
                     nm_tm = nm["nanomelt_tm"]
                     row["nanomelt_tm"] = nm_tm
 
@@ -1405,11 +1481,46 @@ class MutationEngine:
         if has_esm:
             try:
                 esm = scorer.esm_scorer
-                _report("scoring_stability_start", f"Scoring stability via ESM-2 ({n_seqs:,} sequences)…")
-                plls = esm.score_batch(sequences)
-                _report("scoring_stability_done", f"ESM-2 stability scoring complete ({n_seqs:,} sequences)")
+                chunk_size = _STABILITY_BATCH_CHUNK
+                n_chunks = (n_seqs + chunk_size - 1) // chunk_size
+                logger.info("Scoring stability via ESM-2 for %d sequences in %d chunk(s)", n_seqs, n_chunks)
+                _report(
+                    "scoring_stability_start",
+                    f"Scoring stability via ESM-2 ({n_seqs:,} sequences)…",
+                    step=0,
+                    total=n_chunks,
+                )
 
-                for row, pll in zip(rows, plls):
+                sequences = [r["aa_sequence"] for r in rows]
+                all_plls: list[float] = []
+                for chunk_idx in range(n_chunks):
+                    start = chunk_idx * chunk_size
+                    end = min(start + chunk_size, n_seqs)
+                    chunk_seqs = sequences[start:end]
+                    logger.info(
+                        "ESM-2 chunk %d/%d: scoring sequences %d–%d",
+                        chunk_idx + 1,
+                        n_chunks,
+                        start + 1,
+                        end,
+                    )
+                    chunk_plls = esm.score_batch(chunk_seqs)
+                    all_plls.extend(chunk_plls)
+                    _report(
+                        "scoring_stability_progress",
+                        f"Scoring stability: {end:,}/{n_seqs:,} sequences…",
+                        step=chunk_idx + 1,
+                        total=n_chunks,
+                    )
+
+                _report(
+                    "scoring_stability_done",
+                    f"ESM-2 stability scoring complete ({n_seqs:,} sequences)",
+                    step=n_chunks,
+                    total=n_chunks,
+                )
+
+                for row, pll in zip(rows, all_plls):
                     seq = row["aa_sequence"]
                     predicted_tm = scorer._pll_to_predicted_tm(pll, len(seq))
                     row["predicted_tm"] = predicted_tm
@@ -1518,7 +1629,17 @@ class MutationEngine:
         *,
         _batch_score: bool = True,
         progress_callback: Callable[[IterativeProgress], None] | None = None,
+        exclude_keys: set[str] | None = None,
     ) -> list[dict]:
+        """Generate random variant rows with position-aware sampling.
+
+        Parameters
+        ----------
+        exclude_keys : set[str] | None
+            Mutation-key strings (comma-separated mutation labels) to skip.
+            Used by the iterative strategy to avoid regenerating variants
+            that already exist in the global population.
+        """
         # Build position groups for position-aware sampling.
         position_groups: dict[int, list] = {}
         for m in mutation_list:
@@ -1537,6 +1658,15 @@ class MutationEngine:
         attempts = 0
         max_attempts = max_variants * 20
 
+        logger.debug(
+            "Sampling up to %d variants (k=%d–%d, %d positions, max_attempts=%d)",
+            max_variants,
+            effective_k_min,
+            effective_k_max,
+            len(positions),
+            max_attempts,
+        )
+
         while len(rows) < max_variants and attempts < max_attempts:
             attempts += 1
             k = random.randint(effective_k_min, effective_k_max)
@@ -1549,8 +1679,17 @@ class MutationEngine:
                 continue
             seen.add(key)
 
+            # Skip variants already present in the global population.
+            if exclude_keys is not None:
+                mut_labels = sorted(f"{m.original_aa}{m.position}{m.suggested_aa}" for m in sample)
+                mut_key = ", ".join(mut_labels)
+                if mut_key in exclude_keys:
+                    continue
+
             rows.append(self._build_variant_row(vhh_sequence, sample, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
+
+        logger.debug("Sampled %d variants in %d attempts", len(rows), attempts)
 
         if _batch_score:
             return self._batch_fill_nativeness(
@@ -1574,7 +1713,15 @@ class MutationEngine:
         *,
         _batch_score: bool = True,
         progress_callback: Callable[[IterativeProgress], None] | None = None,
+        exclude_keys: set[str] | None = None,
     ) -> list[dict]:
+        """Generate anchor-constrained variant rows.
+
+        Parameters
+        ----------
+        exclude_keys : set[str] | None
+            Mutation-key strings to skip (see :meth:`_generate_sampled`).
+        """
         anchor_muts = [m for m in mutation_list if anchors.get(int(m.position)) == m.suggested_aa]
         non_anchor = [m for m in mutation_list if int(m.position) not in anchors]
 
@@ -1591,6 +1738,12 @@ class MutationEngine:
         max_attempts = max_variants * 20
 
         n_anchor = len(anchor_muts)
+        logger.debug(
+            "Constrained sampling: %d anchors, %d non-anchor positions, target %d variants",
+            n_anchor,
+            len(non_anchor_positions),
+            max_variants,
+        )
 
         while len(rows) < max_variants and attempts < max_attempts:
             attempts += 1
@@ -1611,8 +1764,17 @@ class MutationEngine:
                 continue
             seen.add(key)
 
+            # Skip variants already present in the global population.
+            if exclude_keys is not None:
+                mut_labels = sorted(f"{m.original_aa}{m.position}{m.suggested_aa}" for m in combined)
+                mut_key = ", ".join(mut_labels)
+                if mut_key in exclude_keys:
+                    continue
+
             rows.append(self._build_variant_row(vhh_sequence, combined, counter, nativeness_score=0.0, _skip_ml=True))
             counter += 1
+
+        logger.debug("Constrained-sampled %d variants in %d attempts", len(rows), attempts)
 
         if _batch_score:
             return self._batch_fill_nativeness(
@@ -1764,12 +1926,20 @@ class MutationEngine:
         # ==================================================================
         # PHASE 1 — Broad Exploration
         # ==================================================================
-        logger.info("Phase 1: Broad exploration (%d rounds)", n_explore)
-        for _ in range(n_explore):
+        logger.info(
+            "Phase 1: Broad exploration (%d rounds, %d variants/round)",
+            n_explore,
+            per_round_explore,
+        )
+        for explore_idx in range(n_explore):
             global_round += 1
             if global_round <= _resume_round:
                 logger.debug("Skipping round %d (already completed via checkpoint)", global_round)
                 continue
+            _report(
+                "exploration",
+                f"Phase 1 — Exploration round {explore_idx + 1}/{n_explore} (sampling {per_round_explore} variants)…",
+            )
             new = self._generate_sampled(
                 vhh_sequence,
                 mutation_list,
@@ -1777,9 +1947,17 @@ class MutationEngine:
                 k_max,
                 per_round_explore,
                 _batch_score=False,
+                exclude_keys=seen_keys,
             )
             new = _esm_score_rows(new)
             _add_rows(new)
+            logger.info(
+                "Exploration round %d/%d: +%d new → %d total",
+                explore_idx + 1,
+                n_explore,
+                len(new),
+                len(all_rows),
+            )
             _report("exploration", f"Exploring ({len(all_rows)} variants)")
             _save_ckpt()
 
@@ -1793,11 +1971,15 @@ class MutationEngine:
         # PHASE 2 — Anchor Identification with epistasis detection
         # ==================================================================
         logger.info("Phase 2: Anchor identification (%d rounds)", n_anchor_id)
-        for _ in range(n_anchor_id):
+        for anchor_idx in range(n_anchor_id):
             global_round += 1
             if global_round <= _resume_round:
                 logger.debug("Skipping round %d (already completed via checkpoint)", global_round)
                 continue
+            _report(
+                "anchor_identification",
+                f"Phase 2 — Anchor round {anchor_idx + 1}/{n_anchor_id} (sampling {per_round_explore} variants)…",
+            )
             new = self._generate_sampled(
                 vhh_sequence,
                 mutation_list,
@@ -1805,9 +1987,17 @@ class MutationEngine:
                 k_max,
                 per_round_explore,
                 _batch_score=False,
+                exclude_keys=seen_keys,
             )
             new = _esm_score_rows(new)
             _add_rows(new)
+            logger.info(
+                "Anchor round %d/%d: +%d new → %d total",
+                anchor_idx + 1,
+                n_anchor_id,
+                len(new),
+                len(all_rows),
+            )
             _report(
                 "anchor_identification",
                 f"Sampling for anchor analysis ({len(all_rows)} variants)",
@@ -1829,7 +2019,7 @@ class MutationEngine:
         # ==================================================================
         # PHASE 3 — Focused Exploitation
         # ==================================================================
-        logger.info("Phase 3: Focused exploitation (%d rounds)", n_exploit)
+        logger.info("Phase 3: Focused exploitation (%d rounds, %d variants/round)", n_exploit, per_round_exploit)
         for exploit_round in range(n_exploit):
             global_round += 1
             if global_round <= _resume_round:
@@ -1838,6 +2028,11 @@ class MutationEngine:
 
             # Build weighted anchor set from confident candidates
             anchors = self._select_anchors_weighted(anchor_candidates)
+            _report(
+                "exploitation",
+                f"Phase 3 — Exploit round {exploit_round + 1}/{n_exploit} "
+                f"({len(anchors)} anchors, {len(all_rows)} total variants)…",
+            )
 
             if anchors:
                 new = self._generate_constrained_sampled(
@@ -1848,6 +2043,7 @@ class MutationEngine:
                     per_round_exploit,
                     anchors,
                     _batch_score=False,
+                    exclude_keys=seen_keys,
                 )
             else:
                 new = self._generate_sampled(
@@ -1857,10 +2053,19 @@ class MutationEngine:
                     k_max,
                     per_round_exploit,
                     _batch_score=False,
+                    exclude_keys=seen_keys,
                 )
 
             new = _esm_score_rows(new)
             _add_rows(new)
+            logger.info(
+                "Exploit round %d/%d: +%d new → %d total (anchors=%d)",
+                exploit_round + 1,
+                n_exploit,
+                len(new),
+                len(all_rows),
+                len(anchors),
+            )
 
             # Diversity injection: if entropy drops, add random variants
             diversity = _mutation_entropy(all_rows)
@@ -1873,6 +2078,7 @@ class MutationEngine:
                     k_max,
                     inject_n,
                     _batch_score=False,
+                    exclude_keys=seen_keys,
                 )
                 inject = _esm_score_rows(inject)
                 _add_rows(inject)
@@ -1923,20 +2129,21 @@ class MutationEngine:
         # PHASE 4 — Final Validation & Batch Scoring
         # ==================================================================
         global_round += 1
-        logger.info("Phase 4: Final validation")
+        logger.info("Phase 4: Final validation (%d total variants to batch-score)", len(all_rows))
 
         # Batch-score stability and nativeness once for all accumulated
         # variants.  Per-round sampling used _batch_score=False to avoid
         # redundant AbNatiV / ML calls on every round — this single pass
         # replaces all of those.
-        _report("scoring_stability", "Batch scoring stability…")
+        _report("scoring_stability", f"Phase 4 — Batch scoring stability ({len(all_rows):,} variants)…")
         all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
-        _report("scoring_nativeness", "Batch scoring nativeness…")
+        _report("scoring_nativeness", f"Phase 4 — Batch scoring nativeness ({len(all_rows):,} variants)…")
         all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback)
 
         # ESM-2 full PLL for top candidates
         _esm_rescore_full(all_rows, rescore_top_n * 2)
         _report("validation", "Final scoring complete")
+        logger.info("Phase 4 complete: %d variants scored", len(all_rows))
 
         # Trim to max_variants, keeping the best
         all_rows.sort(key=lambda r: r["combined_score"], reverse=True)
