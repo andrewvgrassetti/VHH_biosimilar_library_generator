@@ -2495,7 +2495,12 @@ class MutationEngine:
         n_exploit = max(2, max_rounds - n_explore - n_anchor_id - 1)
         total_phases = n_explore + n_anchor_id + n_exploit + 1  # +1 validation
 
-        per_round_explore = max(max_variants // max(total_phases, 1), 50)
+        # Calculate per-round budgets so total across all phases sums to max_variants.
+        # Phase 3 (exploitation) uses half the per-round budget of Phases 1 & 2, so:
+        #   total = (n_explore + n_anchor_id) * per_round_explore + n_exploit * (per_round_explore / 2)
+        # Solving for per_round_explore gives effective_rounds below.
+        effective_rounds = (n_explore + n_anchor_id) + n_exploit * 0.5
+        per_round_explore = max(int(max_variants / max(effective_rounds, 1)), 50)
         per_round_exploit = max(per_round_explore // 2, 30)
 
         # Fire an immediate progress callback so the UI shows something

@@ -507,6 +507,28 @@ class TestEvolutionaryIterativeStrategy:
         assert elapsed < 300, f"Iterative strategy took {elapsed:.1f}s (>5 min)"
         assert isinstance(lib, pd.DataFrame)
 
+    def test_iterative_reaches_max_variants(
+        self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
+    ) -> None:
+        """Iterative strategy should produce close to max_variants when search space is large."""
+        top15 = ranked.head(15)
+        if len(top15) < 5:
+            pytest.skip("Not enough ranked mutations")
+        max_variants = 200
+        lib = engine.generate_library(
+            vhh,
+            top15,
+            n_mutations=5,
+            strategy="iterative",
+            max_variants=max_variants,
+            max_rounds=10,
+        )
+        assert isinstance(lib, pd.DataFrame)
+        # Should reach at least 80% of max_variants (budget allocation fix)
+        assert len(lib) >= int(max_variants * 0.8), (
+            f"Expected at least {int(max_variants * 0.8)} variants, got {len(lib)}"
+        )
+
     def test_exhaustive_with_progress_callback(
         self, engine: MutationEngine, vhh: VHHSequence, ranked: pd.DataFrame
     ) -> None:
