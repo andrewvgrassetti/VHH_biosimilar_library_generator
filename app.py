@@ -359,6 +359,7 @@ def _try_auto_restore() -> None:
 _RECOVERABLE_TASKS: dict[str, str] = {
     "library_gen": "library",
     "construct_build": "constructs",
+    "rank_mutations": "ranked_mutations",
 }
 
 
@@ -1212,7 +1213,8 @@ def tab_mutations(stability_scorer):
     )
     _, hydrophobicity_scorer, consensus_scorer, esm_scorer, nativeness_scorer = scorers
 
-    if st.button("Rank single mutations", type="primary", key="btn_rank"):
+    _rank_running = is_task_running("rank_mutations")
+    if st.button("Rank single mutations", type="primary", key="btn_rank", disabled=_rank_running):
         engine = MutationEngine(
             stability_scorer,
             nativeness_scorer,
@@ -1222,32 +1224,63 @@ def tab_mutations(stability_scorer):
             weights=weights,
             enabled_metrics=enabled,
         )
-        with st.spinner("Ranking mutations…"):
-            # Derive legacy parameters from the design policy for backward
-            # compatibility with rank_single_mutations.  The policy already
-            # includes the CSV overrides (applied last), so these derived
-            # parameters honour CSV as the ultimate arbiter.
-            active_policy = st.session_state.get("_design_policy")
-            if active_policy is not None:
-                rank_off_limits, rank_forbidden = _to_off_limits(active_policy)
-            else:
-                rank_off_limits = frozen_positions
-                rank_forbidden = {}
-            try:
-                ranked = engine.rank_single_mutations(
-                    vhh,
-                    off_limits=rank_off_limits if rank_off_limits else None,
-                    forbidden_substitutions=rank_forbidden if rank_forbidden else None,
-                    excluded_target_aas=excluded_set,
-                    max_per_position=st.session_state.get("max_candidates_per_position", 3),
-                )
-            except FileNotFoundError as exc:
-                _show_abnativ_weights_error(exc)
-                return
-        st.session_state["ranked_mutations"] = ranked
+        # Derive legacy parameters from the design policy for backward
+        # compatibility with rank_single_mutations.  The policy already
+        # includes the CSV overrides (applied last), so these derived
+        # parameters honour CSV as the ultimate arbiter.
+        active_policy = st.session_state.get("_design_policy")
+        if active_policy is not None:
+            rank_off_limits, rank_forbidden = _to_off_limits(active_policy)
+        else:
+            rank_off_limits = frozen_positions
+            rank_forbidden = {}
+
+        _rank_progress_cb = make_progress_callback("rank_mutations")
+
+        # Snapshot everything needed by the background thread
+        _vhh = vhh
+        _off_limits = rank_off_limits if rank_off_limits else None
+        _forbidden = rank_forbidden if rank_forbidden else None
+        _excluded = excluded_set
+        _max_per_pos = st.session_state.get("max_candidates_per_position", 3)
+
+        # Store the engine now so it is accessible when the background task
+        # completes (which may be on a subsequent rerun outside this block).
         st.session_state["_mutation_engine"] = engine
+
+        def _rank_work():
+            return engine.rank_single_mutations(
+                _vhh,
+                off_limits=_off_limits,
+                forbidden_substitutions=_forbidden,
+                excluded_target_aas=_excluded,
+                max_per_position=_max_per_pos,
+                progress_callback=_rank_progress_cb,
+            )
+
+        print(f"[APP] Submitting rank_mutations task", flush=True)
+        submit_task("rank_mutations", _rank_work)
+
+    # Poll / display result for mutation ranking
+    rank_result = render_task_status("rank_mutations", success_message="")
+
+    # Diagnostic panel visible while ranking is running
+    if is_task_running("rank_mutations"):
+        with st.expander("🔧 Diagnostic Info", expanded=True):
+            st.text(f"Task status: {get_task_status('rank_mutations')}")
+            frac, text = get_task_progress("rank_mutations")
+            st.text(f"Progress: {frac:.1%} — {text}")
+            st.text(f"Log entries: {len(get_task_log('rank_mutations'))}")
+            st.caption(
+                "If this section shows 0% with no log entries for more than 30 seconds, "
+                "check the terminal for [RANKING] and [TIMING] output."
+            )
+
+    if rank_result is not None:
+        st.session_state["ranked_mutations"] = rank_result
         auto_save_session()
-        st.success(f"Ranked {len(ranked)} mutations.")
+        reset_task("rank_mutations")
+        st.success(f"Ranked {len(rank_result)} mutations.")
 
     ranked = st.session_state.get("ranked_mutations")
     if ranked is not None and not ranked.empty:

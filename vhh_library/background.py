@@ -499,6 +499,10 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
             "scoring_nativeness_done",
             "esm2_scoring_stage1",
             "esm2_scoring_stage2",
+            "enumerating_candidates",
+            "batch_stability_scoring",
+            "batch_nativeness_scoring",
+            "ranking_complete",
         }
     )
 
