@@ -9,6 +9,7 @@ import math
 import random
 import re
 import time as _time
+import traceback as _tb
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -540,6 +541,7 @@ class MutationEngine:
         off_limits: set[str],
         forbidden_substitutions: dict[str, set[str]] | None = None,
         excluded_target_aas: set[str] | None = None,
+        progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
     ) -> list[dict]:
         """Generate candidate mutations ranked by stability impact.
 
@@ -565,6 +567,15 @@ class MutationEngine:
         if forbidden_substitutions:
             forbidden_str = {str(k): v for k, v in forbidden_substitutions.items()}
         excluded = excluded_target_aas or set()
+
+        # Count mutable positions for progress estimation
+        n_mutable = sum(1 for pos_key in vhh_sequence.imgt_numbered if pos_key not in off_limits)
+        n_aas = len(AMINO_ACIDS) - 1  # 19 substitutions per position
+        estimated_total = n_mutable * n_aas
+        print(
+            f"[RANKING] Scanning {n_mutable} mutable positions × {n_aas} AAs = ~{estimated_total} candidates",
+            flush=True,
+        )
 
         candidates: list[dict] = []
         mutant_sequences: list[str] = []
@@ -605,27 +616,137 @@ class MutationEngine:
                 candidates.append(candidate_dict)
                 mutant_sequences.append(mutant.sequence)
 
+                # Progress every 100 enumerated candidates
+                if len(candidates) % 100 == 0:
+                    print(
+                        f"[RANKING] Enumerated {len(candidates)}/{estimated_total} candidates…",
+                        flush=True,
+                    )
+                    if progress_callback is not None:
+                        progress_callback(
+                            IterativeProgress(
+                                phase="enumerating_candidates",
+                                round_number=len(candidates),
+                                total_rounds=estimated_total,
+                                best_score=0.0,
+                                mean_score=0.0,
+                                population_size=len(candidates),
+                                n_anchors=0,
+                                diversity_entropy=0.0,
+                                message=f"Scanning mutations: {len(candidates)}/{estimated_total} candidates…",
+                            )
+                        )
+
+        print(f"[RANKING] Enumeration complete: {len(candidates)} candidates generated", flush=True)
+
         # --- Batch ML stability scoring ---
         # When NanoMelt or ESM-2 is available, batch-score all candidate
         # mutant sequences and replace delta_stability with ML-derived
         # values.  This uses pure ML Tm signals (no heuristic penalty/bonus).
         if candidates:
-            self._batch_rescore_candidates(candidates, mutant_sequences, vhh_sequence)
+            if progress_callback is not None:
+                progress_callback(
+                    IterativeProgress(
+                        phase="batch_stability_scoring",
+                        round_number=0,
+                        total_rounds=1,
+                        best_score=0.0,
+                        mean_score=0.0,
+                        population_size=len(candidates),
+                        n_anchors=0,
+                        diversity_entropy=0.0,
+                        message=f"Batch-scoring stability for {len(candidates)} candidates…",
+                    )
+                )
+            with _timed_operation(f"_batch_rescore_candidates ({len(candidates)} candidates)"):
+                self._batch_rescore_candidates(candidates, mutant_sequences, vhh_sequence)
 
         # Batch-score nativeness for all mutants in a single call instead of
         # invoking AbNatiV (and its internal ANARCI alignment) per candidate.
         if candidates:
-            parent_nat = self._nativeness_scorer.score(vhh_sequence)["composite_score"]
-            if hasattr(self._nativeness_scorer, "score_batch"):
-                mutant_nat_scores = self._nativeness_scorer.score_batch(mutant_sequences)
-                for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
-                    candidate["delta_nativeness"] = mutant_nat - parent_nat
-            else:
-                # Fallback for scorers that lack batch support — use delta directly.
-                for candidate in candidates:
-                    candidate["delta_nativeness"] = self._nativeness_scorer.predict_mutation_effect(
-                        vhh_sequence, candidate["position"], candidate["suggested_aa"]
+            if progress_callback is not None:
+                progress_callback(
+                    IterativeProgress(
+                        phase="batch_nativeness_scoring",
+                        round_number=0,
+                        total_rounds=1,
+                        best_score=0.0,
+                        mean_score=0.0,
+                        population_size=len(candidates),
+                        n_anchors=0,
+                        diversity_entropy=0.0,
+                        message=f"Batch-scoring nativeness for {len(candidates)} candidates…",
                     )
+                )
+            _nat_start = _time.monotonic()
+            try:
+                with _timed_operation("nativeness parent scoring"):
+                    parent_nat = self._nativeness_scorer.score(vhh_sequence)["composite_score"]
+                if hasattr(self._nativeness_scorer, "score_batch"):
+                    print(
+                        f"[RANKING] Batch-scoring nativeness for {len(mutant_sequences)} sequences…",
+                        flush=True,
+                    )
+                    with _timed_operation(
+                        f"nativeness batch scoring ({len(mutant_sequences)} sequences)"
+                    ):
+                        mutant_nat_scores = self._nativeness_scorer.score_batch(mutant_sequences)
+                        if _time.monotonic() - _nat_start > _OPERATION_TIMEOUT_SECONDS:
+                            print(
+                                f"[TIMEOUT] nativeness batch scoring exceeded "
+                                f"{_OPERATION_TIMEOUT_SECONDS}s — setting delta_nativeness=0.0",
+                                flush=True,
+                            )
+                            logger.warning(
+                                "Nativeness batch scoring exceeded timeout (%ds); "
+                                "setting delta_nativeness=0.0 for all candidates",
+                                _OPERATION_TIMEOUT_SECONDS,
+                            )
+                            for candidate in candidates:
+                                candidate["delta_nativeness"] = 0.0
+                        else:
+                            print("[RANKING] Nativeness batch scoring complete", flush=True)
+                            for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
+                                candidate["delta_nativeness"] = mutant_nat - parent_nat
+                else:
+                    # Fallback for scorers that lack batch support — use delta directly.
+                    print(
+                        "[RANKING] No score_batch — falling back to per-candidate nativeness",
+                        flush=True,
+                    )
+                    for i, candidate in enumerate(candidates):
+                        if i % 50 == 0:
+                            print(
+                                f"[RANKING] Per-candidate nativeness: {i}/{len(candidates)}",
+                                flush=True,
+                            )
+                        if _time.monotonic() - _nat_start > _OPERATION_TIMEOUT_SECONDS:
+                            print(
+                                f"[TIMEOUT] per-candidate nativeness scoring exceeded "
+                                f"{_OPERATION_TIMEOUT_SECONDS}s at candidate {i} — "
+                                f"setting delta_nativeness=0.0 for remaining",
+                                flush=True,
+                            )
+                            logger.warning(
+                                "Per-candidate nativeness scoring exceeded timeout (%ds) at "
+                                "candidate %d/%d; setting delta_nativeness=0.0 for remaining",
+                                _OPERATION_TIMEOUT_SECONDS,
+                                i,
+                                len(candidates),
+                            )
+                            for remaining in candidates[i:]:
+                                remaining.setdefault("delta_nativeness", 0.0)
+                            break
+                        candidate["delta_nativeness"] = self._nativeness_scorer.predict_mutation_effect(
+                            vhh_sequence, candidate["position"], candidate["suggested_aa"]
+                        )
+            except Exception as exc:
+                print(f"[RANKING] Nativeness scoring FAILED: {exc}", flush=True)
+
+                _tb.print_exc()
+                logger.warning("Nativeness scoring failed; setting delta_nativeness=0.0: %s", exc)
+                for candidate in candidates:
+                    candidate.setdefault("delta_nativeness", 0.0)
 
         candidates.sort(key=lambda c: c["delta_stability"], reverse=True)
         return candidates
@@ -653,47 +774,80 @@ class MutationEngine:
         if not has_nanomelt and not has_esm:
             return  # No ML backends — keep heuristic deltas
 
+        _rescore_start = _time.monotonic()
+
         # --- NanoMelt batch scoring (preferred) ---
         if has_nanomelt:
             try:
                 predictor = scorer.nanomelt_predictor
+                print("[RANKING] NanoMelt batch rescoring: scoring parent…", flush=True)
 
                 # Score parent
-                parent_result = predictor.score_sequence(parent_vhh)
+                with _timed_operation("NanoMelt parent scoring"):
+                    parent_result = predictor.score_sequence(parent_vhh)
                 parent_tm = parent_result["nanomelt_tm"]
                 parent_score = _sigmoid_normalize(parent_tm, scorer._tm_min, scorer._tm_max)
+                print(f"[RANKING] NanoMelt parent Tm = {parent_tm:.1f}°C", flush=True)
+
+                # Check timeout before batch scoring
+                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                    print(
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"after parent scoring — keeping heuristic deltas",
+                        flush=True,
+                    )
+                    return
+
+                print(
+                    f"[RANKING] NanoMelt batch rescoring: {len(mutant_sequences)} mutants…",
+                    flush=True,
+                )
 
                 # Batch-score all mutant sequences using the pre-aligned
                 # path (skips redundant ANARCI for point-mutation variants).
-                if hasattr(predictor, "score_batch_prealigned"):
-                    mutant_results = predictor.score_batch_prealigned(parent_vhh.sequence, mutant_sequences)
-                else:
-                    # Fallback: construct lightweight VHHSequence wrappers —
-                    # score_batch only accesses .sequence on each object,
-                    # matching the pattern used in _batch_fill_stability.
-                    mutant_objects: list[VHHSequence] = []
-                    for seq in mutant_sequences:
-                        obj = object.__new__(VHHSequence)
-                        obj.sequence = seq
-                        mutant_objects.append(obj)
-                    mutant_results = predictor.score_batch(mutant_objects)
+                with _timed_operation(f"NanoMelt batch scoring ({len(mutant_sequences)} mutants)"):
+                    if hasattr(predictor, "score_batch_prealigned"):
+                        mutant_results = predictor.score_batch_prealigned(parent_vhh.sequence, mutant_sequences)
+                    else:
+                        # Fallback: construct lightweight VHHSequence wrappers —
+                        # score_batch only accesses .sequence on each object,
+                        # matching the pattern used in _batch_fill_stability.
+                        mutant_objects: list[VHHSequence] = []
+                        for seq in mutant_sequences:
+                            obj = object.__new__(VHHSequence)
+                            obj.sequence = seq
+                            mutant_objects.append(obj)
+                        mutant_results = predictor.score_batch(mutant_objects)
+
+                # Check timeout after batch scoring
+                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                    print(
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"after NanoMelt batch scoring — keeping heuristic deltas",
+                        flush=True,
+                    )
+                    return
 
                 for candidate, nm_result in zip(candidates, mutant_results):
                     mutant_tm = nm_result["nanomelt_tm"]
                     mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
                     candidate["delta_stability"] = mutant_score - parent_score
 
+                print("[RANKING] NanoMelt batch rescoring complete", flush=True)
                 logger.info(
                     "Batch-scored %d candidates with NanoMelt (parent Tm=%.1f°C)",
                     len(candidates),
                     parent_tm,
                 )
                 return
-            except Exception:
+            except Exception as exc:
+
+                print(f"[RANKING] NanoMelt batch rescoring FAILED: {exc}", flush=True)
+                _tb.print_exc()
                 logger.warning(
-                    "NanoMelt batch candidate scoring failed; %s",
+                    "NanoMelt batch candidate scoring failed; %s: %s",
                     "falling back to ESM-2" if has_esm else "keeping heuristic deltas",
-                    exc_info=True,
+                    exc,
                 )
 
         # --- ESM-2 batch scoring (fallback) ---
@@ -701,10 +855,25 @@ class MutationEngine:
             try:
                 esm = scorer.esm_scorer
                 parent_seq = parent_vhh.sequence
+                print(
+                    f"[RANKING] ESM-2 batch rescoring: {len(mutant_sequences) + 1} sequences "
+                    f"(parent + mutants)…",
+                    flush=True,
+                )
 
                 # Batch-score parent + all mutants together
-                all_sequences = [parent_seq] + mutant_sequences
-                all_plls = esm.score_batch(all_sequences)
+                with _timed_operation(f"ESM-2 batch scoring ({len(mutant_sequences)} mutants)"):
+                    all_sequences = [parent_seq] + mutant_sequences
+                    all_plls = esm.score_batch(all_sequences)
+
+                # Check timeout after ESM-2 batch scoring
+                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                    print(
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"after ESM-2 batch scoring — keeping heuristic deltas",
+                        flush=True,
+                    )
+                    return
 
                 parent_pll = all_plls[0]
                 parent_tm = scorer._pll_to_predicted_tm(parent_pll, len(parent_seq))
@@ -715,14 +884,18 @@ class MutationEngine:
                     mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
                     candidate["delta_stability"] = mutant_score - parent_score
 
+                print("[RANKING] ESM-2 batch rescoring complete", flush=True)
                 logger.info(
                     "Batch-scored %d candidates with ESM-2 (parent Tm=%.1f°C)",
                     len(candidates),
                     parent_tm,
                 )
                 return
-            except Exception:
-                logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas", exc_info=True)
+            except Exception as exc:
+
+                print(f"[RANKING] ESM-2 batch rescoring FAILED: {exc}", flush=True)
+                _tb.print_exc()
+                logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas: %s", exc)
 
     # ------------------------------------------------------------------
     # Policy-aware candidate generation (new path)
@@ -934,7 +1107,82 @@ class MutationEngine:
         forbidden_substitutions: Optional[dict[int, set[str]] | dict[str, set[str]]] = None,
         excluded_target_aas: Optional[set[str]] = None,
         max_per_position: int = 1,
+        progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
     ) -> pd.DataFrame:
+        _rank_start = _time.monotonic()
+
+        # ---- DIAGNOSTIC PREAMBLE ---- prints to both logger AND stdout
+        _diag_lines = [
+            "=" * 70,
+            "RANK SINGLE MUTATIONS STARTED",
+            f"  Timestamp: {_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"  vhh_sequence length: {len(vhh_sequence.sequence)}",
+            f"  vhh_sequence valid: {vhh_sequence.validation_result.get('valid')}",
+            f"  vhh_sequence numbered positions: {len(vhh_sequence.imgt_numbered)}",
+            f"  off_limits count: {len(off_limits) if off_limits else 0}",
+            f"  max_per_position: {max_per_position}",
+            f"  Stability scorer: {type(self._stability_scorer).__name__}",
+            f"  Has NanoMelt: {self._stability_scorer.nanomelt_predictor is not None}",
+            f"  Has ESM on stability: {self._stability_scorer.esm_scorer is not None}",
+            f"  Nativeness scorer: {type(self._nativeness_scorer).__name__}",
+            f"  Active weights: {self._active_weights()}",
+            f"  progress_callback is None: {progress_callback is None}",
+            "=" * 70,
+        ]
+        for line in _diag_lines:
+            print(line, flush=True)
+            logger.info(line)
+
+        # ---- BACKEND HEALTH CHECK ---- probe each backend before ranking
+        if self._stability_scorer.nanomelt_predictor is not None:
+            try:
+                with _timed_operation("NanoMelt health check (rank)"):
+                    _nm_health_result = self._stability_scorer.nanomelt_predictor.score_sequence(vhh_sequence)
+                print(
+                    f"[RANKING] NanoMelt health check OK (Tm={_nm_health_result.get('nanomelt_tm', '?')})",
+                    flush=True,
+                )
+                logger.info(
+                    "[RANKING] NanoMelt health check OK (Tm=%s)", _nm_health_result.get("nanomelt_tm", "?")
+                )
+            except Exception as exc:
+
+                print(f"[RANKING] NanoMelt health check FAILED: {exc}", flush=True)
+                print("[RANKING] Disabling NanoMelt for this ranking run", flush=True)
+                _tb.print_exc()
+                logger.warning(
+                    "[RANKING] NanoMelt health check failed; disabling for this run: %s", exc
+                )
+                self._stability_scorer.nanomelt_predictor = None
+
+        if self._stability_scorer.esm_scorer is not None:
+            try:
+                _probe = vhh_sequence.sequence[:_HEALTH_CHECK_SEQ_LENGTH]
+                with _timed_operation("ESM-2 health check (rank)"):
+                    _esm_health_check_pll = self._stability_scorer.esm_scorer.score_batch([_probe])
+                print("[RANKING] ESM-2 health check OK", flush=True)
+                logger.info("[RANKING] ESM-2 health check OK")
+            except Exception as exc:
+
+                print(f"[RANKING] ESM-2 health check FAILED: {exc}", flush=True)
+                _tb.print_exc()
+                logger.warning(
+                    "[RANKING] ESM-2 health check failed; disabling for this run: %s", exc
+                )
+                self._stability_scorer.esm_scorer = None
+
+        try:
+            with _timed_operation("Nativeness health check (rank)"):
+                self._nativeness_scorer.score(vhh_sequence)
+            print("[RANKING] Nativeness health check OK", flush=True)
+            logger.info("[RANKING] Nativeness health check OK")
+        except Exception as exc:
+
+            print(f"[RANKING] Nativeness health check FAILED: {exc}", flush=True)
+            _tb.print_exc()
+            # Cannot disable nativeness — it's required. Log and continue.
+            logger.warning("[RANKING] Nativeness health check failed (continuing): %s", exc)
+
         if off_limits is None:
             # CDR positions are frozen by default — the mutation engine must
             # not propose mutations inside CDR loops unless explicitly
@@ -955,6 +1203,7 @@ class MutationEngine:
             off_limits=off_limits_str,
             forbidden_substitutions=forbidden_str,
             excluded_target_aas=excluded_target_aas,
+            progress_callback=progress_callback,
         )
 
         rows: list[dict] = []
@@ -1004,6 +1253,37 @@ class MutationEngine:
             # Limit to max_per_position candidates per IMGT position.
             if max_per_position > 0:
                 df = df.groupby("imgt_pos", sort=False).head(max_per_position).reset_index(drop=True)
+
+        if progress_callback is not None:
+            progress_callback(
+                IterativeProgress(
+                    phase="ranking_complete",
+                    round_number=1,
+                    total_rounds=1,
+                    best_score=float(df["combined_score"].max()) if not df.empty else 0.0,
+                    mean_score=float(df["combined_score"].mean()) if not df.empty else 0.0,
+                    population_size=len(df),
+                    n_anchors=0,
+                    diversity_entropy=0.0,
+                    message=f"Ranking complete: {len(df)} mutations ranked.",
+                )
+            )
+
+        _rank_elapsed = _time.monotonic() - _rank_start
+        _summary = [
+            "=" * 70,
+            "RANK SINGLE MUTATIONS COMPLETE",
+            f"  Total time: {_rank_elapsed:.1f}s",
+            f"  Candidates generated: {len(suggestions)}",
+            f"  Final ranked mutations: {len(df)}",
+            "  Scoring method breakdown: "
+            + str(df["reason"].value_counts().to_dict() if not df.empty else "N/A"),
+            "=" * 70,
+        ]
+        for line in _summary:
+            print(line, flush=True)
+            logger.info(line)
+
         return df
 
     # ------------------------------------------------------------------
