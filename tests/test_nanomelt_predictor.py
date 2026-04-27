@@ -187,6 +187,41 @@ class TestNanoMeltPredictor:
         assert pred.score_batch([]) == []
         mock_backend.assert_not_called()
 
+    # -- score_batch_prealigned ------------------------------------------------
+
+    def test_score_batch_prealigned_returns_results(self) -> None:
+        mock_backend = _make_mock_backend([71.0, 69.5])
+        pred = _make_predictor_with_mock_backend(mock_backend)
+
+        results = pred.score_batch_prealigned("PARENTSEQ", ["MUTANT1", "MUTANT2"])
+        assert len(results) == 2
+        assert results[0]["nanomelt_tm"] == pytest.approx(71.0)
+        assert results[1]["nanomelt_tm"] == pytest.approx(69.5)
+        for r in results:
+            assert "composite_score" in r
+            assert 0.0 <= r["composite_score"] <= 1.0
+
+    def test_score_batch_prealigned_empty(self) -> None:
+        mock_backend = _make_mock_backend([])
+        pred = _make_predictor_with_mock_backend(mock_backend)
+        assert pred.score_batch_prealigned("PARENT", []) == []
+        mock_backend.assert_not_called()
+
+    def test_score_batch_prealigned_uses_do_align_true(self) -> None:
+        """NanoMelt requires ANARCI alignment; do_align must be True.
+
+        NanoMelt's StandardScaler expects a fixed feature width produced
+        by ANARCI-aligned embeddings.  Setting do_align=False causes a
+        feature-dimension mismatch (e.g. 992 vs 1192).  This test
+        guards against regression of that fix.
+        """
+        mock_backend = _make_mock_backend([70.0])
+        pred = _make_predictor_with_mock_backend(mock_backend)
+
+        pred.score_batch_prealigned("PARENT", ["VARIANT"])
+        call_kwargs = mock_backend.call_args.kwargs
+        assert call_kwargs["do_align"] is True
+
     def test_score_batch_forwards_batch_size(self, vhh: VHHSequence) -> None:
         mock_backend = _make_mock_backend([70.0])
         pred = _make_predictor_with_mock_backend(mock_backend, batch_size=32)

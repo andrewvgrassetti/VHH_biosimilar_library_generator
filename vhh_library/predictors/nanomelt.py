@@ -349,21 +349,24 @@ class NanoMeltPredictor(Predictor):
         parent_sequence: str,  # noqa: ARG002
         variant_sequences: list[str],
     ) -> list[dict[str, float]]:
-        """Score variants using NanoMelt with ``do_align=False``.
+        """Score variants using NanoMelt batch inference.
 
-        Variant sequences — which differ from the parent only at a few
-        point-mutation sites — are scored *without* re-running ANARCI
-        alignment, reducing the cost from O(n) ANARCI calls to O(1).
+        Unlike :meth:`NativenessScorer.score_batch_prealigned`, NanoMelt
+        **cannot** skip ANARCI alignment.  NanoMelt's internal sklearn
+        pipeline (StandardScaler) was trained on ANARCI-aligned feature
+        vectors of a fixed width.  Passing unaligned sequences produces a
+        different feature count and raises a ``ValueError``.  Therefore
+        this method runs with ``do_align=True`` to ensure the correct
+        feature dimensions.
 
         The ``parent_sequence`` parameter is accepted for API consistency
         with :meth:`NativenessScorer.score_batch_prealigned` but is not
-        used by this implementation.  NanoMelt's ``do_align=False`` mode
-        does not require a reference alignment.
+        used by this implementation.
 
         Parameters
         ----------
         parent_sequence : str
-            Wild-type amino-acid string.
+            Wild-type amino-acid string (unused — kept for API parity).
         variant_sequences : list[str]
             List of variant amino-acid strings to score.
 
@@ -380,11 +383,14 @@ class NanoMeltPredictor(Predictor):
 
         records = [SeqRecord(Seq(seq), id=f"var_{i}") for i, seq in enumerate(variant_sequences)]
 
-        # Score with do_align=False to skip per-variant ANARCI
+        # NanoMelt requires ANARCI alignment (do_align=True) so the
+        # resulting ESM embeddings match the fixed feature width expected
+        # by the trained StandardScaler.  Setting do_align=False would
+        # cause a feature-dimension mismatch (e.g. 992 vs 1192).
         backend = self._ensure_backend()
         kwargs: dict[str, Any] = {
             "seq_records": records,
-            "do_align": False,
+            "do_align": True,
             "ncpus": self._ncpus,
         }
         if self._batch_size is not None:
