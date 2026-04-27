@@ -16,15 +16,13 @@ ANARCI / HMMER is never required.  They validate:
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from vhh_library.mutation_engine import (
     IterativeProgress,
     MutationEngine,
-    _OPERATION_TIMEOUT_SECONDS,
-    _timed_operation,
 )
 from vhh_library.sequence import VHHSequence
 from vhh_library.stability import StabilityScorer
@@ -472,7 +470,6 @@ class TestRankBackgroundSubmission:
 class TestRankProgressPhases:
     def test_new_phases_in_simple_phases(self):
         """Verify new ranking phases are registered in make_progress_callback."""
-        from unittest.mock import MagicMock
 
         import vhh_library.background as bg
 

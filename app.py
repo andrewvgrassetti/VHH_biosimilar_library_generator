@@ -1258,7 +1258,7 @@ def tab_mutations(stability_scorer):
                 progress_callback=_rank_progress_cb,
             )
 
-        print(f"[APP] Submitting rank_mutations task", flush=True)
+        print("[APP] Submitting rank_mutations task", flush=True)
         submit_task("rank_mutations", _rank_work)
 
     # Poll / display result for mutation ranking

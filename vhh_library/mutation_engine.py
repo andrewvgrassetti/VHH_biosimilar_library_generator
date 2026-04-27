@@ -9,6 +9,7 @@ import math
 import random
 import re
 import time as _time
+import traceback as _tb
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -704,13 +705,13 @@ class MutationEngine:
                             for candidate in candidates:
                                 candidate["delta_nativeness"] = 0.0
                         else:
-                            print(f"[RANKING] Nativeness batch scoring complete", flush=True)
+                            print("[RANKING] Nativeness batch scoring complete", flush=True)
                             for candidate, mutant_nat in zip(candidates, mutant_nat_scores):
                                 candidate["delta_nativeness"] = mutant_nat - parent_nat
                 else:
                     # Fallback for scorers that lack batch support — use delta directly.
                     print(
-                        f"[RANKING] No score_batch — falling back to per-candidate nativeness",
+                        "[RANKING] No score_batch — falling back to per-candidate nativeness",
                         flush=True,
                     )
                     for i, candidate in enumerate(candidates):
@@ -741,7 +742,6 @@ class MutationEngine:
                         )
             except Exception as exc:
                 print(f"[RANKING] Nativeness scoring FAILED: {exc}", flush=True)
-                import traceback as _tb
 
                 _tb.print_exc()
                 logger.warning("Nativeness scoring failed; setting delta_nativeness=0.0: %s", exc)
@@ -780,7 +780,7 @@ class MutationEngine:
         if has_nanomelt:
             try:
                 predictor = scorer.nanomelt_predictor
-                print(f"[RANKING] NanoMelt batch rescoring: scoring parent…", flush=True)
+                print("[RANKING] NanoMelt batch rescoring: scoring parent…", flush=True)
 
                 # Score parent
                 with _timed_operation("NanoMelt parent scoring"):
@@ -833,7 +833,7 @@ class MutationEngine:
                     mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
                     candidate["delta_stability"] = mutant_score - parent_score
 
-                print(f"[RANKING] NanoMelt batch rescoring complete", flush=True)
+                print("[RANKING] NanoMelt batch rescoring complete", flush=True)
                 logger.info(
                     "Batch-scored %d candidates with NanoMelt (parent Tm=%.1f°C)",
                     len(candidates),
@@ -841,7 +841,6 @@ class MutationEngine:
                 )
                 return
             except Exception as exc:
-                import traceback as _tb
 
                 print(f"[RANKING] NanoMelt batch rescoring FAILED: {exc}", flush=True)
                 _tb.print_exc()
@@ -886,7 +885,7 @@ class MutationEngine:
                     mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
                     candidate["delta_stability"] = mutant_score - parent_score
 
-                print(f"[RANKING] ESM-2 batch rescoring complete", flush=True)
+                print("[RANKING] ESM-2 batch rescoring complete", flush=True)
                 logger.info(
                     "Batch-scored %d candidates with ESM-2 (parent Tm=%.1f°C)",
                     len(candidates),
@@ -894,7 +893,6 @@ class MutationEngine:
                 )
                 return
             except Exception as exc:
-                import traceback as _tb
 
                 print(f"[RANKING] ESM-2 batch rescoring FAILED: {exc}", flush=True)
                 _tb.print_exc()
@@ -1140,19 +1138,18 @@ class MutationEngine:
         if self._stability_scorer.nanomelt_predictor is not None:
             try:
                 with _timed_operation("NanoMelt health check (rank)"):
-                    _test = self._stability_scorer.nanomelt_predictor.score_sequence(vhh_sequence)
+                    _nm_health_result = self._stability_scorer.nanomelt_predictor.score_sequence(vhh_sequence)
                 print(
-                    f"[RANKING] NanoMelt health check OK (Tm={_test.get('nanomelt_tm', '?')})",
+                    f"[RANKING] NanoMelt health check OK (Tm={_nm_health_result.get('nanomelt_tm', '?')})",
                     flush=True,
                 )
                 logger.info(
-                    "[RANKING] NanoMelt health check OK (Tm=%s)", _test.get("nanomelt_tm", "?")
+                    "[RANKING] NanoMelt health check OK (Tm=%s)", _nm_health_result.get("nanomelt_tm", "?")
                 )
             except Exception as exc:
-                import traceback as _tb
 
                 print(f"[RANKING] NanoMelt health check FAILED: {exc}", flush=True)
-                print(f"[RANKING] Disabling NanoMelt for this ranking run", flush=True)
+                print("[RANKING] Disabling NanoMelt for this ranking run", flush=True)
                 _tb.print_exc()
                 logger.warning(
                     "[RANKING] NanoMelt health check failed; disabling for this run: %s", exc
@@ -1163,11 +1160,10 @@ class MutationEngine:
             try:
                 _probe = vhh_sequence.sequence[:_HEALTH_CHECK_SEQ_LENGTH]
                 with _timed_operation("ESM-2 health check (rank)"):
-                    _test_pll = self._stability_scorer.esm_scorer.score_batch([_probe])
-                print(f"[RANKING] ESM-2 health check OK", flush=True)
+                    _esm_health_check_pll = self._stability_scorer.esm_scorer.score_batch([_probe])
+                print("[RANKING] ESM-2 health check OK", flush=True)
                 logger.info("[RANKING] ESM-2 health check OK")
             except Exception as exc:
-                import traceback as _tb
 
                 print(f"[RANKING] ESM-2 health check FAILED: {exc}", flush=True)
                 _tb.print_exc()
@@ -1179,10 +1175,9 @@ class MutationEngine:
         try:
             with _timed_operation("Nativeness health check (rank)"):
                 self._nativeness_scorer.score(vhh_sequence)
-            print(f"[RANKING] Nativeness health check OK", flush=True)
+            print("[RANKING] Nativeness health check OK", flush=True)
             logger.info("[RANKING] Nativeness health check OK")
         except Exception as exc:
-            import traceback as _tb
 
             print(f"[RANKING] Nativeness health check FAILED: {exc}", flush=True)
             _tb.print_exc()
@@ -1282,7 +1277,7 @@ class MutationEngine:
             f"  Total time: {_rank_elapsed:.1f}s",
             f"  Candidates generated: {len(suggestions)}",
             f"  Final ranked mutations: {len(df)}",
-            f"  Scoring method breakdown: "
+            "  Scoring method breakdown: "
             + str(df["reason"].value_counts().to_dict() if not df.empty else "N/A"),
             "=" * 70,
         ]
