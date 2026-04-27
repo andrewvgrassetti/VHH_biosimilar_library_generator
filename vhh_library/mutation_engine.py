@@ -445,7 +445,7 @@ class MutationEngine:
         if enabled_metrics is not None:
             self._enabled_metrics.update(enabled_metrics)
 
-        # Per-operation timeout in seconds.  ``None`` (the default) means no
+        # Per-operation timeout in seconds.  None (the default) means no
         # timeout — operations run to completion regardless of wall-clock time.
         # Pass an explicit integer to re-enable the old 300-second safety net.
         self._operation_timeout: int | None = operation_timeout

@@ -413,13 +413,13 @@ class TestTimeoutGracefulDegradation:
         captured = capsys.readouterr()
         assert "[TIMEOUT]" in captured.out
 
-    def test_default_no_timeout(self, mock_vhh, capsys):
+    def test_default_no_timeout(self):
         """Default operation_timeout=None means no timeout is enforced."""
         engine = _make_engine()
         assert engine._operation_timeout is None
         assert engine._timeout_expired(0.0) is False
 
-    def test_operation_timeout_via_constructor(self, mock_vhh):
+    def test_operation_timeout_via_constructor(self):
         """operation_timeout can be set via MutationEngine constructor."""
         engine = MutationEngine(operation_timeout=600)
         assert engine._operation_timeout == 600
