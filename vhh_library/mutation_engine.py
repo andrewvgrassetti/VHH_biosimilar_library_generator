@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import logging
 import math
 import random
 import re
+import time as _time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +64,42 @@ _CONFIDENCE_W_FREQ = 0.4  # Weight of frequency in confidence score
 _CONFIDENCE_W_MARGINAL = 0.4  # Weight of marginal benefit in confidence score
 _CONFIDENCE_W_BASELINE = 0.2  # Baseline confidence for any passing candidate
 _ANTAGONISTIC_SCALE = 2.0  # Penalty multiplier for antagonistic interactions
+
+# Per-operation timeout (seconds).  Operations that exceed this budget
+# degrade gracefully — they return partial results instead of hanging.
+_OPERATION_TIMEOUT_SECONDS: int = 300  # 5 minutes
+
+# Length of the truncated sequence used for backend health check probes.
+# Short enough to be fast, long enough to exercise the model pipeline.
+_HEALTH_CHECK_SEQ_LENGTH: int = 50
+
+
+class OperationTimeoutError(Exception):
+    """Raised when a library generation sub-operation exceeds its time budget."""
+
+
+@contextlib.contextmanager
+def _timed_operation(description: str, progress_callback: object | None = None):  # noqa: ARG001
+    """Log wall-clock time for an operation.  Always prints to stdout.
+
+    Parameters
+    ----------
+    description : str
+        Human-readable label for the operation being timed.
+    progress_callback : object | None
+        Reserved for future use — not currently consumed but accepted
+        so callers can forward their callback without extra logic.
+    """
+    start = _time.monotonic()
+    print(f"[TIMING] START: {description}", flush=True)
+    logger.info("[TIMING] START: %s", description)
+    try:
+        yield
+    finally:
+        elapsed = _time.monotonic() - start
+        msg = f"[TIMING] DONE: {description} — {elapsed:.1f}s"
+        print(msg, flush=True)
+        logger.info(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +952,69 @@ class MutationEngine:
             the same run exists, generation resumes from it.  Defaults to
             ``None`` (no checkpointing) for backward compatibility.
         """
+        _gen_start = _time.monotonic()
+
+        # ---- DIAGNOSTIC PREAMBLE ---- prints to both logger AND stdout
+        _diag_lines = [
+            "=" * 70,
+            "LIBRARY GENERATION STARTED",
+            f"  Timestamp: {_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"  Strategy: {strategy}",
+            f"  n_mutations: {n_mutations}, min_mutations: {min_mutations}",
+            f"  max_variants: {max_variants}, max_rounds: {max_rounds}",
+            f"  top_mutations shape: {top_mutations.shape}",
+            f"  vhh_sequence length: {len(vhh_sequence.sequence)}",
+            f"  vhh_sequence valid: {vhh_sequence.validation_result.get('valid')}",
+            f"  vhh_sequence numbered positions: {len(vhh_sequence.imgt_numbered)}",
+            f"  Stability scorer: {type(self._stability_scorer).__name__}",
+            f"  Has ESM scorer: {self._esm_scorer is not None}",
+            f"  Has NanoMelt: {self._stability_scorer.nanomelt_predictor is not None}",
+            f"  Has ESM on stability scorer: {self._stability_scorer.esm_scorer is not None}",
+            f"  Nativeness scorer: {type(self._nativeness_scorer).__name__}",
+            f"  Active weights: {self._active_weights()}",
+            f"  progress_callback is None: {progress_callback is None}",
+            "=" * 70,
+        ]
+        for line in _diag_lines:
+            print(line, flush=True)
+            logger.info(line)
+
+        # ---- BACKEND HEALTH CHECK ---- probe each backend before generation
+        _backend_status: dict[str, str] = {}
+        _probe_seq = vhh_sequence.sequence[:_HEALTH_CHECK_SEQ_LENGTH]
+        if self._stability_scorer.nanomelt_predictor is not None:
+            try:
+                _test_result = self._stability_scorer.nanomelt_predictor.score_sequence(vhh_sequence)
+                _backend_status["nanomelt"] = f"OK (Tm={_test_result.get('nanomelt_tm', '?')})"
+            except Exception as _exc:
+                _backend_status["nanomelt"] = f"FAILED: {_exc}"
+                print(f"[DIAGNOSTIC] NanoMelt health check FAILED: {_exc}", flush=True)
+                logger.warning("NanoMelt health check failed; disabling for this run: %s", _exc)
+                self._stability_scorer.nanomelt_predictor = None
+
+        if self._stability_scorer.esm_scorer is not None:
+            try:
+                _test_pll = self._stability_scorer.esm_scorer.score_batch([_probe_seq])
+                _backend_status["esm2"] = f"OK (pll={_test_pll[0]:.4f})" if _test_pll else "OK (empty)"
+            except Exception as _exc:
+                _backend_status["esm2"] = f"FAILED: {_exc}"
+                print(f"[DIAGNOSTIC] ESM-2 health check FAILED: {_exc}", flush=True)
+                logger.warning("ESM-2 health check failed; disabling for this run: %s", _exc)
+                self._stability_scorer.esm_scorer = None
+
+        if hasattr(self._nativeness_scorer, "score_batch"):
+            try:
+                _test_nat = self._nativeness_scorer.score_batch([_probe_seq])
+                _backend_status["nativeness"] = f"OK (score={_test_nat[0]:.4f})" if _test_nat else "OK (empty)"
+            except Exception as _exc:
+                _backend_status["nativeness"] = f"FAILED: {_exc}"
+                print(f"[DIAGNOSTIC] Nativeness health check FAILED: {_exc}", flush=True)
+                logger.warning("Nativeness health check failed: %s", _exc)
+
+        for _bname, _bstatus in _backend_status.items():
+            print(f"[DIAGNOSTIC] Backend {_bname}: {_bstatus}", flush=True)
+            logger.info("[DIAGNOSTIC] Backend %s: %s", _bname, _bstatus)
+
         if top_mutations.empty:
             return self._empty_library_df()
 
@@ -1027,16 +1128,17 @@ class MutationEngine:
                 total_steps,
                 message=f"Building exhaustive combinations ({total:,} max)…",
             )
-            rows = self._generate_exhaustive(
-                vhh_sequence,
-                mutation_list,
-                k_min,
-                k_max,
-                max_variants,
-                position_groups=position_groups,
-                _batch_score=False,
-                progress_callback=progress_callback,
-            )
+            with _timed_operation("exhaustive variant generation", progress_callback):
+                rows = self._generate_exhaustive(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    max_variants,
+                    position_groups=position_groups,
+                    _batch_score=False,
+                    progress_callback=progress_callback,
+                )
             if has_ml_stability:
                 step += 1
                 _report_progress(
@@ -1046,7 +1148,8 @@ class MutationEngine:
                     len(rows),
                     message=f"Scoring stability for {len(rows):,} variants…",
                 )
-                rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
+                with _timed_operation(f"batch stability scoring ({len(rows)} variants)", progress_callback):
+                    rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
             step += 1
             _report_progress(
                 "scoring_nativeness",
@@ -1055,7 +1158,8 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
+            with _timed_operation(f"batch nativeness scoring ({len(rows)} variants)", progress_callback):
+                rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
         elif strategy == "random":
             total_steps = 2 + (1 if has_ml_stability else 0) + (1 if has_esm_progressive else 0)
             step = 1
@@ -1065,15 +1169,16 @@ class MutationEngine:
                 total_steps,
                 message=f"Sampling up to {max_variants:,} random variants…",
             )
-            rows = self._generate_sampled(
-                vhh_sequence,
-                mutation_list,
-                k_min,
-                k_max,
-                max_variants,
-                _batch_score=False,
-                progress_callback=progress_callback,
-            )
+            with _timed_operation("random variant sampling", progress_callback):
+                rows = self._generate_sampled(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    max_variants,
+                    _batch_score=False,
+                    progress_callback=progress_callback,
+                )
             if has_ml_stability:
                 step += 1
                 _report_progress(
@@ -1083,7 +1188,8 @@ class MutationEngine:
                     len(rows),
                     message=f"Scoring stability for {len(rows):,} variants…",
                 )
-                rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
+                with _timed_operation(f"batch stability scoring ({len(rows)} variants)", progress_callback):
+                    rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
             step += 1
             _report_progress(
                 "scoring_nativeness",
@@ -1092,21 +1198,23 @@ class MutationEngine:
                 len(rows),
                 message=f"Scoring nativeness for {len(rows):,} variants…",
             )
-            rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
+            with _timed_operation(f"batch nativeness scoring ({len(rows)} variants)", progress_callback):
+                rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
         elif strategy == "iterative":
-            rows = self._generate_iterative(
-                vhh_sequence,
-                mutation_list,
-                k_min,
-                k_max,
-                max_variants,
-                anchor_threshold,
-                max_rounds,
-                rescore_top_n=rescore_top_n,
-                progress_callback=progress_callback,
-                checkpoint_dir=checkpoint_dir,
-                run_id=_run_id,
-            )
+            with _timed_operation("iterative strategy (all phases)", progress_callback):
+                rows = self._generate_iterative(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    max_variants,
+                    anchor_threshold,
+                    max_rounds,
+                    rescore_top_n=rescore_top_n,
+                    progress_callback=progress_callback,
+                    checkpoint_dir=checkpoint_dir,
+                    run_id=_run_id,
+                )
         else:
             raise ValueError(f"Unknown strategy: {strategy!r}")
 
@@ -1125,7 +1233,8 @@ class MutationEngine:
                 len(df),
                 message=f"ESM-2 delta-PLL scoring for {len(df):,} variants…",
             )
-            df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
+            with _timed_operation(f"ESM-2 progressive scoring ({len(df)} variants)", progress_callback):
+                df = self._esm_scorer.score_library_progressive(vhh_sequence, df)
             _report_progress(
                 "esm2_scoring_stage2",
                 2,
@@ -1140,6 +1249,10 @@ class MutationEngine:
 
             save_result(checkpoint_dir, _run_id, df)
             remove_checkpoint(checkpoint_dir, _run_id)
+
+        _gen_elapsed = _time.monotonic() - _gen_start
+        print(f"[TIMING] DONE: generate_library total — {_gen_elapsed:.1f}s ({len(df)} variants)", flush=True)
+        logger.info("[TIMING] DONE: generate_library total — %.1fs (%d variants)", _gen_elapsed, len(df))
 
         return df
 
@@ -1349,7 +1462,26 @@ class MutationEngine:
                     total=n_chunks,
                 )
                 unique_scores: list[float] = []
+                _nat_start = _time.monotonic()
                 for chunk_idx in range(n_chunks):
+                    # Timeout check — return rows with neutral nativeness (0.5)
+                    _nat_elapsed = _time.monotonic() - _nat_start
+                    if _nat_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                        print(
+                            f"[TIMEOUT] _batch_fill_nativeness exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"after {chunk_idx}/{n_chunks} chunks — filling remaining with 0.5",
+                            flush=True,
+                        )
+                        logger.warning(
+                            "_batch_fill_nativeness timed out after %.1fs (%d/%d chunks scored)",
+                            _nat_elapsed,
+                            chunk_idx,
+                            n_chunks,
+                        )
+                        # Fill remaining unique sequences with neutral score
+                        remaining = n_unique - len(unique_scores)
+                        unique_scores.extend([0.5] * remaining)
+                        break
                     start = chunk_idx * chunk_size
                     end = min(start + chunk_size, n_unique)
                     chunk_seqs = unique_seqs[start:end]
@@ -1360,7 +1492,8 @@ class MutationEngine:
                         start + 1,
                         end,
                     )
-                    chunk_scores = self._nativeness_scorer.score_batch(chunk_seqs)
+                    with _timed_operation(f"Nativeness chunk {chunk_idx + 1}/{n_chunks}"):
+                        chunk_scores = self._nativeness_scorer.score_batch(chunk_seqs)
                     unique_scores.extend(chunk_scores)
                     _report(
                         "scoring_nativeness_progress",
@@ -1497,7 +1630,23 @@ class MutationEngine:
                 )
 
                 all_nm_results: list[dict] = []
+                _stab_start = _time.monotonic()
                 for chunk_idx in range(n_chunks):
+                    # Timeout check — return partial results with heuristic scores
+                    _stab_elapsed = _time.monotonic() - _stab_start
+                    if _stab_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                        print(
+                            f"[TIMEOUT] _batch_fill_stability NanoMelt exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"after {chunk_idx}/{n_chunks} chunks — returning partial results",
+                            flush=True,
+                        )
+                        logger.warning(
+                            "_batch_fill_stability NanoMelt timed out after %.1fs (%d/%d chunks scored)",
+                            _stab_elapsed,
+                            chunk_idx,
+                            n_chunks,
+                        )
+                        return rows
                     start = chunk_idx * chunk_size
                     end = min(start + chunk_size, n_seqs)
                     chunk_objects: list[VHHSequence] = []
@@ -1512,7 +1661,8 @@ class MutationEngine:
                         start + 1,
                         end,
                     )
-                    chunk_results = predictor.score_batch(chunk_objects)
+                    with _timed_operation(f"NanoMelt chunk {chunk_idx + 1}/{n_chunks}"):
+                        chunk_results = predictor.score_batch(chunk_objects)
                     all_nm_results.extend(chunk_results)
                     _report(
                         "scoring_stability_progress",
@@ -1585,7 +1735,23 @@ class MutationEngine:
 
                 sequences = [r["aa_sequence"] for r in rows]
                 all_plls: list[float] = []
+                _esm_start = _time.monotonic()
                 for chunk_idx in range(n_chunks):
+                    # Timeout check
+                    _esm_elapsed = _time.monotonic() - _esm_start
+                    if _esm_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                        print(
+                            f"[TIMEOUT] _batch_fill_stability ESM-2 exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"after {chunk_idx}/{n_chunks} chunks — returning partial results",
+                            flush=True,
+                        )
+                        logger.warning(
+                            "_batch_fill_stability ESM-2 timed out after %.1fs (%d/%d chunks scored)",
+                            _esm_elapsed,
+                            chunk_idx,
+                            n_chunks,
+                        )
+                        return rows
                     start = chunk_idx * chunk_size
                     end = min(start + chunk_size, n_seqs)
                     chunk_seqs = sequences[start:end]
@@ -1596,7 +1762,8 @@ class MutationEngine:
                         start + 1,
                         end,
                     )
-                    chunk_plls = esm.score_batch(chunk_seqs)
+                    with _timed_operation(f"ESM-2 chunk {chunk_idx + 1}/{n_chunks}"):
+                        chunk_plls = esm.score_batch(chunk_seqs)
                     all_plls.extend(chunk_plls)
                     _report(
                         "scoring_stability_progress",
@@ -1967,6 +2134,22 @@ class MutationEngine:
         per_round_explore = max(max_variants // max(total_phases, 1), 50)
         per_round_exploit = max(per_round_explore // 2, 30)
 
+        # Fire an immediate progress callback so the UI shows something
+        if progress_callback is not None:
+            progress_callback(
+                IterativeProgress(
+                    phase="initializing",
+                    round_number=0,
+                    total_rounds=total_phases,
+                    best_score=0.0,
+                    mean_score=0.0,
+                    population_size=0,
+                    n_anchors=0,
+                    diversity_entropy=0.0,
+                    message="Initializing iterative library generation…",
+                )
+            )
+
         all_rows: list[dict] = []
         seen_keys: set[str] = set()
         counter = 1
@@ -2088,17 +2271,18 @@ class MutationEngine:
                 "exploration",
                 f"Phase 1 — Exploration round {explore_idx + 1}/{n_explore} (sampling {per_round_explore} variants)…",
             )
-            new = self._generate_sampled(
-                vhh_sequence,
-                mutation_list,
-                k_min,
-                k_max,
-                per_round_explore,
-                _batch_score=False,
-                progress_callback=progress_callback,
-                exclude_keys=seen_keys,
-            )
-            new = _esm_score_rows(new)
+            with _timed_operation(f"Phase 1 exploration round {explore_idx + 1}/{n_explore}"):
+                new = self._generate_sampled(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    per_round_explore,
+                    _batch_score=False,
+                    progress_callback=progress_callback,
+                    exclude_keys=seen_keys,
+                )
+                new = _esm_score_rows(new)
             _add_rows(new)
             logger.info(
                 "Exploration round %d/%d: +%d new → %d total",
@@ -2129,17 +2313,18 @@ class MutationEngine:
                 "anchor_identification",
                 f"Phase 2 — Anchor round {anchor_idx + 1}/{n_anchor_id} (sampling {per_round_explore} variants)…",
             )
-            new = self._generate_sampled(
-                vhh_sequence,
-                mutation_list,
-                k_min,
-                k_max,
-                per_round_explore,
-                _batch_score=False,
-                progress_callback=progress_callback,
-                exclude_keys=seen_keys,
-            )
-            new = _esm_score_rows(new)
+            with _timed_operation(f"Phase 2 anchor round {anchor_idx + 1}/{n_anchor_id}"):
+                new = self._generate_sampled(
+                    vhh_sequence,
+                    mutation_list,
+                    k_min,
+                    k_max,
+                    per_round_explore,
+                    _batch_score=False,
+                    progress_callback=progress_callback,
+                    exclude_keys=seen_keys,
+                )
+                new = _esm_score_rows(new)
             _add_rows(new)
             logger.info(
                 "Anchor round %d/%d: +%d new → %d total",
@@ -2185,28 +2370,30 @@ class MutationEngine:
             )
 
             if anchors:
-                new = self._generate_constrained_sampled(
-                    vhh_sequence,
-                    mutation_list,
-                    k_min,
-                    k_max,
-                    per_round_exploit,
-                    anchors,
-                    _batch_score=False,
-                    progress_callback=progress_callback,
-                    exclude_keys=seen_keys,
-                )
+                with _timed_operation(f"Phase 3 constrained sampling round {exploit_round + 1}/{n_exploit}"):
+                    new = self._generate_constrained_sampled(
+                        vhh_sequence,
+                        mutation_list,
+                        k_min,
+                        k_max,
+                        per_round_exploit,
+                        anchors,
+                        _batch_score=False,
+                        progress_callback=progress_callback,
+                        exclude_keys=seen_keys,
+                    )
             else:
-                new = self._generate_sampled(
-                    vhh_sequence,
-                    mutation_list,
-                    k_min,
-                    k_max,
-                    per_round_exploit,
-                    _batch_score=False,
-                    progress_callback=progress_callback,
-                    exclude_keys=seen_keys,
-                )
+                with _timed_operation(f"Phase 3 sampling round {exploit_round + 1}/{n_exploit}"):
+                    new = self._generate_sampled(
+                        vhh_sequence,
+                        mutation_list,
+                        k_min,
+                        k_max,
+                        per_round_exploit,
+                        _batch_score=False,
+                        progress_callback=progress_callback,
+                        exclude_keys=seen_keys,
+                    )
 
             new = _esm_score_rows(new)
             _add_rows(new)
@@ -2289,12 +2476,17 @@ class MutationEngine:
         # redundant AbNatiV / ML calls on every round — this single pass
         # replaces all of those.
         _report("scoring_stability", f"Phase 4 — Batch scoring stability ({len(all_rows):,} variants)…")
-        all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
+        with _timed_operation(f"Phase 4 batch stability scoring ({len(all_rows)} variants)"):
+            all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
         _report("scoring_nativeness", f"Phase 4 — Batch scoring nativeness ({len(all_rows):,} variants)…")
-        all_rows = self._batch_fill_nativeness(all_rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
+        with _timed_operation(f"Phase 4 batch nativeness scoring ({len(all_rows)} variants)"):
+            all_rows = self._batch_fill_nativeness(
+                all_rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence
+            )
 
         # ESM-2 full PLL for top candidates
-        _esm_rescore_full(all_rows, rescore_top_n * 2)
+        with _timed_operation(f"Phase 4 ESM-2 rescore (top {rescore_top_n * 2})"):
+            _esm_rescore_full(all_rows, rescore_top_n * 2)
         _report("validation", "Final scoring complete")
         logger.info("Phase 4 complete: %d variants scored", len(all_rows))
 
