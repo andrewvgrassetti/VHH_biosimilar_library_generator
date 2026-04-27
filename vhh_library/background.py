@@ -1,17 +1,23 @@
 """Reusable background-task utility for Streamlit apps.
 
 Runs heavy callables in daemon threads and stores status / progress / result
-in ``st.session_state`` under namespaced keys so the UI can poll and display
-live updates without blocking the Streamlit rerun cycle.
+in a module-level plain Python dict (keyed by Streamlit session ID) so the
+UI can poll and display live updates without blocking the Streamlit rerun
+cycle.
 
 Thread-safety note
 ------------------
-Streamlit's ``session_state`` is a dict-like object living in server memory.
-Writes from a background thread to ``session_state`` are *de-facto* safe in
-the current Streamlit architecture (single Python process, GIL-protected dict
-operations).  This module relies on that assumption.  If Streamlit ever moves
-to multi-process sessions the approach will need a ``threading.Lock`` or a
-shared-memory store.
+A module-level ``_shared_state`` dict is used as the communication channel
+between background threads and the Streamlit UI.  This bypasses the
+``st.session_state`` proxy lifecycle: Streamlit creates a new proxy object on
+each script-run / fragment-rerun, so writes from a background thread to a
+captured proxy reference may not be visible to subsequent fragment reruns that
+acquire a fresh proxy.  A plain Python dict stored in ``_shared_state`` is
+always the same object regardless of which thread or rerun context accesses it.
+
+Compound read-modify-write operations (e.g. appending to ``log_entries``) are
+protected by ``_shared_state_lock`` to prevent data races between the
+background thread and the UI polling fragment.
 
 Disk persistence
 ----------------
@@ -36,10 +42,92 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import streamlit as st
 
+try:
+    from streamlit.runtime.scriptrunner import get_script_run_ctx as _get_script_run_ctx
+except ImportError:  # pragma: no cover — only missing if Streamlit is not installed
+    _get_script_run_ctx = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level shared state (bypasses st.session_state proxy lifecycle)
+# ---------------------------------------------------------------------------
+
+# Maps Streamlit session_id -> per-session task-state dict.
+# Background threads write here; fragment reruns read from here.
+# Both operations always access the same plain Python dict object,
+# regardless of which thread or rerun context they originate from.
+#
+# Memory note: entries accumulate for the lifetime of the process.  Each
+# entry is a small dict (~7 keys) so growth is negligible in practice;
+# call ``_cleanup_session_store(session_id)`` after a session ends if you
+# need to reclaim memory in long-running deployments.
+_shared_state: dict[str, dict[str, Any]] = {}
+
+# Protects compound read-modify-write operations (e.g. appending to
+# log_entries) and the initial creation of per-session sub-dicts.
+_shared_state_lock = threading.Lock()
+
+
+def _get_session_store() -> dict[str, Any]:
+    """Return the per-session plain-dict store for the current Streamlit session.
+
+    When called from the main script-run context (including ``@st.fragment``
+    reruns), this returns a stable plain dict keyed by the Streamlit session
+    ID.  Both the background worker (which captures this reference at
+    submission time) and the fragment polling loop (which calls this function
+    anew on each rerun) will receive the **same** dict object — making
+    background-thread writes immediately visible to the fragment.
+
+    Falls back to ``st.session_state`` when no Streamlit script-run context
+    is available.  This covers two cases:
+    - **Background threads**: no context exists in the worker thread; the
+      captured reference passed at submission time is used directly, so the
+      fallback is only triggered if this function is called unexpectedly from
+      a background thread without a pre-captured store.
+    - **Test environments**: no Streamlit runtime is running, so
+      ``get_script_run_ctx()`` returns ``None`` and the mock
+      ``st.session_state`` (a plain dict) is used instead.  This keeps all
+      existing tests working without modification.
+    """
+    if _get_script_run_ctx is None:
+        return st.session_state  # type: ignore[return-value]
+    try:
+        ctx = _get_script_run_ctx()
+        if ctx is None:
+            # No active Streamlit script-run context (background thread or
+            # test environment) — fall back to st.session_state.
+            return st.session_state  # type: ignore[return-value]
+        session_id = ctx.session_id
+    except Exception:
+        return st.session_state  # type: ignore[return-value]
+
+    # Fast path: sub-dict already exists (common case).
+    store = _shared_state.get(session_id)
+    if store is not None:
+        return store
+
+    # Slow path: create sub-dict under the lock to avoid a TOCTOU race.
+    with _shared_state_lock:
+        store = _shared_state.get(session_id)
+        if store is None:
+            store = {}
+            _shared_state[session_id] = store
+    return store
+
+
+def _cleanup_session_store(session_id: str) -> None:
+    """Remove the shared-state entry for *session_id*.
+
+    Call this when a Streamlit session ends to reclaim memory in long-running
+    deployments.  Safe to call even if the session_id is not present.
+    """
+    with _shared_state_lock:
+        _shared_state.pop(session_id, None)
+
 
 # ---------------------------------------------------------------------------
 # Session-state key helpers
@@ -167,40 +255,41 @@ def submit_task(
     Returns ``True`` if the task was submitted, ``False`` if a task with the
     same name is already running (duplicate guard).
     """
-    status = st.session_state.get(_key(name, "status"), STATUS_IDLE)
+    store = _get_session_store()
+    status = store.get(_key(name, "status"), STATUS_IDLE)
     if status == STATUS_RUNNING:
         logger.warning("Task %r is already running — ignoring duplicate submission.", name)
         return False
 
-    # Initialise state keys
-    st.session_state[_key(name, "status")] = STATUS_RUNNING
-    st.session_state[_key(name, "progress")] = 0.0
-    st.session_state[_key(name, "progress_text")] = ""
-    st.session_state[_key(name, "log_entries")] = []
-    st.session_state[_key(name, "result")] = None
-    st.session_state[_key(name, "error")] = None
-    st.session_state[_key(name, "error_traceback")] = None
+    # Initialise state keys in the shared store.
+    store[_key(name, "status")] = STATUS_RUNNING
+    store[_key(name, "progress")] = 0.0
+    store[_key(name, "progress_text")] = ""
+    store[_key(name, "log_entries")] = []
+    store[_key(name, "result")] = None
+    store[_key(name, "error")] = None
+    store[_key(name, "error_traceback")] = None
 
     # Clear any stale persisted result from a previous run.
     _clear_persisted(name)
 
-    # Capture the session_state reference so the background thread can write to
-    # the *same* dict even though ``st.session_state`` is thread-local in
-    # Streamlit's runtime.  We grab the underlying dict-like object once here.
-    state = st.session_state
+    # Capture the session store reference (a plain Python dict, NOT the
+    # st.session_state proxy).  The background thread writes directly to
+    # this dict; fragment reruns read from the same dict via _get_session_store().
+    captured_store = store
 
     def _worker() -> None:
         print(f"[BG-THREAD] Background thread started for task {name!r}", flush=True)
         try:
             result = func(*args, **kwargs)
             print(f"[BG-THREAD] Task {name!r} completed successfully", flush=True)
-            # Write to session_state (may be a dead dict if session was lost).
+            # Write to the shared store captured at submission time.
             try:
-                state[_key(name, "result")] = result
-                state[_key(name, "status")] = STATUS_DONE
+                captured_store[_key(name, "result")] = result
+                captured_store[_key(name, "status")] = STATUS_DONE
             except Exception:
                 logger.warning(
-                    "Could not write result to session_state for task %r (session may have been lost).",
+                    "Could not write result to shared store for task %r.",
                     name,
                     exc_info=True,
                 )
@@ -212,11 +301,11 @@ def submit_task(
             error_msg = str(exc)
             tb_str = traceback.format_exc()
             try:
-                state[_key(name, "error")] = error_msg
-                state[_key(name, "error_traceback")] = tb_str
-                state[_key(name, "status")] = STATUS_ERROR
+                captured_store[_key(name, "error")] = error_msg
+                captured_store[_key(name, "error_traceback")] = tb_str
+                captured_store[_key(name, "status")] = STATUS_ERROR
             except Exception:
-                logger.warning("Could not write error to session_state for task %r.", name, exc_info=True)
+                logger.warning("Could not write error to shared store for task %r.", name, exc_info=True)
             _persist_result(name, status=STATUS_ERROR, error=error_msg, error_traceback=tb_str)
             logger.exception("Background task %r failed", name)
 
@@ -227,29 +316,30 @@ def submit_task(
 
 def get_task_status(name: str) -> str:
     """Return the current status string for *name*."""
-    return st.session_state.get(_key(name, "status"), STATUS_IDLE)
+    return _get_session_store().get(_key(name, "status"), STATUS_IDLE)
 
 
 def get_task_progress(name: str) -> tuple[float, str]:
     """Return ``(fraction, text)`` for the running task."""
-    frac = st.session_state.get(_key(name, "progress"), 0.0)
-    text = st.session_state.get(_key(name, "progress_text"), "")
+    store = _get_session_store()
+    frac = store.get(_key(name, "progress"), 0.0)
+    text = store.get(_key(name, "progress_text"), "")
     return frac, text
 
 
 def get_task_result(name: str) -> Any:
     """Return the result stored by a completed task (or ``None``)."""
-    return st.session_state.get(_key(name, "result"))
+    return _get_session_store().get(_key(name, "result"))
 
 
 def get_task_error(name: str) -> str | None:
     """Return the error message if the task failed."""
-    return st.session_state.get(_key(name, "error"))
+    return _get_session_store().get(_key(name, "error"))
 
 
 def get_task_traceback(name: str) -> str | None:
     """Return the full traceback string if the task failed, or ``None``."""
-    return st.session_state.get(_key(name, "error_traceback"))
+    return _get_session_store().get(_key(name, "error_traceback"))
 
 
 def get_task_log(name: str) -> list[tuple[float, str]]:
@@ -258,7 +348,7 @@ def get_task_log(name: str) -> list[tuple[float, str]]:
     Each entry is a ``(timestamp, message)`` tuple.  Returns an empty list
     when no entries exist.
     """
-    return list(st.session_state.get(_key(name, "log_entries"), []))
+    return list(_get_session_store().get(_key(name, "log_entries"), []))
 
 
 def append_log_entry(task_name: str, message: str, *, _state: Any = None) -> None:
@@ -271,27 +361,39 @@ def append_log_entry(task_name: str, message: str, *, _state: Any = None) -> Non
     message:
         Human-readable log line.
     _state:
-        Optional dict-like override for ``st.session_state`` (used by the
-        background thread which captures the state reference at submit time).
+        Optional dict-like override (used by background threads which capture
+        the session store reference at submit time).
     """
-    state = _state if _state is not None else st.session_state
+    state = _state if _state is not None else _get_session_store()
     key = _key(task_name, "log_entries")
-    entries = state.get(key)
-    if entries is None:
-        entries = []
-        state[key] = entries
-    entries.append((time.time(), message))
+    with _shared_state_lock:
+        entries = state.get(key)
+        if entries is None:
+            entries = []
+            state[key] = entries
+        entries.append((time.time(), message))
 
 
 def reset_task(name: str) -> None:
     """Reset all state keys for *name* back to idle."""
-    st.session_state[_key(name, "status")] = STATUS_IDLE
-    st.session_state[_key(name, "progress")] = 0.0
-    st.session_state[_key(name, "progress_text")] = ""
-    st.session_state[_key(name, "log_entries")] = []
-    st.session_state[_key(name, "result")] = None
-    st.session_state[_key(name, "error")] = None
-    st.session_state[_key(name, "error_traceback")] = None
+    _idle_state = {
+        _key(name, "status"): STATUS_IDLE,
+        _key(name, "progress"): 0.0,
+        _key(name, "progress_text"): "",
+        _key(name, "log_entries"): [],
+        _key(name, "result"): None,
+        _key(name, "error"): None,
+        _key(name, "error_traceback"): None,
+    }
+    # Clear from the shared store (the real inter-thread channel).
+    _get_session_store().update(_idle_state)
+    # Also clear from st.session_state for backward compatibility with
+    # any code that reads directly from the Streamlit session (e.g. recover_task).
+    try:
+        for k, v in _idle_state.items():
+            st.session_state[k] = v
+    except Exception:
+        pass
     _clear_persisted(name)
 
 
@@ -299,7 +401,8 @@ def recover_task(name: str) -> Any | None:
     """Attempt to recover a completed background-task result from disk.
 
     If a persisted result file exists for *name* and is not stale, restore it
-    into ``session_state`` and return the result (or the error string for failed
+    into the shared session store (and ``st.session_state`` for backward
+    compatibility) and return the result (or the error string for failed
     tasks).  Returns ``None`` when there is nothing to recover.
 
     This should be called during session initialisation so that results
@@ -313,26 +416,41 @@ def recover_task(name: str) -> Any | None:
     persisted_status = payload.get("status")
     if persisted_status == STATUS_DONE:
         result = payload.get("result")
-        st.session_state[_key(name, "status")] = STATUS_DONE
-        st.session_state[_key(name, "result")] = result
-        st.session_state[_key(name, "progress")] = 1.0
-        st.session_state[_key(name, "progress_text")] = ""
-        st.session_state[_key(name, "log_entries")] = []
-        st.session_state[_key(name, "error")] = None
-        st.session_state[_key(name, "error_traceback")] = None
+        _done_state = {
+            _key(name, "status"): STATUS_DONE,
+            _key(name, "result"): result,
+            _key(name, "progress"): 1.0,
+            _key(name, "progress_text"): "",
+            _key(name, "log_entries"): [],
+            _key(name, "error"): None,
+            _key(name, "error_traceback"): None,
+        }
+        # Write to the shared store so fragment reruns can see the result.
+        _get_session_store().update(_done_state)
+        # Also write to st.session_state for backward compatibility with
+        # app code that reads directly from Streamlit session state.
+        for k, v in _done_state.items():
+            st.session_state[k] = v
         logger.info("Recovered completed result for background task %r from disk.", name)
         return result
 
     if persisted_status == STATUS_ERROR:
         error = payload.get("error", "Unknown error")
         error_tb = payload.get("error_traceback")
-        st.session_state[_key(name, "status")] = STATUS_ERROR
-        st.session_state[_key(name, "error")] = error
-        st.session_state[_key(name, "error_traceback")] = error_tb
-        st.session_state[_key(name, "result")] = None
-        st.session_state[_key(name, "progress")] = 0.0
-        st.session_state[_key(name, "progress_text")] = ""
-        st.session_state[_key(name, "log_entries")] = []
+        _error_state = {
+            _key(name, "status"): STATUS_ERROR,
+            _key(name, "error"): error,
+            _key(name, "error_traceback"): error_tb,
+            _key(name, "result"): None,
+            _key(name, "progress"): 0.0,
+            _key(name, "progress_text"): "",
+            _key(name, "log_entries"): [],
+        }
+        # Write to the shared store so fragment reruns can see the error.
+        _get_session_store().update(_error_state)
+        # Also write to st.session_state for backward compatibility.
+        for k, v in _error_state.items():
+            st.session_state[k] = v
         logger.info("Recovered error for background task %r from disk.", name)
         return None
 
@@ -354,12 +472,14 @@ def make_progress_callback(task_name: str) -> Callable[..., None]:
 
     The returned callable accepts a single *prog* argument (the
     ``ProgressInfo`` named-tuple emitted by the mutation engine) and writes
-    fractional progress + descriptive text into ``session_state``.
+    fractional progress + descriptive text into the session store.
 
     Each callback invocation also appends a timestamped entry to the task's
     activity log so the UI can display a scrollable history of every step.
     """
-    state = st.session_state
+    # Capture the session store reference (a plain dict) at creation time so
+    # the returned callback is safe to call from background threads.
+    state = _get_session_store()
 
     # Phases reported during non-iterative strategies (exhaustive / random)
     # and sub-step phases reported from within _batch_fill_* methods.
@@ -420,12 +540,10 @@ def set_progress(task_name: str, fraction: float, text: str = "", *, _state: dic
     Parameters
     ----------
     _state:
-        Optional dict-like override for ``st.session_state``.  When
-        called from a background thread, pass the state reference captured
-        at submit time — ``st.session_state`` is not available outside the
-        Streamlit script-run context and will raise an error.
+        Optional dict-like override for the session store.  When called from
+        a background thread, pass the store reference captured at submit time.
     """
-    state = _state if _state is not None else st.session_state
+    state = _state if _state is not None else _get_session_store()
     state[_key(task_name, "progress")] = min(max(fraction, 0.0), 1.0)
     state[_key(task_name, "progress_text")] = text
 
@@ -433,11 +551,9 @@ def set_progress(task_name: str, fraction: float, text: str = "", *, _state: dic
 def make_progress_setter(task_name: str) -> Callable[[float, str], None]:
     """Return a thread-safe progress setter for *task_name*.
 
-    Unlike :func:`set_progress` which accesses ``st.session_state``
-    directly (and fails from background threads where no Streamlit
-    script-run context exists), the returned callable captures the
-    ``session_state`` reference at creation time and is safe to call
-    from daemon threads launched by :func:`submit_task`.
+    Unlike :func:`set_progress` which accesses the session store at call time,
+    the returned callable captures the session store reference at creation time
+    and is safe to call from daemon threads launched by :func:`submit_task`.
 
     Usage::
 
@@ -446,7 +562,8 @@ def make_progress_setter(task_name: str) -> Callable[[float, str], None]:
             _set_progress(0.5, "Half done…")
         submit_task("my_task", _worker)
     """
-    state = st.session_state
+    # Capture the session store reference (plain dict) at creation time.
+    state = _get_session_store()
     progress_key = _key(task_name, "progress")
     text_key = _key(task_name, "progress_text")
 
