@@ -237,17 +237,6 @@ class StabilityScorer:
             "warnings": warnings,
         }
 
-        # --- Compute shared penalty / bonus terms ---
-        penalty = 0.0
-        if disulfide < 1.0:
-            penalty += self._penalty_disulfide
-        if aggregation < 0.5:
-            penalty += self._penalty_aggregation
-        if charge_balance < 0.5:
-            penalty += self._penalty_charge
-
-        vhh_bonus = self._hallmark_bonus_weight * hallmark
-
         # --- Determine which backends to use ---
         # When _skip_ml is True (batch library generation), skip the
         # expensive per-variant ESM / NanoMelt calls.  The library
@@ -270,7 +259,10 @@ class StabilityScorer:
                 tm_score = _sigmoid_normalize(predicted_tm, self._tm_min, self._tm_max)
                 result["tm_score"] = tm_score
 
-                esm2_composite = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
+                # Pure ML signal — heuristic sub-scores are informational
+                # only and do not modify the composite when an ML backend
+                # produces a result.
+                esm2_composite = tm_score
             except Exception:
                 warnings.append("ESM-2 scoring failed; fell back to legacy scoring")
                 logger.warning("ESM-2 scoring failed", exc_info=True)
@@ -285,7 +277,10 @@ class StabilityScorer:
                 nm_tm_score = _sigmoid_normalize(nanomelt_tm, self._tm_min, self._tm_max)
                 result["nanomelt_tm_score"] = nm_tm_score
 
-                nanomelt_composite = max(0.0, min(1.0, nm_tm_score + vhh_bonus - penalty))
+                # Pure ML signal — heuristic sub-scores are informational
+                # only and do not modify the composite when an ML backend
+                # produces a result.
+                nanomelt_composite = nm_tm_score
             except Exception:
                 warnings.append("NanoMelt scoring failed; ignoring NanoMelt contribution")
                 logger.warning("NanoMelt scoring failed", exc_info=True)
