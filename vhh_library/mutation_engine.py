@@ -663,14 +663,21 @@ class MutationEngine:
                 parent_tm = parent_result["nanomelt_tm"]
                 parent_score = _sigmoid_normalize(parent_tm, scorer._tm_min, scorer._tm_max)
 
-                # Batch-score all mutants
-                mutant_objects: list[VHHSequence] = []
-                for seq in mutant_sequences:
-                    obj = object.__new__(VHHSequence)
-                    obj.sequence = seq
-                    mutant_objects.append(obj)
+                # Batch-score all mutant sequences using the pre-aligned
+                # path (skips redundant ANARCI for point-mutation variants).
+                if hasattr(predictor, "score_batch_prealigned"):
+                    mutant_results = predictor.score_batch_prealigned(parent_vhh.sequence, mutant_sequences)
+                else:
+                    # Fallback: construct lightweight VHHSequence wrappers —
+                    # score_batch only accesses .sequence on each object,
+                    # matching the pattern used in _batch_fill_stability.
+                    mutant_objects: list[VHHSequence] = []
+                    for seq in mutant_sequences:
+                        obj = object.__new__(VHHSequence)
+                        obj.sequence = seq
+                        mutant_objects.append(obj)
+                    mutant_results = predictor.score_batch(mutant_objects)
 
-                mutant_results = predictor.score_batch(mutant_objects)
                 for candidate, nm_result in zip(candidates, mutant_results):
                     mutant_tm = nm_result["nanomelt_tm"]
                     mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)

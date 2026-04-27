@@ -1494,14 +1494,18 @@ class TestBatchStabilityScoring:
         """_generate_stability_candidates must use NanoMelt via batch, not per-candidate.
 
         NanoMelt should be called once for the parent (score_sequence) and
-        once in batch for all mutants (score_batch), instead of being called
-        per-candidate via predict_mutation_effect.
+        once in batch for all mutants (score_batch_prealigned), instead of
+        being called per-candidate via predict_mutation_effect.
         """
         from unittest.mock import MagicMock
 
         mock_nm = MagicMock()
         mock_nm.score_sequence.return_value = {"composite_score": 0.6, "nanomelt_tm": 70.0}
-        mock_nm.score_batch.return_value = [{"composite_score": 0.6, "nanomelt_tm": 70.0}] * 200
+
+        def _dynamic_batch(parent_seq, variant_seqs):
+            return [{"composite_score": 0.6, "nanomelt_tm": 70.0}] * len(variant_seqs)
+
+        mock_nm.score_batch_prealigned.side_effect = _dynamic_batch
         scorer = StabilityScorer(nanomelt_predictor=mock_nm)
         vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
 
@@ -1513,8 +1517,8 @@ class TestBatchStabilityScoring:
 
         # NanoMelt score_sequence should be called exactly once (for the parent).
         mock_nm.score_sequence.assert_called_once()
-        # NanoMelt score_batch should be called exactly once (for all mutants).
-        mock_nm.score_batch.assert_called_once()
+        # NanoMelt score_batch_prealigned should be called exactly once (for all mutants).
+        mock_nm.score_batch_prealigned.assert_called_once()
         # Candidates should have ML-derived delta_stability values.
         assert len(candidates) > 0
         for c in candidates:
