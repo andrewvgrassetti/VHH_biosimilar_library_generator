@@ -848,7 +848,6 @@ class MutationEngine:
                     "NanoMelt batch candidate scoring failed; %s: %s",
                     "falling back to ESM-2" if has_esm else "keeping heuristic deltas",
                     exc,
-                    exc_info=True,
                 )
 
         # --- ESM-2 batch scoring (fallback) ---
@@ -896,7 +895,7 @@ class MutationEngine:
 
                 print(f"[RANKING] ESM-2 batch rescoring FAILED: {exc}", flush=True)
                 _tb.print_exc()
-                logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas: %s", exc, exc_info=True)
+                logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas: %s", exc)
 
     # ------------------------------------------------------------------
     # Policy-aware candidate generation (new path)
