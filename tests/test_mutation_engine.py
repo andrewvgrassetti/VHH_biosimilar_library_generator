@@ -1490,17 +1490,22 @@ class TestBatchStabilityScoring:
         scorer.score(vhh)
         mock_esm.score_single.assert_called_once()
 
-    def test_generate_stability_candidates_skips_ml(self) -> None:
-        """_generate_stability_candidates must not call NanoMelt per-candidate.
+    def test_generate_stability_candidates_uses_batch_ml(self) -> None:
+        """_generate_stability_candidates must use NanoMelt via batch, not per-candidate.
 
-        Previously, each candidate triggered predict_mutation_effect → score()
-        without _skip_ml, causing NanoMelt to run per-candidate and producing
-        hundreds of 'Loading ESM data' messages.
+        NanoMelt should be called once for the parent (score_sequence) and
+        once in batch for all mutants (score_batch_prealigned), instead of
+        being called per-candidate via predict_mutation_effect.
         """
         from unittest.mock import MagicMock
 
         mock_nm = MagicMock()
         mock_nm.score_sequence.return_value = {"composite_score": 0.6, "nanomelt_tm": 70.0}
+
+        def _dynamic_batch(parent_seq, variant_seqs):
+            return [{"composite_score": 0.6, "nanomelt_tm": 70.0}] * len(variant_seqs)
+
+        mock_nm.score_batch_prealigned.side_effect = _dynamic_batch
         scorer = StabilityScorer(nanomelt_predictor=mock_nm)
         vhh = self._make_vhh_no_anarci("QVQLVESGGGLVQ")
 
@@ -1508,10 +1513,16 @@ class TestBatchStabilityScoring:
 
         # Only a few positions so the test stays fast.
         off_limits = {str(i) for i in range(1, len(vhh.sequence) + 1) if i > 3}
-        engine._generate_stability_candidates(vhh, off_limits=off_limits)
+        candidates = engine._generate_stability_candidates(vhh, off_limits=off_limits)
 
-        # NanoMelt must NOT have been called — _skip_ml=True is in effect.
-        mock_nm.score_sequence.assert_not_called()
+        # NanoMelt score_sequence should be called exactly once (for the parent).
+        mock_nm.score_sequence.assert_called_once()
+        # NanoMelt score_batch_prealigned should be called exactly once (for all mutants).
+        mock_nm.score_batch_prealigned.assert_called_once()
+        # Candidates should have ML-derived delta_stability values.
+        assert len(candidates) > 0
+        for c in candidates:
+            assert "delta_stability" in c
 
     def test_batch_fill_stability_with_esm(self) -> None:
         """_batch_fill_stability should batch-score ESM and update rows."""

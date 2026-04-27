@@ -545,8 +545,12 @@ class MutationEngine:
 
         For each mutable position (respecting off-limits, forbidden
         substitutions, and excluded AAs), all 19 possible substitutions are
-        evaluated using :meth:`StabilityScorer.predict_mutation_effect`.
-        Mutations introducing PTM liabilities are filtered out.
+        evaluated for stability.  Mutations introducing PTM liabilities are
+        filtered out.
+
+        When NanoMelt or ESM-2 backends are available, stability is
+        batch-scored via ML after collecting all candidates.  Otherwise
+        the fast heuristic path is used per candidate.
 
         The ``off_limits`` set is the sole authority on position mutability —
         CDR positions are only skipped when they appear in ``off_limits``
@@ -583,6 +587,9 @@ class MutationEngine:
                 if _introduces_ptm_liability(parent_seq, mutant.sequence, seq_idx):
                     continue
 
+                # Heuristic delta is computed for all candidates as a
+                # fast baseline.  When ML backends are available it will
+                # be replaced by batch ML scoring below.
                 delta_stab = self._stability_scorer.predict_mutation_effect(
                     vhh_sequence, pos_key, candidate_aa, _skip_ml=True
                 )
@@ -597,6 +604,13 @@ class MutationEngine:
 
                 candidates.append(candidate_dict)
                 mutant_sequences.append(mutant.sequence)
+
+        # --- Batch ML stability scoring ---
+        # When NanoMelt or ESM-2 is available, batch-score all candidate
+        # mutant sequences and replace delta_stability with ML-derived
+        # values.  This uses pure ML Tm signals (no heuristic penalty/bonus).
+        if candidates:
+            self._batch_rescore_candidates(candidates, mutant_sequences, vhh_sequence)
 
         # Batch-score nativeness for all mutants in a single call instead of
         # invoking AbNatiV (and its internal ANARCI alignment) per candidate.
@@ -615,6 +629,100 @@ class MutationEngine:
 
         candidates.sort(key=lambda c: c["delta_stability"], reverse=True)
         return candidates
+
+    def _batch_rescore_candidates(
+        self,
+        candidates: list[dict],
+        mutant_sequences: list[str],
+        parent_vhh: VHHSequence,
+    ) -> None:
+        """Batch-score candidate mutations with ML backends and update delta_stability.
+
+        When NanoMelt or ESM-2 is available, this method computes the parent
+        ML score once and batch-scores all mutant sequences, then replaces
+        each candidate's ``delta_stability`` with the ML-derived delta.
+
+        Falls back silently (keeping heuristic deltas) if ML scoring fails.
+        """
+        from vhh_library.stability import _sigmoid_normalize
+
+        scorer = self._stability_scorer
+        has_nanomelt = scorer.nanomelt_predictor is not None
+        has_esm = scorer.esm_scorer is not None
+
+        if not has_nanomelt and not has_esm:
+            return  # No ML backends — keep heuristic deltas
+
+        # --- NanoMelt batch scoring (preferred) ---
+        if has_nanomelt:
+            try:
+                predictor = scorer.nanomelt_predictor
+
+                # Score parent
+                parent_result = predictor.score_sequence(parent_vhh)
+                parent_tm = parent_result["nanomelt_tm"]
+                parent_score = _sigmoid_normalize(parent_tm, scorer._tm_min, scorer._tm_max)
+
+                # Batch-score all mutant sequences using the pre-aligned
+                # path (skips redundant ANARCI for point-mutation variants).
+                if hasattr(predictor, "score_batch_prealigned"):
+                    mutant_results = predictor.score_batch_prealigned(parent_vhh.sequence, mutant_sequences)
+                else:
+                    # Fallback: construct lightweight VHHSequence wrappers —
+                    # score_batch only accesses .sequence on each object,
+                    # matching the pattern used in _batch_fill_stability.
+                    mutant_objects: list[VHHSequence] = []
+                    for seq in mutant_sequences:
+                        obj = object.__new__(VHHSequence)
+                        obj.sequence = seq
+                        mutant_objects.append(obj)
+                    mutant_results = predictor.score_batch(mutant_objects)
+
+                for candidate, nm_result in zip(candidates, mutant_results):
+                    mutant_tm = nm_result["nanomelt_tm"]
+                    mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
+                    candidate["delta_stability"] = mutant_score - parent_score
+
+                logger.info(
+                    "Batch-scored %d candidates with NanoMelt (parent Tm=%.1f°C)",
+                    len(candidates),
+                    parent_tm,
+                )
+                return
+            except Exception:
+                logger.warning(
+                    "NanoMelt batch candidate scoring failed; %s",
+                    "falling back to ESM-2" if has_esm else "keeping heuristic deltas",
+                    exc_info=True,
+                )
+
+        # --- ESM-2 batch scoring (fallback) ---
+        if has_esm:
+            try:
+                esm = scorer.esm_scorer
+                parent_seq = parent_vhh.sequence
+
+                # Batch-score parent + all mutants together
+                all_sequences = [parent_seq] + mutant_sequences
+                all_plls = esm.score_batch(all_sequences)
+
+                parent_pll = all_plls[0]
+                parent_tm = scorer._pll_to_predicted_tm(parent_pll, len(parent_seq))
+                parent_score = _sigmoid_normalize(parent_tm, scorer._tm_min, scorer._tm_max)
+
+                for candidate, pll in zip(candidates, all_plls[1:]):
+                    mutant_tm = scorer._pll_to_predicted_tm(pll, len(parent_seq))
+                    mutant_score = _sigmoid_normalize(mutant_tm, scorer._tm_min, scorer._tm_max)
+                    candidate["delta_stability"] = mutant_score - parent_score
+
+                logger.info(
+                    "Batch-scored %d candidates with ESM-2 (parent Tm=%.1f°C)",
+                    len(candidates),
+                    parent_tm,
+                )
+                return
+            except Exception:
+                logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas", exc_info=True)
 
     # ------------------------------------------------------------------
     # Policy-aware candidate generation (new path)
@@ -1684,23 +1792,11 @@ class MutationEngine:
 
                     # Use the stability scorer's calibrated sigmoid params
                     # to match StabilityScorer.score() logic exactly.
+                    # Pure ML signal — heuristic sub-scores are informational
+                    # only and do not modify stability_score.
                     nm_tm_score = _sigmoid_normalize(nm_tm, scorer._tm_min, scorer._tm_max)
 
-                    hallmark = row["vhh_hallmark_score"]
-                    disulfide = row["disulfide_score"]
-                    aggregation = row["aggregation_score"]
-                    charge_balance = row["charge_balance_score"]
-
-                    penalty = 0.0
-                    if disulfide < 1.0:
-                        penalty += scorer._penalty_disulfide
-                    if aggregation < 0.5:
-                        penalty += scorer._penalty_aggregation
-                    if charge_balance < 0.5:
-                        penalty += scorer._penalty_charge
-                    vhh_bonus = scorer._hallmark_bonus_weight * hallmark
-
-                    row["stability_score"] = max(0.0, min(1.0, nm_tm_score + vhh_bonus - penalty))
+                    row["stability_score"] = nm_tm_score
                     row["scoring_method"] = "nanomelt"
 
                     # Recompute combined_score with updated stability.
@@ -1784,23 +1880,11 @@ class MutationEngine:
                     predicted_tm = scorer._pll_to_predicted_tm(pll, len(seq))
                     row["predicted_tm"] = predicted_tm
 
+                    # Pure ML signal — heuristic sub-scores are informational
+                    # only and do not modify stability_score.
                     tm_score = _sigmoid_normalize(predicted_tm, scorer._tm_min, scorer._tm_max)
 
-                    hallmark = row["vhh_hallmark_score"]
-                    disulfide = row["disulfide_score"]
-                    aggregation = row["aggregation_score"]
-                    charge_balance = row["charge_balance_score"]
-
-                    penalty = 0.0
-                    if disulfide < 1.0:
-                        penalty += scorer._penalty_disulfide
-                    if aggregation < 0.5:
-                        penalty += scorer._penalty_aggregation
-                    if charge_balance < 0.5:
-                        penalty += scorer._penalty_charge
-                    vhh_bonus = scorer._hallmark_bonus_weight * hallmark
-
-                    row["stability_score"] = max(0.0, min(1.0, tm_score + vhh_bonus - penalty))
+                    row["stability_score"] = tm_score
                     row["scoring_method"] = "esm2"
 
                     raw_scores: dict[str, float] = {

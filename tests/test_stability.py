@@ -391,3 +391,92 @@ class TestNanoMeltScoring:
         """use_nanomelt=True should emit a DeprecationWarning."""
         with pytest.warns(DeprecationWarning, match="use_nanomelt is deprecated"):
             StabilityScorer(use_nanomelt=True)
+
+
+class TestHeuristicFreeMLScoring:
+    """Verify that heuristic sub-scores do not impact composite_score when ML backends are active."""
+
+    @staticmethod
+    def _make_mock_nanomelt(tm: float = 70.0) -> MagicMock:
+        mock = MagicMock()
+        mock.score_sequence.return_value = {
+            "composite_score": 0.6,
+            "nanomelt_tm": tm,
+        }
+        return mock
+
+    def test_nanomelt_composite_equals_pure_sigmoid(self, vhh: VHHSequence) -> None:
+        """NanoMelt composite_score should be the pure sigmoid-normalized Tm."""
+        from vhh_library.stability import _sigmoid_normalize
+
+        tm = 70.0
+        mock_nm = self._make_mock_nanomelt(tm)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+
+        expected = _sigmoid_normalize(tm, scorer._tm_min, scorer._tm_max)
+        assert result["composite_score"] == pytest.approx(expected, abs=1e-9)
+        assert result["scoring_method"] == "nanomelt"
+
+    def test_esm2_composite_equals_pure_sigmoid(self, vhh: VHHSequence) -> None:
+        """ESM-2 composite_score should be the pure sigmoid-normalized predicted Tm."""
+        from vhh_library.stability import _sigmoid_normalize
+
+        mock_esm = MagicMock()
+        mock_esm.score_single.return_value = -100.0
+        scorer = StabilityScorer(esm_scorer=mock_esm)
+        result = scorer.score(vhh)
+
+        predicted_tm = result["predicted_tm"]
+        expected = _sigmoid_normalize(predicted_tm, scorer._tm_min, scorer._tm_max)
+        assert result["composite_score"] == pytest.approx(expected, abs=1e-9)
+        assert result["scoring_method"] == "esm2"
+
+    def test_heuristic_penalty_does_not_affect_nanomelt_composite(self) -> None:
+        """Removing disulfide Cys should not change NanoMelt composite_score.
+
+        Heuristic sub-scores (disulfide, hallmark, etc.) are informational
+        only and must not modify the composite when an ML backend produces
+        a result.
+        """
+        tm = 70.0
+        mock_nm_a = self._make_mock_nanomelt(tm)
+        mock_nm_b = self._make_mock_nanomelt(tm)
+
+        vhh_with_cys = VHHSequence(SAMPLE_VHH)
+
+        scorer_a = StabilityScorer(nanomelt_predictor=mock_nm_a)
+        result_a = scorer_a.score(vhh_with_cys)
+
+        # Manually create a VHH missing canonical Cys at position 23
+        vhh_no_cys = object.__new__(VHHSequence)
+        vhh_no_cys.sequence = SAMPLE_VHH
+        vhh_no_cys.length = len(SAMPLE_VHH)
+        vhh_no_cys.strict = False
+        vhh_no_cys.chain_type = "H"
+        vhh_no_cys.species = "camelid"
+        # Override numbered so position 23 is 'A' instead of 'C'
+        imgt = dict(vhh_with_cys.imgt_numbered)
+        if "23" in imgt:
+            imgt["23"] = "A"
+        vhh_no_cys.imgt_numbered = imgt
+        vhh_no_cys._pos_to_seq_idx = {k: idx for idx, k in enumerate(imgt)}
+        vhh_no_cys.validation_result = {"valid": True, "errors": [], "warnings": []}
+
+        scorer_b = StabilityScorer(nanomelt_predictor=mock_nm_b)
+        result_b = scorer_b.score(vhh_no_cys)
+
+        # Both should have the same composite_score since NanoMelt returns
+        # the same Tm and heuristics don't affect it.
+        assert result_a["composite_score"] == pytest.approx(result_b["composite_score"], abs=1e-9)
+
+    def test_heuristic_subscores_still_present(self, vhh: VHHSequence) -> None:
+        """Heuristic sub-scores should still be present for informational purposes."""
+        mock_nm = self._make_mock_nanomelt(70.0)
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        result = scorer.score(vhh)
+        assert "disulfide_score" in result
+        assert "vhh_hallmark_score" in result
+        assert "aggregation_score" in result
+        assert "charge_balance_score" in result
+        assert "hydrophobic_core_score" in result
