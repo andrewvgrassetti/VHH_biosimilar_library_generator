@@ -418,6 +418,7 @@ class MutationEngine:
         w_nativeness: float = 0.30,
         weights: Optional[dict[str, float]] = None,
         enabled_metrics: Optional[dict[str, bool]] = None,
+        operation_timeout: int | None = None,
     ) -> None:
         self._stability_scorer = stability_scorer if stability_scorer is not None else StabilityScorer()
         self._nativeness_scorer = nativeness_scorer if nativeness_scorer is not None else NativenessScorer()
@@ -443,6 +444,25 @@ class MutationEngine:
         }
         if enabled_metrics is not None:
             self._enabled_metrics.update(enabled_metrics)
+
+        # Per-operation timeout in seconds.  None (the default) means no
+        # timeout — operations run to completion regardless of wall-clock time.
+        # Pass an explicit integer to re-enable the old 300-second safety net.
+        self._operation_timeout: int | None = operation_timeout
+
+    # ------------------------------------------------------------------
+    # Timeout helpers
+    # ------------------------------------------------------------------
+
+    def _timeout_expired(self, start: float) -> bool:
+        """Return ``True`` if the operation timeout has been exceeded.
+
+        When ``self._operation_timeout`` is ``None`` (the default), this
+        always returns ``False`` — i.e. no timeout is enforced.
+        """
+        if self._operation_timeout is None:
+            return False
+        return _time.monotonic() - start > self._operation_timeout
 
     # ------------------------------------------------------------------
     # Lazy scorer properties
@@ -687,20 +707,18 @@ class MutationEngine:
                         f"[RANKING] Batch-scoring nativeness for {len(mutant_sequences)} sequences…",
                         flush=True,
                     )
-                    with _timed_operation(
-                        f"nativeness batch scoring ({len(mutant_sequences)} sequences)"
-                    ):
+                    with _timed_operation(f"nativeness batch scoring ({len(mutant_sequences)} sequences)"):
                         mutant_nat_scores = self._nativeness_scorer.score_batch(mutant_sequences)
-                        if _time.monotonic() - _nat_start > _OPERATION_TIMEOUT_SECONDS:
+                        if self._timeout_expired(_nat_start):
                             print(
                                 f"[TIMEOUT] nativeness batch scoring exceeded "
-                                f"{_OPERATION_TIMEOUT_SECONDS}s — setting delta_nativeness=0.0",
+                                f"{self._operation_timeout}s — setting delta_nativeness=0.0",
                                 flush=True,
                             )
                             logger.warning(
                                 "Nativeness batch scoring exceeded timeout (%ds); "
                                 "setting delta_nativeness=0.0 for all candidates",
-                                _OPERATION_TIMEOUT_SECONDS,
+                                self._operation_timeout,
                             )
                             for candidate in candidates:
                                 candidate["delta_nativeness"] = 0.0
@@ -720,17 +738,17 @@ class MutationEngine:
                                 f"[RANKING] Per-candidate nativeness: {i}/{len(candidates)}",
                                 flush=True,
                             )
-                        if _time.monotonic() - _nat_start > _OPERATION_TIMEOUT_SECONDS:
+                        if self._timeout_expired(_nat_start):
                             print(
                                 f"[TIMEOUT] per-candidate nativeness scoring exceeded "
-                                f"{_OPERATION_TIMEOUT_SECONDS}s at candidate {i} — "
+                                f"{self._operation_timeout}s at candidate {i} — "
                                 f"setting delta_nativeness=0.0 for remaining",
                                 flush=True,
                             )
                             logger.warning(
                                 "Per-candidate nativeness scoring exceeded timeout (%ds) at "
                                 "candidate %d/%d; setting delta_nativeness=0.0 for remaining",
-                                _OPERATION_TIMEOUT_SECONDS,
+                                self._operation_timeout,
                                 i,
                                 len(candidates),
                             )
@@ -790,9 +808,9 @@ class MutationEngine:
                 print(f"[RANKING] NanoMelt parent Tm = {parent_tm:.1f}°C", flush=True)
 
                 # Check timeout before batch scoring
-                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                if self._timeout_expired(_rescore_start):
                     print(
-                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {self._operation_timeout}s "
                         f"after parent scoring — keeping heuristic deltas",
                         flush=True,
                     )
@@ -820,9 +838,9 @@ class MutationEngine:
                         mutant_results = predictor.score_batch(mutant_objects)
 
                 # Check timeout after batch scoring
-                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                if self._timeout_expired(_rescore_start):
                     print(
-                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {self._operation_timeout}s "
                         f"after NanoMelt batch scoring — keeping heuristic deltas",
                         flush=True,
                     )
@@ -841,7 +859,6 @@ class MutationEngine:
                 )
                 return
             except Exception as exc:
-
                 print(f"[RANKING] NanoMelt batch rescoring FAILED: {exc}", flush=True)
                 _tb.print_exc()
                 logger.warning(
@@ -856,8 +873,7 @@ class MutationEngine:
                 esm = scorer.esm_scorer
                 parent_seq = parent_vhh.sequence
                 print(
-                    f"[RANKING] ESM-2 batch rescoring: {len(mutant_sequences) + 1} sequences "
-                    f"(parent + mutants)…",
+                    f"[RANKING] ESM-2 batch rescoring: {len(mutant_sequences) + 1} sequences (parent + mutants)…",
                     flush=True,
                 )
 
@@ -867,9 +883,9 @@ class MutationEngine:
                     all_plls = esm.score_batch(all_sequences)
 
                 # Check timeout after ESM-2 batch scoring
-                if _time.monotonic() - _rescore_start > _OPERATION_TIMEOUT_SECONDS:
+                if self._timeout_expired(_rescore_start):
                     print(
-                        f"[TIMEOUT] _batch_rescore_candidates exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                        f"[TIMEOUT] _batch_rescore_candidates exceeded {self._operation_timeout}s "
                         f"after ESM-2 batch scoring — keeping heuristic deltas",
                         flush=True,
                     )
@@ -892,7 +908,6 @@ class MutationEngine:
                 )
                 return
             except Exception as exc:
-
                 print(f"[RANKING] ESM-2 batch rescoring FAILED: {exc}", flush=True)
                 _tb.print_exc()
                 logger.warning("ESM-2 batch candidate scoring failed; keeping heuristic deltas: %s", exc)
@@ -1142,17 +1157,12 @@ class MutationEngine:
                     f"[RANKING] NanoMelt health check OK (Tm={_nm_health_result.get('nanomelt_tm', '?')})",
                     flush=True,
                 )
-                logger.info(
-                    "[RANKING] NanoMelt health check OK (Tm=%s)", _nm_health_result.get("nanomelt_tm", "?")
-                )
+                logger.info("[RANKING] NanoMelt health check OK (Tm=%s)", _nm_health_result.get("nanomelt_tm", "?"))
             except Exception as exc:
-
                 print(f"[RANKING] NanoMelt health check FAILED: {exc}", flush=True)
                 print("[RANKING] Disabling NanoMelt for this ranking run", flush=True)
                 _tb.print_exc()
-                logger.warning(
-                    "[RANKING] NanoMelt health check failed; disabling for this run: %s", exc
-                )
+                logger.warning("[RANKING] NanoMelt health check failed; disabling for this run: %s", exc)
                 self._stability_scorer.nanomelt_predictor = None
 
         if self._stability_scorer.esm_scorer is not None:
@@ -1163,12 +1173,9 @@ class MutationEngine:
                 print("[RANKING] ESM-2 health check OK", flush=True)
                 logger.info("[RANKING] ESM-2 health check OK")
             except Exception as exc:
-
                 print(f"[RANKING] ESM-2 health check FAILED: {exc}", flush=True)
                 _tb.print_exc()
-                logger.warning(
-                    "[RANKING] ESM-2 health check failed; disabling for this run: %s", exc
-                )
+                logger.warning("[RANKING] ESM-2 health check failed; disabling for this run: %s", exc)
                 self._stability_scorer.esm_scorer = None
 
         try:
@@ -1177,7 +1184,6 @@ class MutationEngine:
             print("[RANKING] Nativeness health check OK", flush=True)
             logger.info("[RANKING] Nativeness health check OK")
         except Exception as exc:
-
             print(f"[RANKING] Nativeness health check FAILED: {exc}", flush=True)
             _tb.print_exc()
             # Cannot disable nativeness — it's required. Log and continue.
@@ -1276,8 +1282,7 @@ class MutationEngine:
             f"  Total time: {_rank_elapsed:.1f}s",
             f"  Candidates generated: {len(suggestions)}",
             f"  Final ranked mutations: {len(df)}",
-            "  Scoring method breakdown: "
-            + str(df["reason"].value_counts().to_dict() if not df.empty else "N/A"),
+            "  Scoring method breakdown: " + str(df["reason"].value_counts().to_dict() if not df.empty else "N/A"),
             "=" * 70,
         ]
         for line in _summary:
@@ -1854,9 +1859,9 @@ class MutationEngine:
                 for chunk_idx in range(n_chunks):
                     # Timeout check — return rows with neutral nativeness (0.5)
                     _nat_elapsed = _time.monotonic() - _nat_start
-                    if _nat_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                    if self._timeout_expired(_nat_start):
                         print(
-                            f"[TIMEOUT] _batch_fill_nativeness exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"[TIMEOUT] _batch_fill_nativeness exceeded {self._operation_timeout}s "
                             f"after {chunk_idx}/{n_chunks} chunks — filling remaining with 0.5",
                             flush=True,
                         )
@@ -2022,9 +2027,9 @@ class MutationEngine:
                 for chunk_idx in range(n_chunks):
                     # Timeout check — return partial results with heuristic scores
                     _stab_elapsed = _time.monotonic() - _stab_start
-                    if _stab_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                    if self._timeout_expired(_stab_start):
                         print(
-                            f"[TIMEOUT] _batch_fill_stability NanoMelt exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"[TIMEOUT] _batch_fill_stability NanoMelt exceeded {self._operation_timeout}s "
                             f"after {chunk_idx}/{n_chunks} chunks — returning partial results",
                             flush=True,
                         )
@@ -2115,9 +2120,9 @@ class MutationEngine:
                 for chunk_idx in range(n_chunks):
                     # Timeout check
                     _esm_elapsed = _time.monotonic() - _esm_start
-                    if _esm_elapsed > _OPERATION_TIMEOUT_SECONDS:
+                    if self._timeout_expired(_esm_start):
                         print(
-                            f"[TIMEOUT] _batch_fill_stability ESM-2 exceeded {_OPERATION_TIMEOUT_SECONDS}s "
+                            f"[TIMEOUT] _batch_fill_stability ESM-2 exceeded {self._operation_timeout}s "
                             f"after {chunk_idx}/{n_chunks} chunks — returning partial results",
                             flush=True,
                         )
