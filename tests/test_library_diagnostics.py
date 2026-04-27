@@ -355,9 +355,7 @@ class TestTimeoutGracefulDegradation:
         # With 250 rows, chunk_size=100, we get 3 chunks.
         # Each chunk sleeps 1.5s. After chunk 1 completes (1.5s), timeout (1s)
         # should fire before chunk 2.
-        import vhh_library.mutation_engine as me
-
-        monkeypatch.setattr(me, "_OPERATION_TIMEOUT_SECONDS", 1)
+        engine._operation_timeout = 1
         result = engine._batch_fill_stability(rows)
 
         # Should return all 250 rows (some scored by NanoMelt, rest with heuristic)
@@ -407,15 +405,24 @@ class TestTimeoutGracefulDegradation:
                 }
             )
 
-        import vhh_library.mutation_engine as me
-
-        monkeypatch.setattr(me, "_OPERATION_TIMEOUT_SECONDS", 1)
+        engine._operation_timeout = 1
         result = engine._batch_fill_nativeness(rows)
 
         # Should have returned rows — some nativeness may be 0.5 (timeout-filled)
         assert len(result) == 150
         captured = capsys.readouterr()
         assert "[TIMEOUT]" in captured.out
+
+    def test_default_no_timeout(self, mock_vhh, capsys):
+        """Default operation_timeout=None means no timeout is enforced."""
+        engine = _make_engine()
+        assert engine._operation_timeout is None
+        assert engine._timeout_expired(0.0) is False
+
+    def test_operation_timeout_via_constructor(self, mock_vhh):
+        """operation_timeout can be set via MutationEngine constructor."""
+        engine = MutationEngine(operation_timeout=600)
+        assert engine._operation_timeout == 600
 
 
 # ---------------------------------------------------------------------------

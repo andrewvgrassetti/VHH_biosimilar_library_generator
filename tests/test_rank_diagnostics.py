@@ -278,9 +278,7 @@ class TestRankProgressCallbacks:
             off_limits=set(str(i) for i in range(4, len(mock_vhh_rank.sequence) + 1)),
             progress_callback=_cb,
         )
-        assert "ranking_complete" in phases, (
-            f"Expected 'ranking_complete' in progress phases, got: {phases}"
-        )
+        assert "ranking_complete" in phases, f"Expected 'ranking_complete' in progress phases, got: {phases}"
 
 
 # ---------------------------------------------------------------------------
@@ -355,15 +353,13 @@ class TestRankNativenessFallback:
 class TestRankTimeout:
     def test_slow_nanomelt_batch_uses_heuristic_deltas(self, mock_vhh_rank, capsys, monkeypatch):
         """When NanoMelt batch scoring sleeps beyond timeout, fall back to heuristics."""
-        import vhh_library.mutation_engine as me
-
         # Use a slow predictor that is healthy for the single-sequence health
         # check but sleeps during batch scoring.
         slow_predictor = _SlowNanoMeltPredictor(sleep_seconds=10.0)
         engine = _make_engine(nanomelt_predictor=slow_predictor)
 
         # Set a very short timeout so the batch scoring triggers it
-        monkeypatch.setattr(me, "_OPERATION_TIMEOUT_SECONDS", 2)
+        engine._operation_timeout = 2
 
         result = engine.rank_single_mutations(
             mock_vhh_rank,
@@ -501,8 +497,6 @@ class TestRankProgressPhases:
                 cb(prog)
                 text = state.get("bg_rank_mutations_progress_text", "")
                 # For simple phases, message (not iterative format) should be used
-                assert f"Testing phase {phase}" in text, (
-                    f"Phase {phase!r} not handled as simple phase; text={text!r}"
-                )
+                assert f"Testing phase {phase}" in text, f"Phase {phase!r} not handled as simple phase; text={text!r}"
         finally:
             bg.st = original_st
