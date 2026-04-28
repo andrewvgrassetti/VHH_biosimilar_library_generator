@@ -675,15 +675,19 @@ def sidebar():
                 disabled=not _two_part_on,
                 help="IMGT-numbered position defining the Part 1 / Part 2 boundary.",
             )
-            st.number_input(
-                "Overlap width (residues)",
-                min_value=2,
-                max_value=20,
-                value=6,
-                step=2,
-                key="two_part_overlap_width",
+            st.text_input(
+                "Overlap N-terminal boundary (IMGT)",
+                value="56",
+                key="two_part_overlap_n_boundary",
                 disabled=not _two_part_on,
-                help="Number of residues frozen around the split point for PCR fusion homology.",
+                help="IMGT position of the first (N-terminal) residue in the overlap region.",
+            )
+            st.text_input(
+                "Overlap C-terminal boundary (IMGT)",
+                value="66",
+                key="two_part_overlap_c_boundary",
+                disabled=not _two_part_on,
+                help="IMGT position of the last (C-terminal) residue in the overlap region.",
             )
             st.number_input(
                 "Parts per half",
@@ -695,6 +699,35 @@ def sidebar():
                 disabled=not _two_part_on,
                 help="Number of unique variants to generate per half (N Part 1 × M Part 2 = total).",
             )
+
+            # Display locked overlap residues when two-part is active and a
+            # sequence has been analysed.
+            if _two_part_on and st.session_state.get("vhh_seq") is not None:
+                _vhh_preview = st.session_state["vhh_seq"]
+                _imgt_keys_preview = list(_vhh_preview.imgt_numbered.keys())
+                _n_bnd = st.session_state.get("two_part_overlap_n_boundary", "56")
+                _c_bnd = st.session_state.get("two_part_overlap_c_boundary", "66")
+                if _n_bnd in _imgt_keys_preview and _c_bnd in _imgt_keys_preview:
+                    _n_idx = _imgt_keys_preview.index(_n_bnd)
+                    _c_idx = _imgt_keys_preview.index(_c_bnd)
+                    if _n_idx <= _c_idx:
+                        _locked_keys = _imgt_keys_preview[_n_idx : _c_idx + 1]
+                        _locked_display = " ".join(
+                            f"{k}({_vhh_preview.imgt_numbered[k]})" for k in _locked_keys
+                        )
+                        st.info(f"Overlap region: {_locked_display}")
+                    else:
+                        st.warning("Invalid overlap boundaries: N-terminal boundary comes after C-terminal boundary.")
+                else:
+                    _missing = []
+                    if _n_bnd not in _imgt_keys_preview:
+                        _missing.append(f"N-terminal boundary '{_n_bnd}'")
+                    if _c_bnd not in _imgt_keys_preview:
+                        _missing.append(f"C-terminal boundary '{_c_bnd}'")
+                    st.warning(
+                        f"Invalid boundary position(s): {', '.join(_missing)}"
+                        " not found in sequence IMGT numbering."
+                    )
 
         st.divider()
 
@@ -1271,11 +1304,11 @@ def tab_mutations(stability_scorer):
         if st.session_state.get("enable_two_part_assembly", False):
             from vhh_library.two_part_assembly import lock_overlap_positions
 
-            _split_pos = st.session_state.get("two_part_split_position", "60")
-            _olap_width = st.session_state.get("two_part_overlap_width", 6)
+            _n_bnd_lock = st.session_state.get("two_part_overlap_n_boundary", "56")
+            _c_bnd_lock = st.session_state.get("two_part_overlap_c_boundary", "66")
             _imgt_keys = list(_vhh.imgt_numbered.keys())
-            if _split_pos in _imgt_keys:
-                _overlap_locked = lock_overlap_positions(_split_pos, _olap_width, _imgt_keys)
+            if _n_bnd_lock in _imgt_keys and _c_bnd_lock in _imgt_keys:
+                _overlap_locked = lock_overlap_positions(_n_bnd_lock, _c_bnd_lock, _imgt_keys)
                 if _off_limits is None:
                     _off_limits = _overlap_locked
                 else:
@@ -1441,7 +1474,8 @@ def tab_mutations(stability_scorer):
             _two_part_enabled = st.session_state.get("enable_two_part_assembly", False)
             _assembly_mode = "two_part" if _two_part_enabled else None
             _split_position = st.session_state.get("two_part_split_position", "60") if _two_part_enabled else None
-            _overlap_width = st.session_state.get("two_part_overlap_width", 6)
+            _overlap_n_boundary = st.session_state.get("two_part_overlap_n_boundary", "56")
+            _overlap_c_boundary = st.session_state.get("two_part_overlap_c_boundary", "66")
             if _two_part_enabled:
                 _max_variants = st.session_state.get("two_part_parts_per_half", 250)
 
@@ -1460,7 +1494,8 @@ def tab_mutations(stability_scorer):
                     checkpoint_dir=_checkpoint_root,
                     assembly_mode=_assembly_mode,
                     split_position=_split_position,
-                    overlap_width=_overlap_width,
+                    overlap_n_boundary=_overlap_n_boundary,
+                    overlap_c_boundary=_overlap_c_boundary,
                 )
 
             print(f"[APP] Submitting library_gen task (strategy={strategy})", flush=True)

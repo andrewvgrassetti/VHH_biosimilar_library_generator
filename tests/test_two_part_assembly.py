@@ -37,43 +37,48 @@ def _make_mock_mutations(positions: list[str], imgt_pos_col: str = "imgt_pos") -
 class TestLockOverlapPositions:
     def test_basic_lock(self):
         positions = [str(i) for i in range(1, 21)]
-        locked = lock_overlap_positions("10", 6, positions)
-        # Split at "10", width 6 → 3 on each side centered around the split.
-        # The exact positions depend on the algorithm (half_left=3, half_right=3).
+        locked = lock_overlap_positions("8", "13", positions)
         assert isinstance(locked, set)
-        assert len(locked) > 0
-        assert "10" in locked  # The split position itself must be locked.
+        assert locked == {"8", "9", "10", "11", "12", "13"}
 
     def test_overlap_at_start(self):
         positions = [str(i) for i in range(1, 21)]
-        locked = lock_overlap_positions("1", 6, positions)
+        locked = lock_overlap_positions("1", "4", positions)
         assert "1" in locked
-        # Should not go below index 0.
-        assert all(int(p) >= 1 for p in locked)
+        assert locked == {"1", "2", "3", "4"}
 
     def test_overlap_at_end(self):
         positions = [str(i) for i in range(1, 21)]
-        locked = lock_overlap_positions("20", 6, positions)
+        locked = lock_overlap_positions("17", "20", positions)
         assert "20" in locked
-        # Should not exceed the list bounds.
-        assert all(int(p) <= 20 for p in locked)
+        assert locked == {"17", "18", "19", "20"}
 
-    def test_invalid_split_position(self):
+    def test_invalid_n_boundary(self):
         positions = [str(i) for i in range(1, 11)]
-        with pytest.raises(ValueError, match="not found"):
-            lock_overlap_positions("99", 6, positions)
+        with pytest.raises(ValueError, match="N-terminal boundary.*not found"):
+            lock_overlap_positions("99", "5", positions)
 
-    def test_width_2(self):
+    def test_invalid_c_boundary(self):
+        positions = [str(i) for i in range(1, 11)]
+        with pytest.raises(ValueError, match="C-terminal boundary.*not found"):
+            lock_overlap_positions("5", "99", positions)
+
+    def test_n_after_c_raises(self):
         positions = [str(i) for i in range(1, 21)]
-        locked = lock_overlap_positions("10", 2, positions)
-        assert len(locked) == 2
+        with pytest.raises(ValueError, match="comes after"):
+            lock_overlap_positions("13", "8", positions)
 
-    def test_width_wider_than_half(self):
-        """Overlap wider than one half should clamp to available positions."""
-        positions = [str(i) for i in range(1, 6)]  # Only 5 positions.
-        locked = lock_overlap_positions("3", 10, positions)
-        # Should lock all 5 positions (clamped).
-        assert locked == {"1", "2", "3", "4", "5"}
+    def test_single_position(self):
+        positions = [str(i) for i in range(1, 21)]
+        locked = lock_overlap_positions("10", "10", positions)
+        assert locked == {"10"}
+
+    def test_odd_width_overlap(self):
+        """Boundaries '56' to '62' = 7 residues (odd width, no restriction)."""
+        positions = [str(i) for i in range(50, 70)]
+        locked = lock_overlap_positions("56", "62", positions)
+        assert locked == {"56", "57", "58", "59", "60", "61", "62"}
+        assert len(locked) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +172,12 @@ class TestCombineParts:
 
     def test_nxm_combinations(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         assert len(result) == 4  # 2 × 2
 
     def test_columns_present(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         for col in [
             "variant_id",
             "part1_id",
@@ -190,13 +195,13 @@ class TestCombineParts:
 
     def test_sequence_length_preserved(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         for _, row in result.iterrows():
             assert len(row["aa_sequence"]) == len(vhh.sequence)
 
     def test_mutations_combined(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         # Row where Part 1 mutant + Part 2 mutant
         combined_row = result[(result["part1_id"] == "P1_V1") & (result["part2_id"] == "P2_V1")]
         assert len(combined_row) == 1
@@ -204,7 +209,7 @@ class TestCombineParts:
 
     def test_wild_type_combination(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         wt_row = result[(result["part1_id"] == "P1_V2") & (result["part2_id"] == "P2_V2")]
         assert len(wt_row) == 1
         assert wt_row.iloc[0]["aa_sequence"] == vhh.sequence
@@ -212,12 +217,12 @@ class TestCombineParts:
     def test_invalid_split_position(self):
         vhh, part1, part2 = self._make_vhh_and_parts()
         with pytest.raises(ValueError, match="not found"):
-            combine_parts(part1, part2, vhh, "999", overlap_width=6)
+            combine_parts(part1, part2, vhh, "999", n_boundary="48", c_boundary="53")
 
     def test_single_part1_single_part2(self):
         vhh = make_mock_vhh()
         part1 = pd.DataFrame([{"variant_id": "P1_V1", "mutations": "", "n_mutations": 0, "aa_sequence": vhh.sequence}])
         part2 = pd.DataFrame([{"variant_id": "P2_V1", "mutations": "", "n_mutations": 0, "aa_sequence": vhh.sequence}])
-        result = combine_parts(part1, part2, vhh, "50", overlap_width=6)
+        result = combine_parts(part1, part2, vhh, "50", n_boundary="48", c_boundary="53")
         assert len(result) == 1
         assert result.iloc[0]["aa_sequence"] == vhh.sequence

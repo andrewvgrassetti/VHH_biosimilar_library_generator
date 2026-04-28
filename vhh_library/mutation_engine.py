@@ -1336,7 +1336,8 @@ class MutationEngine:
         checkpoint_dir: Optional[Path] = None,
         assembly_mode: str | None = None,
         split_position: str | None = None,
-        overlap_width: int = 6,
+        overlap_n_boundary: str = "56",
+        overlap_c_boundary: str = "66",
     ) -> pd.DataFrame:
         """Generate a scored variant library from *top_mutations*.
 
@@ -1353,9 +1354,12 @@ class MutationEngine:
         split_position:
             IMGT position string key defining the boundary between Part 1
             and Part 2.  Required when ``assembly_mode="two_part"``.
-        overlap_width:
-            Number of residues in the overlap region for PCR fusion homology.
-            Default is 6 (3 on each side of the split).
+        overlap_n_boundary:
+            IMGT position of the first (N-terminal) residue in the overlap
+            region for PCR fusion homology. Default is ``"56"``.
+        overlap_c_boundary:
+            IMGT position of the last (C-terminal) residue in the overlap
+            region for PCR fusion homology. Default is ``"66"``.
         """
         _gen_start = _time.monotonic()
 
@@ -1440,7 +1444,8 @@ class MutationEngine:
                 progress_callback=progress_callback,
                 checkpoint_dir=checkpoint_dir,
                 split_position=split_position,
-                overlap_width=overlap_width,
+                overlap_n_boundary=overlap_n_boundary,
+                overlap_c_boundary=overlap_c_boundary,
             )
 
         # Keep all candidates (multiple AAs per position allowed).
@@ -2236,7 +2241,8 @@ class MutationEngine:
         progress_callback: Callable[[IterativeProgress], None] | None,
         checkpoint_dir: Path | None,
         split_position: str,
-        overlap_width: int,
+        overlap_n_boundary: str,
+        overlap_c_boundary: str,
     ) -> pd.DataFrame:
         """Orchestrate two-part assembly: split → generate parts → combine → score."""
         from vhh_library.two_part_assembly import combine_parts, split_mutations
@@ -2295,7 +2301,9 @@ class MutationEngine:
             part2_df = self._wildtype_part_df(vhh_sequence)
 
         # 4. Combine Part 1 × Part 2.
-        combined_df = combine_parts(part1_df, part2_df, vhh_sequence, split_position, overlap_width)
+        combined_df = combine_parts(
+            part1_df, part2_df, vhh_sequence, split_position, overlap_n_boundary, overlap_c_boundary
+        )
 
         if combined_df.empty:
             return self._empty_library_df()

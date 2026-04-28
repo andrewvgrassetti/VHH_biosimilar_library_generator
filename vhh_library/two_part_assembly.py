@@ -21,22 +21,23 @@ logger = logging.getLogger(__name__)
 
 
 def lock_overlap_positions(
-    split_position: str,
-    overlap_width: int,
+    n_boundary: str,
+    c_boundary: str,
     imgt_positions: list[str],
 ) -> set[str]:
-    """Return IMGT positions to freeze around the split point for PCR overlap homology.
+    """Return IMGT positions to freeze for PCR overlap homology.
 
-    The overlap region spans *overlap_width* residues centred on *split_position*:
-    ``overlap_width // 2`` positions on each side (including the split position
-    itself on the left side).
+    Locks all IMGT positions from *n_boundary* to *c_boundary* inclusive,
+    using the ordering given by *imgt_positions*.
 
     Parameters
     ----------
-    split_position:
-        IMGT position string key defining the split boundary.
-    overlap_width:
-        Total number of residues in the overlap region (default ~6).
+    n_boundary:
+        IMGT position string key of the first (N-terminal) residue in the
+        overlap region.
+    c_boundary:
+        IMGT position string key of the last (C-terminal) residue in the
+        overlap region.
     imgt_positions:
         Ordered list of all IMGT position string keys present in the sequence.
 
@@ -44,22 +45,32 @@ def lock_overlap_positions(
     -------
     set[str]
         IMGT position keys that must be frozen.
+
+    Raises
+    ------
+    ValueError
+        If either boundary is not found in *imgt_positions* or if the
+        N-boundary comes after the C-boundary.
     """
-    if split_position not in imgt_positions:
-        raise ValueError(f"Split position {split_position!r} not found in IMGT positions")
+    if n_boundary not in imgt_positions:
+        raise ValueError(f"N-terminal boundary {n_boundary!r} not found in IMGT positions")
+    if c_boundary not in imgt_positions:
+        raise ValueError(f"C-terminal boundary {c_boundary!r} not found in IMGT positions")
 
-    split_idx = imgt_positions.index(split_position)
-    half_left = overlap_width // 2
-    half_right = overlap_width - half_left
+    n_idx = imgt_positions.index(n_boundary)
+    c_idx = imgt_positions.index(c_boundary)
 
-    start = max(0, split_idx - half_left + 1)
-    end = min(len(imgt_positions), split_idx + half_right + 1)
+    if n_idx > c_idx:
+        raise ValueError(
+            f"N-terminal boundary {n_boundary!r} (index {n_idx}) comes after "
+            f"C-terminal boundary {c_boundary!r} (index {c_idx})"
+        )
 
-    locked = set(imgt_positions[start:end])
+    locked = set(imgt_positions[n_idx : c_idx + 1])
     logger.debug(
-        "Overlap lock: split=%s, width=%d, locked=%s",
-        split_position,
-        overlap_width,
+        "Overlap lock: n_boundary=%s, c_boundary=%s, locked=%s",
+        n_boundary,
+        c_boundary,
         sorted(locked, key=lambda k: imgt_positions.index(k)),
     )
     return locked
@@ -123,7 +134,8 @@ def combine_parts(
     part2_variants: pd.DataFrame,
     vhh_sequence: VHHSequence,
     split_position: str,
-    overlap_width: int = 6,
+    n_boundary: str,
+    c_boundary: str,
 ) -> pd.DataFrame:
     """Build the N×M combinatorial DataFrame from independently generated parts.
 
@@ -141,8 +153,10 @@ def combine_parts(
         The parent VHH sequence used for assembly reference.
     split_position:
         IMGT position string key for the split boundary.
-    overlap_width:
-        Number of residues in the overlap region.
+    n_boundary:
+        IMGT position of the first (N-terminal) residue in the overlap region.
+    c_boundary:
+        IMGT position of the last (C-terminal) residue in the overlap region.
 
     Returns
     -------
@@ -155,21 +169,15 @@ def combine_parts(
 
     if split_position not in imgt_positions:
         raise ValueError(f"Split position {split_position!r} not found in IMGT positions")
-
-    # Determine the sequence-index boundary for splitting.
-    # Part 1 residues: all positions up to and including the overlap right edge.
-    split_idx = imgt_positions.index(split_position)
-    half_right = overlap_width - overlap_width // 2
-    # The overlap right boundary in IMGT position list index space
-    overlap_right_idx = min(len(imgt_positions) - 1, split_idx + half_right)
+    if c_boundary not in imgt_positions:
+        raise ValueError(f"C-terminal boundary {c_boundary!r} not found in IMGT positions")
 
     # Map IMGT positions to 0-based sequence indices for slicing.
     pos_to_seq = vhh_sequence._pos_to_seq_idx
 
     # Find the raw sequence cut point: Part 1 covers seq[:cut], Part 2 covers seq[cut:]
-    # The cut point is right after the overlap region.
-    overlap_right_key = imgt_positions[overlap_right_idx]
-    cut_seq_idx = pos_to_seq[overlap_right_key] + 1
+    # The cut point is right after the overlap C-boundary.
+    cut_seq_idx = pos_to_seq[c_boundary] + 1
 
     rows: list[dict] = []
     counter = 1
