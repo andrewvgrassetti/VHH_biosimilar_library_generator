@@ -22,8 +22,6 @@ from scipy.stats import spearmanr  # noqa: E402
 
 from vhh_library.background import (
     STATUS_IDLE,
-    get_task_log,
-    get_task_progress,
     get_task_status,
     is_task_running,
     make_progress_callback,
@@ -1252,18 +1250,6 @@ def tab_mutations(stability_scorer):
     # Poll / display result for mutation ranking
     rank_result = render_task_status("rank_mutations", success_message="")
 
-    # Diagnostic panel visible while ranking is running
-    if is_task_running("rank_mutations"):
-        with st.expander("🔧 Diagnostic Info", expanded=True):
-            st.text(f"Task status: {get_task_status('rank_mutations')}")
-            frac, text = get_task_progress("rank_mutations")
-            st.text(f"Progress: {frac:.1%} — {text}")
-            st.text(f"Log entries: {len(get_task_log('rank_mutations'))}")
-            st.caption(
-                "If this section shows 0% with no log entries for more than 30 seconds, "
-                "check the terminal for [RANKING] and [TIMING] output."
-            )
-
     if rank_result is not None:
         st.session_state["ranked_mutations"] = rank_result
         auto_save_session()
@@ -1419,17 +1405,6 @@ def tab_mutations(stability_scorer):
         # Poll / display result for library generation
         library_result = render_task_status("library_gen", success_message="")
 
-        # Diagnostic panel visible while library generation is running
-        if is_task_running("library_gen"):
-            with st.expander("🔧 Diagnostic Info", expanded=True):
-                st.text(f"Task status: {get_task_status('library_gen')}")
-                frac, text = get_task_progress("library_gen")
-                st.text(f"Progress: {frac:.1%} — {text}")
-                st.text(f"Log entries: {len(get_task_log('library_gen'))}")
-                st.caption(
-                    "If this section shows 0% with no log entries for more than 30 seconds, "
-                    "check the terminal for [BG-THREAD] and [TIMING] output."
-                )
         if library_result is not None:
             st.session_state["library"] = library_result
             st.session_state["esm2_pll_scores"] = None
