@@ -1498,6 +1498,204 @@ def tab_mutations(stability_scorer):
 # Tab 3 – Library Results
 # ---------------------------------------------------------------------------
 
+_DIVERSITY_SUBSAMPLE_DEFAULT = 20_000
+_DIVERSITY_SUBSAMPLE_THRESHOLD = 50_000
+
+
+@st.cache_data(show_spinner=False)
+def _cached_mutation_frequency(
+    mutations_series_tuple: tuple[str, ...],
+    top_n: int | None,
+    combined_scores_tuple: tuple[float, ...] | None,
+) -> pd.DataFrame:
+    """Cache-friendly wrapper for mutation_frequency_matrix."""
+    from vhh_library.diversity import mutation_frequency_matrix
+
+    df_data: dict[str, list] = {"mutations": list(mutations_series_tuple)}
+    if combined_scores_tuple is not None:
+        df_data["combined_score"] = list(combined_scores_tuple)
+    df = pd.DataFrame(df_data)
+    return mutation_frequency_matrix(df, top_n=top_n)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_cooccurrence(
+    mutations_series_tuple: tuple[str, ...],
+    top_n: int | None,
+    combined_scores_tuple: tuple[float, ...] | None,
+) -> pd.DataFrame:
+    """Cache-friendly wrapper for pairwise_cooccurrence_matrix."""
+    from vhh_library.diversity import pairwise_cooccurrence_matrix
+
+    df_data: dict[str, list] = {"mutations": list(mutations_series_tuple)}
+    if combined_scores_tuple is not None:
+        df_data["combined_score"] = list(combined_scores_tuple)
+    df = pd.DataFrame(df_data)
+    return pairwise_cooccurrence_matrix(df, top_n=top_n)
+
+
+def _render_diversity_analysis(library: pd.DataFrame) -> None:
+    """Render the Library Diversity Analysis expander in Tab 3."""
+    with st.expander("🧬 Library Diversity Analysis", expanded=False):
+        import plotly.express as px  # lazy import
+
+        from vhh_library.diversity import compute_umap_embedding, encode_mutation_matrix
+
+        n_variants = len(library)
+
+        # --- Subsampling controls for UMAP ---
+        subsample_umap = False
+        subsample_n = _DIVERSITY_SUBSAMPLE_DEFAULT
+        if n_variants > _DIVERSITY_SUBSAMPLE_THRESHOLD:
+            st.info(
+                f"This library has {n_variants:,} variants. UMAP embedding may be slow. "
+                f"Consider subsampling for the scatter plot."
+            )
+            subsample_umap = st.checkbox(
+                "Subsample for UMAP visualization",
+                value=True,
+                key="diversity_subsample_umap",
+            )
+            if subsample_umap:
+                subsample_n = st.slider(
+                    "Subsample size",
+                    min_value=1_000,
+                    max_value=n_variants,
+                    value=min(_DIVERSITY_SUBSAMPLE_DEFAULT, n_variants),
+                    step=1_000,
+                    key="diversity_subsample_n",
+                )
+
+        # Determine which DataFrame to use for UMAP
+        if subsample_umap and n_variants > subsample_n:
+            umap_df = library.sample(n=subsample_n, random_state=42).reset_index(drop=True)
+        else:
+            umap_df = library
+
+        # --- Panel A: UMAP Scatter Plot ---
+        st.markdown("#### Panel A — UMAP Scatter Plot")
+        st.caption(
+            "Each point represents a variant projected into 2-D space using UMAP with Hamming "
+            "distance on the mutation encoding. Nearby points share similar mutation patterns."
+        )
+
+        # Detect float score columns for color selection
+        score_cols = [
+            c for c in umap_df.columns
+            if umap_df[c].dtype in ("float64", "float32") and umap_df[c].notna().any()
+        ]
+        default_col = "combined_score" if "combined_score" in score_cols else (score_cols[0] if score_cols else None)
+        color_col = st.selectbox(
+            "Color by",
+            options=score_cols,
+            index=score_cols.index(default_col) if default_col and default_col in score_cols else 0,
+            key="diversity_color_col",
+        ) if score_cols else None
+
+        # Build cache key for UMAP embedding using a stable hash
+        _umap_cache_key = (len(umap_df), subsample_umap, subsample_n if subsample_umap else 0,
+                           hash(tuple(umap_df["mutations"].fillna("").tolist())))
+        cached_embedding = st.session_state.get("umap_embedding")
+        cached_key = st.session_state.get("_umap_cache_key")
+
+        if cached_embedding is not None and cached_key == _umap_cache_key:
+            embedding = cached_embedding
+        else:
+            wt_seq = ""
+            vhh = st.session_state.get("vhh_seq")
+            if vhh is not None:
+                wt_seq = vhh.sequence if hasattr(vhh, "sequence") else ""
+            try:
+                mat, _positions = encode_mutation_matrix(umap_df, wt_sequence=wt_seq)
+                if mat.shape[1] == 0:
+                    st.warning("No mutations found — cannot compute UMAP embedding.")
+                    embedding = None
+                else:
+                    with st.spinner("Computing UMAP embedding…"):
+                        embedding = compute_umap_embedding(mat)
+                    st.session_state["umap_embedding"] = embedding
+                    st.session_state["_umap_cache_key"] = _umap_cache_key
+            except (ImportError, ValueError, RuntimeError):
+                logger.warning("UMAP embedding failed", exc_info=True)
+                st.warning("⚠️ Could not compute UMAP embedding.")
+                embedding = None
+
+        if embedding is not None:
+            umap_plot_df = umap_df.copy()
+            umap_plot_df["UMAP_1"] = embedding[:, 0]
+            umap_plot_df["UMAP_2"] = embedding[:, 1]
+
+            hover_cols = ["variant_id", "mutations", "n_mutations"]
+            if color_col and color_col not in hover_cols:
+                hover_cols.append(color_col)
+            hover_data = {c: True for c in hover_cols if c in umap_plot_df.columns}
+
+            fig_umap = px.scatter(
+                umap_plot_df,
+                x="UMAP_1",
+                y="UMAP_2",
+                color=color_col if color_col else None,
+                hover_data=hover_data,
+                color_continuous_scale="Viridis",
+                title="Library Sequence Diversity (UMAP)",
+            )
+            fig_umap.update_layout(width=800, height=600)
+            st.plotly_chart(fig_umap, use_container_width=True)
+
+        # --- Shared top-N toggle for Panels B and C ---
+        st.markdown("---")
+        use_top_n = st.checkbox("Show frequencies for top N variants only", key="diversity_top_n_toggle")
+        top_n_val: int | None = None
+        if use_top_n:
+            top_n_val = st.slider(
+                "Top N variants (by combined_score)",
+                min_value=10,
+                max_value=min(n_variants, 5000),
+                value=min(100, n_variants),
+                step=10,
+                key="diversity_top_n_slider",
+            )
+
+        # Prepare hashable tuples for caching
+        mutations_tuple = tuple(library["mutations"].fillna("").tolist())
+        combined_tuple = tuple(library["combined_score"].tolist()) if "combined_score" in library.columns else None
+
+        # --- Panel B: Mutation Frequency Heatmap ---
+        st.markdown("#### Panel B — Mutation Frequency Heatmap")
+        freq_df = _cached_mutation_frequency(mutations_tuple, top_n_val, combined_tuple)
+        if not freq_df.empty:
+            fig_freq = px.imshow(
+                freq_df.values,
+                x=freq_df.columns.tolist(),
+                y=freq_df.index.tolist(),
+                labels={"x": "Amino Acid", "y": "IMGT Position", "color": "Frequency"},
+                color_continuous_scale="Blues",
+                aspect="auto",
+                title="Mutation Frequency by Position",
+            )
+            fig_freq.update_layout(width=800, height=max(300, 20 * len(freq_df)))
+            st.plotly_chart(fig_freq, use_container_width=True)
+        else:
+            st.info("No mutation data available for frequency heatmap.")
+
+        # --- Panel C: Position Co-occurrence Matrix ---
+        st.markdown("#### Panel C — Position Co-occurrence Matrix")
+        cooc_df = _cached_cooccurrence(mutations_tuple, top_n_val, combined_tuple)
+        if not cooc_df.empty:
+            fig_cooc = px.imshow(
+                cooc_df.values,
+                x=cooc_df.columns.tolist(),
+                y=cooc_df.index.tolist(),
+                labels={"x": "IMGT Position", "y": "IMGT Position", "color": "Co-occurrence"},
+                color_continuous_scale="Blues",
+                aspect="auto",
+                title="Position Pair Co-occurrence",
+            )
+            fig_cooc.update_layout(width=700, height=700)
+            st.plotly_chart(fig_cooc, use_container_width=True)
+        else:
+            st.info("No mutation data available for co-occurrence matrix.")
+
 
 def tab_library(viz):
     st.header("📚 Library Results")
@@ -1807,6 +2005,9 @@ def tab_library(viz):
                             logger.warning("Failed to render ESM-2 correlation plot", exc_info=True)
         else:
             st.info("ESM-2 not available (torch / esm not found). Reinstall with: pip install -e .")
+
+    # -- Library Diversity Analysis --
+    _render_diversity_analysis(library)
 
     # -- Downloads --
     st.subheader("Download Library")

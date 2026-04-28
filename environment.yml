@@ -22,5 +22,7 @@ dependencies:
       - torch>=2.0
       - fair-esm>=2.0
       - abnativ
+      - umap-learn>=0.5
+      - plotly>=5.0
       # Optional: install nanomelt for thermal Tm prediction (stability_backend="nanomelt")
       # - nanomelt
