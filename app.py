@@ -1592,8 +1592,9 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
             key="diversity_color_col",
         ) if score_cols else None
 
-        # Build cache key for UMAP embedding
-        _umap_cache_key = (id(umap_df), len(umap_df), subsample_umap, subsample_n if subsample_umap else 0)
+        # Build cache key for UMAP embedding using a stable hash
+        _umap_cache_key = (len(umap_df), subsample_umap, subsample_n if subsample_umap else 0,
+                           hash(tuple(umap_df["mutations"].fillna("").tolist())))
         cached_embedding = st.session_state.get("umap_embedding")
         cached_key = st.session_state.get("_umap_cache_key")
 
@@ -1614,7 +1615,7 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                         embedding = compute_umap_embedding(mat)
                     st.session_state["umap_embedding"] = embedding
                     st.session_state["_umap_cache_key"] = _umap_cache_key
-            except Exception:
+            except (ImportError, ValueError, RuntimeError):
                 logger.warning("UMAP embedding failed", exc_info=True)
                 st.warning("⚠️ Could not compute UMAP embedding.")
                 embedding = None

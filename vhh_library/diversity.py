@@ -28,6 +28,18 @@ _AA_TO_INT: dict[str, int] = {aa: i + 1 for i, aa in enumerate(_AA_ORDER)}
 _MUT_RE = re.compile(r"^([A-Z])(\d+[A-Z]?)([A-Z])$")
 
 
+def _imgt_sort_key(pos: str) -> tuple[int, str]:
+    """Sort key for IMGT position strings (numeric part, then insertion code)."""
+    digits = []
+    suffix = ""
+    for ch in pos:
+        if ch.isdigit():
+            digits.append(ch)
+        else:
+            suffix += ch
+    return (int("".join(digits)) if digits else 0, suffix)
+
+
 def encode_mutation_matrix(
     library_df: pd.DataFrame,
     wt_sequence: str,
@@ -74,17 +86,7 @@ def encode_mutation_matrix(
         return np.zeros((len(library_df), 0), dtype=np.int8), []
 
     # Sort positions: numeric part first, then insertion code.
-    def _sort_key(pos: str) -> tuple[int, str]:
-        digits = []
-        suffix = ""
-        for ch in pos:
-            if ch.isdigit():
-                digits.append(ch)
-            else:
-                suffix += ch
-        return (int("".join(digits)) if digits else 0, suffix)
-
-    sorted_positions = sorted(all_positions, key=_sort_key)
+    sorted_positions = sorted(all_positions, key=_imgt_sort_key)
     pos_to_col: dict[str, int] = {p: i for i, p in enumerate(sorted_positions)}
 
     n_variants = len(library_df)
@@ -182,17 +184,7 @@ def mutation_frequency_matrix(
         return pd.DataFrame()
 
     # Sort positions consistently.
-    def _sort_key(pos: str) -> tuple[int, str]:
-        digits = []
-        suffix = ""
-        for ch in pos:
-            if ch.isdigit():
-                digits.append(ch)
-            else:
-                suffix += ch
-        return (int("".join(digits)) if digits else 0, suffix)
-
-    sorted_positions = sorted(counts.keys(), key=_sort_key)
+    sorted_positions = sorted(counts.keys(), key=_imgt_sort_key)
     aa_list = _AA_ORDER
 
     freq = np.zeros((len(sorted_positions), len(aa_list)), dtype=np.float64)
@@ -246,17 +238,7 @@ def pairwise_cooccurrence_matrix(
     if not all_positions:
         return pd.DataFrame()
 
-    def _sort_key(pos: str) -> tuple[int, str]:
-        digits = []
-        suffix = ""
-        for ch in pos:
-            if ch.isdigit():
-                digits.append(ch)
-            else:
-                suffix += ch
-        return (int("".join(digits)) if digits else 0, suffix)
-
-    sorted_positions = sorted(all_positions, key=_sort_key)
+    sorted_positions = sorted(all_positions, key=_imgt_sort_key)
     pos_to_idx = {p: i for i, p in enumerate(sorted_positions)}
     n = len(sorted_positions)
 
