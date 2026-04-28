@@ -659,6 +659,45 @@ def sidebar():
 
         st.divider()
 
+        # -- Yeast Display Assembly (Two-Part) --
+        with st.expander("🧬 Yeast Display Assembly", expanded=False):
+            st.checkbox(
+                "Enable Yeast Display (Two-Part Assembly)",
+                value=False,
+                key="enable_two_part_assembly",
+                help="Split construct into two halves at a center position for PCR overlap assembly.",
+            )
+            _two_part_on = st.session_state.get("enable_two_part_assembly", False)
+            st.text_input(
+                "Split position (IMGT)",
+                value="60",
+                key="two_part_split_position",
+                disabled=not _two_part_on,
+                help="IMGT-numbered position defining the Part 1 / Part 2 boundary.",
+            )
+            st.number_input(
+                "Overlap width (residues)",
+                min_value=2,
+                max_value=20,
+                value=6,
+                step=2,
+                key="two_part_overlap_width",
+                disabled=not _two_part_on,
+                help="Number of residues frozen around the split point for PCR fusion homology.",
+            )
+            st.number_input(
+                "Parts per half",
+                min_value=1,
+                max_value=10_000,
+                value=250,
+                step=50,
+                key="two_part_parts_per_half",
+                disabled=not _two_part_on,
+                help="Number of unique variants to generate per half (N Part 1 × M Part 2 = total).",
+            )
+
+        st.divider()
+
         # -- Codon Optimization --
         st.subheader("Codon Optimization")
 
@@ -1227,6 +1266,20 @@ def tab_mutations(stability_scorer):
         _vhh = vhh
         _off_limits = rank_off_limits if rank_off_limits else None
         _forbidden = rank_forbidden if rank_forbidden else None
+
+        # Add overlap lock for two-part assembly mode.
+        if st.session_state.get("enable_two_part_assembly", False):
+            from vhh_library.two_part_assembly import lock_overlap_positions
+
+            _split_pos = st.session_state.get("two_part_split_position", "60")
+            _olap_width = st.session_state.get("two_part_overlap_width", 6)
+            _imgt_keys = list(_vhh.imgt_numbered.keys())
+            if _split_pos in _imgt_keys:
+                _overlap_locked = lock_overlap_positions(_split_pos, _olap_width, _imgt_keys)
+                if _off_limits is None:
+                    _off_limits = _overlap_locked
+                else:
+                    _off_limits = set(_off_limits) | _overlap_locked
         _excluded = excluded_set
         _max_per_pos = st.session_state.get("max_candidates_per_position", 3)
 
@@ -1384,6 +1437,14 @@ def tab_mutations(stability_scorer):
             _rescore_top_n = st.session_state.get("rescore_top_n", 20)
             _top_mutations = ranked.head(top_n)
 
+            # Two-part assembly settings
+            _two_part_enabled = st.session_state.get("enable_two_part_assembly", False)
+            _assembly_mode = "two_part" if _two_part_enabled else None
+            _split_position = st.session_state.get("two_part_split_position", "60") if _two_part_enabled else None
+            _overlap_width = st.session_state.get("two_part_overlap_width", 6)
+            if _two_part_enabled:
+                _max_variants = st.session_state.get("two_part_parts_per_half", 250)
+
             def _library_gen_work():
                 return engine.generate_library(
                     vhh,
@@ -1397,6 +1458,9 @@ def tab_mutations(stability_scorer):
                     rescore_top_n=_rescore_top_n,
                     progress_callback=_progress_cb,
                     checkpoint_dir=_checkpoint_root,
+                    assembly_mode=_assembly_mode,
+                    split_position=_split_position,
+                    overlap_width=_overlap_width,
                 )
 
             print(f"[APP] Submitting library_gen task (strategy={strategy})", flush=True)
@@ -1418,7 +1482,16 @@ def tab_mutations(stability_scorer):
                     f"library** to expand the pool of candidate mutations and positions.",
                 )
             else:
-                st.success(f"Generated {len(library_result)} variants.")
+                # Two-part assembly summary
+                if "part1_id" in library_result.columns and "part2_id" in library_result.columns:
+                    n_p1 = library_result["part1_id"].nunique()
+                    n_p2 = library_result["part2_id"].nunique()
+                    st.success(
+                        f"Generated {n_p1} Part 1 variants × {n_p2} Part 2 variants "
+                        f"= {len(library_result):,} total combinations."
+                    )
+                else:
+                    st.success(f"Generated {len(library_result)} variants.")
 
 
 # ---------------------------------------------------------------------------

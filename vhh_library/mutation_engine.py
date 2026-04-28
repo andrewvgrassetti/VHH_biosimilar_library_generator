@@ -1334,6 +1334,9 @@ class MutationEngine:
         rescore_top_n: int = _RESCORE_TOP_N_DEFAULT,
         progress_callback: Optional[Callable[[IterativeProgress], None]] = None,
         checkpoint_dir: Optional[Path] = None,
+        assembly_mode: str | None = None,
+        split_position: str | None = None,
+        overlap_width: int = 6,
     ) -> pd.DataFrame:
         """Generate a scored variant library from *top_mutations*.
 
@@ -1344,6 +1347,15 @@ class MutationEngine:
             during iterative library generation.  If a prior checkpoint for
             the same run exists, generation resumes from it.  Defaults to
             ``None`` (no checkpointing) for backward compatibility.
+        assembly_mode:
+            ``None`` for legacy single-construct mode (default).
+            ``"two_part"`` for yeast surface display two-part assembly mode.
+        split_position:
+            IMGT position string key defining the boundary between Part 1
+            and Part 2.  Required when ``assembly_mode="two_part"``.
+        overlap_width:
+            Number of residues in the overlap region for PCR fusion homology.
+            Default is 6 (3 on each side of the split).
         """
         _gen_start = _time.monotonic()
 
@@ -1410,6 +1422,26 @@ class MutationEngine:
 
         if top_mutations.empty:
             return self._empty_library_df()
+
+        # --- Two-part assembly dispatch ---
+        if assembly_mode == "two_part":
+            if split_position is None:
+                raise ValueError("split_position is required when assembly_mode='two_part'")
+            return self._generate_two_part_library(
+                vhh_sequence=vhh_sequence,
+                top_mutations=top_mutations,
+                n_mutations=n_mutations,
+                max_variants=max_variants,
+                min_mutations=min_mutations,
+                strategy=strategy,
+                anchor_threshold=anchor_threshold,
+                max_rounds=max_rounds,
+                rescore_top_n=rescore_top_n,
+                progress_callback=progress_callback,
+                checkpoint_dir=checkpoint_dir,
+                split_position=split_position,
+                overlap_width=overlap_width,
+            )
 
         # Keep all candidates (multiple AAs per position allowed).
         mutation_list = list(top_mutations.itertuples(index=False))
@@ -2185,6 +2217,116 @@ class MutationEngine:
                 logger.warning("ESM-2 batch scoring failed; keeping heuristic scores", exc_info=True)
 
         return rows
+
+    # ------------------------------------------------------------------
+    # Private: two-part assembly (yeast surface display)
+    # ------------------------------------------------------------------
+
+    def _generate_two_part_library(
+        self,
+        vhh_sequence: VHHSequence,
+        top_mutations: pd.DataFrame,
+        n_mutations: int,
+        max_variants: int,
+        min_mutations: int,
+        strategy: str,
+        anchor_threshold: float,
+        max_rounds: int,
+        rescore_top_n: int,
+        progress_callback: Callable[[IterativeProgress], None] | None,
+        checkpoint_dir: Path | None,
+        split_position: str,
+        overlap_width: int,
+    ) -> pd.DataFrame:
+        """Orchestrate two-part assembly: split → generate parts → combine → score."""
+        from vhh_library.two_part_assembly import combine_parts, split_mutations
+
+        imgt_positions = list(vhh_sequence.imgt_numbered.keys())
+
+        # 1. Split mutations into Part 1 and Part 2.
+        part1_mutations, part2_mutations = split_mutations(top_mutations, split_position, imgt_positions)
+
+        if part1_mutations.empty and part2_mutations.empty:
+            return self._empty_library_df()
+
+        logger.info(
+            "Two-part assembly: Part 1 has %d mutations, Part 2 has %d mutations",
+            len(part1_mutations),
+            len(part2_mutations),
+        )
+
+        # 2. Generate Part 1 variants.
+        if not part1_mutations.empty:
+            part1_df = self.generate_library(
+                vhh_sequence=vhh_sequence,
+                top_mutations=part1_mutations,
+                n_mutations=n_mutations,
+                max_variants=max_variants,
+                min_mutations=min_mutations,
+                strategy=strategy,
+                anchor_threshold=anchor_threshold,
+                max_rounds=max_rounds,
+                rescore_top_n=rescore_top_n,
+                progress_callback=progress_callback,
+                checkpoint_dir=checkpoint_dir,
+                assembly_mode=None,
+            )
+        else:
+            # No mutations in Part 1 — use the wild-type as the sole Part 1 variant.
+            part1_df = pd.DataFrame(
+                [{"variant_id": "V000001", "mutations": "", "n_mutations": 0, "aa_sequence": vhh_sequence.sequence}]
+            )
+
+        # 3. Generate Part 2 variants.
+        if not part2_mutations.empty:
+            part2_df = self.generate_library(
+                vhh_sequence=vhh_sequence,
+                top_mutations=part2_mutations,
+                n_mutations=n_mutations,
+                max_variants=max_variants,
+                min_mutations=min_mutations,
+                strategy=strategy,
+                anchor_threshold=anchor_threshold,
+                max_rounds=max_rounds,
+                rescore_top_n=rescore_top_n,
+                progress_callback=progress_callback,
+                checkpoint_dir=checkpoint_dir,
+                assembly_mode=None,
+            )
+        else:
+            part2_df = pd.DataFrame(
+                [{"variant_id": "V000001", "mutations": "", "n_mutations": 0, "aa_sequence": vhh_sequence.sequence}]
+            )
+
+        # 4. Combine Part 1 × Part 2.
+        combined_df = combine_parts(part1_df, part2_df, vhh_sequence, split_position, overlap_width)
+
+        if combined_df.empty:
+            return self._empty_library_df()
+
+        # 5. Batch-score the combined variants.
+        rows = combined_df.to_dict("records")
+
+        # Batch stability scoring.
+        if self._stability_scorer.nanomelt_predictor is not None or self._stability_scorer.esm_scorer is not None:
+            rows = self._batch_fill_stability(rows, progress_callback=progress_callback)
+
+        # Batch nativeness scoring.
+        rows = self._batch_fill_nativeness(rows, progress_callback=progress_callback, vhh_sequence=vhh_sequence)
+
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
+
+        _n_p1 = len(part1_df)
+        _n_p2 = len(part2_df)
+        logger.info(
+            "Two-part assembly complete: %d Part 1 × %d Part 2 = %d scored combinations",
+            _n_p1,
+            _n_p2,
+            len(df),
+        )
+        return df
 
     # ------------------------------------------------------------------
     # Private: exhaustive enumeration
