@@ -210,6 +210,7 @@ def init_state():
         "construct": None,
         "constructs": [],
         "esm2_pll_scores": None,
+        "esm2_top_n": _ESM2_PLL_DEFAULT_TOP_N,
         "library_manager": LibraryManager(),
     }
     for k, v in defaults.items():
@@ -710,10 +711,6 @@ def sidebar():
                 disabled=not esm2_active,
                 help="auto = t6_8M on CPU, t33_650M on GPU",
             )
-            # ESM-2 top-N slider moved to Library Results tab (dynamic max
-            # based on actual library size).  Keep a sensible default here.
-            if "esm2_top_n" not in st.session_state:
-                st.session_state["esm2_top_n"] = _ESM2_PLL_DEFAULT_TOP_N
 
         st.divider()
 
@@ -1744,6 +1741,12 @@ def tab_library(viz):
                         try:
                             rho, pval = spearmanr(_cs, _pll)
                             st.markdown("#### Stability Ranking Correlation")
+                            st.caption(
+                                "Spearman rank correlation between the library's combined "
+                                "stability score and the ESM-2 pseudo-log-likelihood (PLL). "
+                                "A high ρ indicates the two ranking strategies agree on "
+                                "which variants are most stable."
+                            )
                             fig_corr, ax_corr = plt.subplots(figsize=(5, 4))
                             ax_corr.scatter(_cs, _pll, alpha=0.6, edgecolors="white", linewidth=0.5)
                             ax_corr.set_xlabel("Combined Score (library ranking)")
