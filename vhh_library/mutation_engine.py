@@ -2273,9 +2273,7 @@ class MutationEngine:
             )
         else:
             # No mutations in Part 1 — use the wild-type as the sole Part 1 variant.
-            part1_df = pd.DataFrame(
-                [{"variant_id": "V000001", "mutations": "", "n_mutations": 0, "aa_sequence": vhh_sequence.sequence}]
-            )
+            part1_df = self._wildtype_part_df(vhh_sequence)
 
         # 3. Generate Part 2 variants.
         if not part2_mutations.empty:
@@ -2294,9 +2292,7 @@ class MutationEngine:
                 assembly_mode=None,
             )
         else:
-            part2_df = pd.DataFrame(
-                [{"variant_id": "V000001", "mutations": "", "n_mutations": 0, "aa_sequence": vhh_sequence.sequence}]
-            )
+            part2_df = self._wildtype_part_df(vhh_sequence)
 
         # 4. Combine Part 1 × Part 2.
         combined_df = combine_parts(part1_df, part2_df, vhh_sequence, split_position, overlap_width)
@@ -3198,4 +3194,11 @@ class MutationEngine:
                 "aa_sequence",
                 "scoring_method",
             ]
+        )
+
+    @staticmethod
+    def _wildtype_part_df(vhh_sequence: VHHSequence) -> pd.DataFrame:
+        """Return a single-row DataFrame representing the wild-type sequence as a part variant."""
+        return pd.DataFrame(
+            [{"variant_id": "V000001", "mutations": "", "n_mutations": 0, "aa_sequence": vhh_sequence.sequence}]
         )
