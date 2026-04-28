@@ -2657,6 +2657,7 @@ class MutationEngine:
                     progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
+                new = self._batch_fill_stability(new, progress_callback=progress_callback)
                 new = _esm_score_rows(new)
             _add_rows(new)
             logger.info(
@@ -2699,6 +2700,7 @@ class MutationEngine:
                     progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
+                new = self._batch_fill_stability(new, progress_callback=progress_callback)
                 new = _esm_score_rows(new)
             _add_rows(new)
             logger.info(
@@ -2770,6 +2772,7 @@ class MutationEngine:
                         exclude_keys=seen_keys,
                     )
 
+            new = self._batch_fill_stability(new, progress_callback=progress_callback)
             new = _esm_score_rows(new)
             _add_rows(new)
             logger.info(
@@ -2795,6 +2798,7 @@ class MutationEngine:
                     progress_callback=progress_callback,
                     exclude_keys=seen_keys,
                 )
+                inject = self._batch_fill_stability(inject, progress_callback=progress_callback)
                 inject = _esm_score_rows(inject)
                 _add_rows(inject)
                 logger.debug(
@@ -2846,10 +2850,11 @@ class MutationEngine:
         global_round += 1
         logger.info("Phase 4: Final validation (%d total variants to batch-score)", len(all_rows))
 
-        # Batch-score stability and nativeness once for all accumulated
-        # variants.  Per-round sampling used _batch_score=False to avoid
-        # redundant AbNatiV / ML calls on every round — this single pass
-        # replaces all of those.
+        # Batch-score nativeness once for all accumulated variants.
+        # ML stability was already scored per-round in Phases 1–3 so that
+        # anchor identification and convergence checks use ML-based scores.
+        # We re-run _batch_fill_stability here to ensure any variants that
+        # missed ML scoring (e.g. due to timeouts) get a final pass.
         _report("scoring_stability", f"Phase 4 — Batch scoring stability ({len(all_rows):,} variants)…")
         with _timed_operation(f"Phase 4 batch stability scoring ({len(all_rows)} variants)"):
             all_rows = self._batch_fill_stability(all_rows, progress_callback=progress_callback)
