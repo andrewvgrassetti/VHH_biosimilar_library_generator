@@ -1826,6 +1826,57 @@ class TestIterativeBatchScoring:
         individual_calls = [c for c in call_log if c == "score"]
         assert len(individual_calls) == 0, f"Expected no per-variant score() calls, got {len(individual_calls)}"
 
+    def test_iterative_ml_stability_scored_per_round(self) -> None:
+        """ML stability (NanoMelt) should be scored at each phase, not only Phase 4.
+
+        Phases 1–3 must batch-score stability per round so that anchor
+        identification and convergence checks use ML-based scores.
+        """
+        from unittest.mock import MagicMock
+
+        batch_call_counts: list[int] = []
+
+        mock_nm = MagicMock()
+        mock_nm.score_sequence.return_value = {"composite_score": 0.6, "nanomelt_tm": 70.0}
+        mock_nm.score_batch.side_effect = lambda objs: (
+            batch_call_counts.append(len(objs)) or [{"nanomelt_tm": 70.0} for _ in objs]
+        )
+
+        scorer = StabilityScorer(nanomelt_predictor=mock_nm)
+        engine = MutationEngine(
+            stability_scorer=scorer,
+            nativeness_scorer=_MockNativenessScorer(),
+        )
+
+        seq = "QVQLVESGGGLVQAGGSLRL"
+        vhh = self._make_vhh_no_anarci(seq)
+        top_muts = self._make_top_muts(vhh, ["1", "2", "3", "4", "5", "6", "7", "8"])
+
+        batch_call_counts.clear()
+        lib = engine.generate_library(
+            vhh,
+            top_muts,
+            n_mutations=3,
+            strategy="iterative",
+            max_variants=30,
+            max_rounds=4,
+        )
+        assert isinstance(lib, pd.DataFrame)
+
+        # With 4 max_rounds we get multiple phases.  NanoMelt score_batch
+        # should be called more than once — at least once per sampling
+        # round in Phases 1-3, plus Phase 4 final pass.
+        assert len(batch_call_counts) > 1, (
+            f"Expected multiple NanoMelt score_batch calls (per-round + Phase 4), "
+            f"got {len(batch_call_counts)}"
+        )
+
+        # Total sequences scored via NanoMelt should be >= library size.
+        total_scored = sum(batch_call_counts)
+        assert total_scored >= len(lib), (
+            f"Total NanoMelt-scored sequences ({total_scored}) should be >= library size ({len(lib)})"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Progress callback firing during batch scoring phases
