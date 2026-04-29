@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from vhh_library.diversity import (
+    compute_position_frequencies,
     compute_umap_embedding,
     encode_mutation_matrix,
     mutation_frequency_matrix,
@@ -155,3 +156,123 @@ class TestComputeUmapEmbedding:
         embedding = compute_umap_embedding(matrix, n_neighbors=3)
         assert embedding.shape == (10, 2)
         assert embedding.dtype == np.float64
+
+    @pytest.mark.slow
+    def test_metric_parameter_euclidean(self):
+        """compute_umap_embedding should accept an explicit metric argument."""
+        rng = np.random.default_rng(1)
+        matrix = rng.random((10, 8)).astype(np.float32)
+        embedding = compute_umap_embedding(matrix, n_neighbors=3, metric="euclidean")
+        assert embedding.shape == (10, 2)
+
+    @pytest.mark.slow
+    def test_metric_parameter_hamming(self):
+        """compute_umap_embedding should still work with hamming metric."""
+        rng = np.random.default_rng(2)
+        matrix = rng.integers(0, 5, size=(10, 4), dtype=np.int8)
+        embedding = compute_umap_embedding(matrix, n_neighbors=3, metric="hamming")
+        assert embedding.shape == (10, 2)
+
+
+class TestComputePositionFrequencies:
+    """Tests for compute_position_frequencies."""
+
+    def _make_imgt(self, wt: str) -> dict[str, str]:
+        """Build a minimal imgt_numbered dict from a WT sequence string."""
+        return {str(i + 1): aa for i, aa in enumerate(wt)}
+
+    def test_basic_frequencies(self):
+        wt = "EVQLV"
+        imgt_numbered = self._make_imgt(wt)
+        lib = pd.DataFrame(
+            {
+                "aa_sequence": ["EVQLV", "EVQLV", "EVQLV", "AVQLV"],
+            }
+        )
+        freq_df = compute_position_frequencies(lib, wt, imgt_numbered)
+        assert not freq_df.empty
+        # Position 1 (index 0): E appears 3/4, A appears 1/4
+        assert freq_df.loc["1", "E"] == pytest.approx(3 / 4)
+        assert freq_df.loc["1", "A"] == pytest.approx(1 / 4)
+        # Positions 2–5 are identical to WT across all variants
+        assert freq_df.loc["2", "V"] == pytest.approx(1.0)
+
+    def test_wt_aa_column_present(self):
+        wt = "EVQLV"
+        imgt_numbered = self._make_imgt(wt)
+        lib = pd.DataFrame({"aa_sequence": ["EVQLV", "AVQLV"]})
+        freq_df = compute_position_frequencies(lib, wt, imgt_numbered)
+        assert "wt_aa" in freq_df.columns
+        assert freq_df.loc["1", "wt_aa"] == "E"
+        assert freq_df.loc["2", "wt_aa"] == "V"
+
+    def test_empty_imgt_numbered(self):
+        lib = pd.DataFrame({"aa_sequence": ["EVQLV"]})
+        freq_df = compute_position_frequencies(lib, "EVQLV", {})
+        assert freq_df.empty
+
+    def test_missing_aa_sequence_column(self):
+        imgt_numbered = {"1": "E", "2": "V"}
+        lib = pd.DataFrame({"mutations": ["A10S"]})
+        freq_df = compute_position_frequencies(lib, "EV", imgt_numbered)
+        assert freq_df.empty
+
+    def test_empty_library(self):
+        wt = "EV"
+        imgt_numbered = self._make_imgt(wt)
+        lib = pd.DataFrame({"aa_sequence": pd.Series([], dtype=str)})
+        freq_df = compute_position_frequencies(lib, wt, imgt_numbered)
+        assert freq_df.empty
+
+    def test_insertion_code_positions(self):
+        """Positions with insertion codes (e.g. 111A) should sort correctly."""
+        imgt_numbered = {"111": "A", "111A": "G", "112": "S"}
+        lib = pd.DataFrame({"aa_sequence": ["AGS", "AAS"]})
+        freq_df = compute_position_frequencies(lib, "AGS", imgt_numbered)
+        assert list(freq_df.index) == ["111", "111A", "112"]
+        assert freq_df.loc["111A", "G"] == pytest.approx(0.5)
+        assert freq_df.loc["111A", "A"] == pytest.approx(0.5)
+
+    def test_frequencies_sum_to_one_per_position(self):
+        wt = "EVQLV"
+        imgt_numbered = self._make_imgt(wt)
+        lib = pd.DataFrame({"aa_sequence": ["EVQLV", "AVQLV", "SVQLV", "TVQLV"]})
+        freq_df = compute_position_frequencies(lib, wt, imgt_numbered)
+        aa_cols = [c for c in freq_df.columns if c != "wt_aa"]
+        for pos in freq_df.index:
+            total = freq_df.loc[pos, aa_cols].sum()
+            assert total == pytest.approx(1.0), f"Frequencies at {pos} sum to {total}"
+
+
+class TestComputeEsm2Embeddings:
+    """Tests for compute_esm2_embeddings (skipped when torch/transformers unavailable)."""
+
+    @pytest.mark.slow
+    def test_output_shape(self):
+        try:
+            import torch  # noqa: F401
+            from transformers import AutoModel  # noqa: F401
+        except ImportError:
+            pytest.skip("torch or transformers not installed")
+
+        from vhh_library.diversity import compute_esm2_embeddings
+
+        seqs = ["EVQLV", "ACDEF"]
+        emb = compute_esm2_embeddings(seqs, batch_size=2)
+        assert emb.ndim == 2
+        assert emb.shape[0] == 2
+        assert emb.shape[1] > 0
+
+    @pytest.mark.slow
+    def test_different_sequences_differ(self):
+        try:
+            import torch  # noqa: F401
+            from transformers import AutoModel  # noqa: F401
+        except ImportError:
+            pytest.skip("torch or transformers not installed")
+
+        from vhh_library.diversity import compute_esm2_embeddings
+
+        seqs = ["AAAAAAAAAA", "WWWWWWWWWW"]
+        emb = compute_esm2_embeddings(seqs, batch_size=2)
+        assert not np.allclose(emb[0], emb[1])
