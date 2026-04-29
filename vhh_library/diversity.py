@@ -143,11 +143,23 @@ def compute_umap_embedding(
     return np.asarray(embedding, dtype=np.float64)
 
 
-def compute_esm2_embeddings(sequences: list[str], batch_size: int = 32) -> np.ndarray:
+# Module-level cache for the ESM-2 model and tokenizer to avoid re-loading on
+# every call.  Keys are (model_name, device_string) tuples.
+_ESM2_MODEL_CACHE: dict[tuple[str, str], tuple] = {}
+
+
+def compute_esm2_embeddings(
+    sequences: list[str],
+    batch_size: int = 32,
+    device: str = "auto",
+) -> np.ndarray:
     """Compute mean-pooled ESM-2 embeddings for a list of amino-acid sequences.
 
     Uses the lightweight ``facebook/esm2_t6_8M_UR50D`` model for fast
     inference.  Requires ``torch`` and ``transformers`` to be installed.
+
+    The model and tokenizer are loaded lazily on first call and cached for
+    subsequent calls.
 
     Parameters
     ----------
@@ -155,6 +167,10 @@ def compute_esm2_embeddings(sequences: list[str], batch_size: int = 32) -> np.nd
         Amino-acid sequences (one-letter codes, no spaces).
     batch_size : int
         Number of sequences per inference batch (default 32).
+    device : str
+        Compute device.  ``"auto"`` (default) selects CUDA → MPS → CPU
+        automatically.  Pass ``"cpu"``, ``"cuda"``, or ``"mps"`` to
+        override.
 
     Returns
     -------
@@ -165,10 +181,27 @@ def compute_esm2_embeddings(sequences: list[str], batch_size: int = 32) -> np.nd
     import torch  # lazy import
     from transformers import AutoModel, AutoTokenizer  # lazy import
 
+    # Resolve device string.
+    if device == "auto":
+        if torch.cuda.is_available():
+            resolved_device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            resolved_device = "mps"
+        else:
+            resolved_device = "cpu"
+    else:
+        resolved_device = device
+
     model_name = "facebook/esm2_t6_8M_UR50D"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
-    model.eval()
+    cache_key = (model_name, resolved_device)
+    if cache_key not in _ESM2_MODEL_CACHE:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModel.from_pretrained(model_name)
+        model.eval()
+        model.to(resolved_device)
+        _ESM2_MODEL_CACHE[cache_key] = (tokenizer, model)
+
+    tokenizer, model = _ESM2_MODEL_CACHE[cache_key]
 
     all_embeddings: list[np.ndarray] = []
     for i in range(0, len(sequences), batch_size):
@@ -176,12 +209,13 @@ def compute_esm2_embeddings(sequences: list[str], batch_size: int = 32) -> np.nd
         # ESM tokenizer expects spaces between residues
         spaced = [" ".join(s) for s in batch]
         tokens = tokenizer(spaced, return_tensors="pt", padding=True, truncation=True)
+        tokens = {k: v.to(resolved_device) for k, v in tokens.items()}
         with torch.no_grad():
             out = model(**tokens)
         # Mean-pool over residue positions weighted by the attention mask
         mask = tokens["attention_mask"].unsqueeze(-1).float()
         pooled = (out.last_hidden_state * mask).sum(1) / mask.sum(1)
-        all_embeddings.append(pooled.numpy())
+        all_embeddings.append(pooled.cpu().numpy())
 
     return np.concatenate(all_embeddings, axis=0)
 

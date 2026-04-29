@@ -8,6 +8,7 @@ import traceback
 import warnings
 
 import matplotlib
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -1627,19 +1628,20 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
             wt_seq = vhh.sequence if hasattr(vhh, "sequence") else ""
         if "aa_sequence" in umap_df.columns:
             try:
-                import numpy as _np  # already imported at module level, but guard here
                 sequences = umap_df["aa_sequence"].fillna("").tolist()
                 with st.spinner("Computing ESM-2 embeddings for UMAP…"):
                     esm2_emb = compute_esm2_embeddings(sequences)
-                if esm2_emb.shape[1] > 50:
+                # PCA pre-reduction: 50 dims balances speed and information retention
+                # before handing off to UMAP (standard practice for dense embeddings).
+                if esm2_emb.shape[1] > 50:  # noqa: PLR2004
                     from sklearn.decomposition import PCA
                     esm2_emb = PCA(n_components=50, random_state=42).fit_transform(
-                        esm2_emb.astype(_np.float32)
+                        esm2_emb.astype(np.float32)
                     )
                 _feature_matrix = esm2_emb
                 _umap_metric = "euclidean"
                 _esm2_available = True
-            except (ImportError, Exception):
+            except (ImportError, ValueError, RuntimeError, OSError):
                 logger.info("ESM-2 embeddings unavailable for UMAP, falling back to mutation matrix", exc_info=True)
 
         if not _esm2_available:
@@ -1717,8 +1719,6 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
         st.markdown("#### Panel B — Sequence Logo")
 
         if vhh is not None and "aa_sequence" in library.columns:
-            import numpy as _np2  # module-level import already present; alias avoids redeclaration warning
-
             imgt_numbered: dict[str, str] = vhh.imgt_numbered if hasattr(vhh, "imgt_numbered") else {}
 
             # Optional top-N filter for the logo
@@ -1769,10 +1769,11 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                 )
 
                 n_vis = len(visible_positions)
-                x = _np2.arange(n_vis)
+                x = np.arange(n_vis)
 
+                # Figure width: min 8 inches, scaled by ~0.5 in/position; height fixed at 4 in.
                 fig_logo, ax_logo = plt.subplots(figsize=(max(8, n_vis * 0.5), 4))
-                bottoms = _np2.zeros(n_vis)
+                bottoms = np.zeros(n_vis)
 
                 for aa in aa_cols:
                     heights = visible_freq[aa].values.astype(float)
