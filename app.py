@@ -1537,44 +1537,38 @@ _DIVERSITY_SUBSAMPLE_DEFAULT = 20_000
 _DIVERSITY_SUBSAMPLE_THRESHOLD = 50_000
 
 
-@st.cache_data(show_spinner=False)
-def _cached_mutation_frequency(
-    mutations_series_tuple: tuple[str, ...],
-    top_n: int | None,
-    combined_scores_tuple: tuple[float, ...] | None,
-) -> pd.DataFrame:
-    """Cache-friendly wrapper for mutation_frequency_matrix."""
-    from vhh_library.diversity import mutation_frequency_matrix
-
-    df_data: dict[str, list] = {"mutations": list(mutations_series_tuple)}
-    if combined_scores_tuple is not None:
-        df_data["combined_score"] = list(combined_scores_tuple)
-    df = pd.DataFrame(df_data)
-    return mutation_frequency_matrix(df, top_n=top_n)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_cooccurrence(
-    mutations_series_tuple: tuple[str, ...],
-    top_n: int | None,
-    combined_scores_tuple: tuple[float, ...] | None,
-) -> pd.DataFrame:
-    """Cache-friendly wrapper for pairwise_cooccurrence_matrix."""
-    from vhh_library.diversity import pairwise_cooccurrence_matrix
-
-    df_data: dict[str, list] = {"mutations": list(mutations_series_tuple)}
-    if combined_scores_tuple is not None:
-        df_data["combined_score"] = list(combined_scores_tuple)
-    df = pd.DataFrame(df_data)
-    return pairwise_cooccurrence_matrix(df, top_n=top_n)
-
-
 def _render_diversity_analysis(library: pd.DataFrame) -> None:
     """Render the Library Diversity Analysis expander in Tab 3."""
+    # Clustal-like amino-acid color scheme (by physicochemical property).
+    _AA_COLORS: dict[str, str] = {
+        # Hydrophobic
+        "A": "#4169E1", "V": "#4169E1", "I": "#4169E1", "L": "#4169E1",
+        "M": "#4169E1", "F": "#4169E1", "W": "#4169E1",
+        # Cysteine (special hydrophobic)
+        "C": "#20B2AA",
+        # Positively charged
+        "K": "#DC143C", "R": "#DC143C",
+        # Negatively charged
+        "D": "#C71585", "E": "#C71585",
+        # Polar / uncharged
+        "S": "#2E8B57", "T": "#2E8B57", "N": "#2E8B57", "Q": "#2E8B57",
+        # Aromatic / polar
+        "H": "#20B2AA", "Y": "#2E8B57",
+        # Special backbone
+        "G": "#FF8C00",
+        "P": "#DAA520",
+    }
+    _DEFAULT_AA_COLOR = "#808080"
+
     with st.expander("🧬 Library Diversity Analysis", expanded=False):
         import plotly.express as px  # lazy import
 
-        from vhh_library.diversity import compute_umap_embedding, encode_mutation_matrix
+        from vhh_library.diversity import (
+            compute_esm2_embeddings,
+            compute_position_frequencies,
+            compute_umap_embedding,
+            encode_mutation_matrix,
+        )
 
         n_variants = len(library)
 
@@ -1609,10 +1603,6 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
 
         # --- Panel A: UMAP Scatter Plot ---
         st.markdown("#### Panel A — UMAP Scatter Plot")
-        st.caption(
-            "Each point represents a variant projected into 2-D space using UMAP with Hamming "
-            "distance on the mutation encoding. Nearby points share similar mutation patterns."
-        )
 
         # Detect float score columns for color selection
         score_cols = [
@@ -1627,33 +1617,78 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
             key="diversity_color_col",
         ) if score_cols else None
 
-        # Build cache key for UMAP embedding using a stable hash
-        _umap_cache_key = (len(umap_df), subsample_umap, subsample_n if subsample_umap else 0,
-                           hash(tuple(umap_df["mutations"].fillna("").tolist())))
+        # Try ESM-2 embeddings first; fall back to mutation matrix + Hamming.
+        _esm2_available = False
+        _feature_matrix = None
+        _umap_metric = "hamming"
+        wt_seq = ""
+        vhh = st.session_state.get("vhh_seq")
+        if vhh is not None:
+            wt_seq = vhh.sequence if hasattr(vhh, "sequence") else ""
+        if "aa_sequence" in umap_df.columns:
+            try:
+                import numpy as _np  # already imported at module level, but guard here
+                sequences = umap_df["aa_sequence"].fillna("").tolist()
+                with st.spinner("Computing ESM-2 embeddings for UMAP…"):
+                    esm2_emb = compute_esm2_embeddings(sequences)
+                if esm2_emb.shape[1] > 50:
+                    from sklearn.decomposition import PCA
+                    esm2_emb = PCA(n_components=50, random_state=42).fit_transform(
+                        esm2_emb.astype(_np.float32)
+                    )
+                _feature_matrix = esm2_emb
+                _umap_metric = "euclidean"
+                _esm2_available = True
+            except (ImportError, Exception):
+                logger.info("ESM-2 embeddings unavailable for UMAP, falling back to mutation matrix", exc_info=True)
+
+        if not _esm2_available:
+            try:
+                mat, _positions = encode_mutation_matrix(umap_df, wt_sequence=wt_seq)
+                if mat.shape[1] > 0:
+                    _feature_matrix = mat
+                    _umap_metric = "hamming"
+            except (ValueError, RuntimeError):
+                logger.warning("Mutation matrix encoding failed", exc_info=True)
+
+        # Build cache key that encodes embedding type and data fingerprint.
+        _umap_cache_key = (
+            len(umap_df),
+            subsample_umap,
+            subsample_n if subsample_umap else 0,
+            _umap_metric,
+            hash(tuple(umap_df["mutations"].fillna("").tolist())),
+        )
         cached_embedding = st.session_state.get("umap_embedding")
         cached_key = st.session_state.get("_umap_cache_key")
 
+        embedding = None
         if cached_embedding is not None and cached_key == _umap_cache_key:
             embedding = cached_embedding
-        else:
-            wt_seq = ""
-            vhh = st.session_state.get("vhh_seq")
-            if vhh is not None:
-                wt_seq = vhh.sequence if hasattr(vhh, "sequence") else ""
+        elif _feature_matrix is not None:
             try:
-                mat, _positions = encode_mutation_matrix(umap_df, wt_sequence=wt_seq)
-                if mat.shape[1] == 0:
-                    st.warning("No mutations found — cannot compute UMAP embedding.")
-                    embedding = None
-                else:
-                    with st.spinner("Computing UMAP embedding…"):
-                        embedding = compute_umap_embedding(mat)
-                    st.session_state["umap_embedding"] = embedding
-                    st.session_state["_umap_cache_key"] = _umap_cache_key
+                with st.spinner("Computing UMAP embedding…"):
+                    embedding = compute_umap_embedding(_feature_matrix, metric=_umap_metric)
+                st.session_state["umap_embedding"] = embedding
+                st.session_state["_umap_cache_key"] = _umap_cache_key
             except (ImportError, ValueError, RuntimeError):
                 logger.warning("UMAP embedding failed", exc_info=True)
                 st.warning("⚠️ Could not compute UMAP embedding.")
-                embedding = None
+        else:
+            st.warning("No mutations found — cannot compute UMAP embedding.")
+
+        if _esm2_available:
+            st.caption(
+                "Each point represents a variant projected into 2-D space using UMAP on "
+                "ESM-2 mean-pooled embeddings (euclidean distance). Nearby points share "
+                "similar biochemical properties."
+            )
+        else:
+            st.caption(
+                "Each point represents a variant projected into 2-D space using UMAP with "
+                "Hamming distance on the mutation encoding. Nearby points share similar "
+                "mutation patterns."
+            )
 
         if embedding is not None:
             umap_plot_df = umap_df.copy()
@@ -1677,59 +1712,116 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
             fig_umap.update_layout(width=800, height=600)
             st.plotly_chart(fig_umap, use_container_width=True)
 
-        # --- Shared top-N toggle for Panels B and C ---
+        # --- Panel B: Sequence Logo ---
         st.markdown("---")
-        use_top_n = st.checkbox("Show frequencies for top N variants only", key="diversity_top_n_toggle")
-        top_n_val: int | None = None
-        if use_top_n:
-            top_n_val = st.slider(
-                "Top N variants (by combined_score)",
-                min_value=10,
-                max_value=min(n_variants, 5000),
-                value=min(100, n_variants),
-                step=10,
-                key="diversity_top_n_slider",
-            )
+        st.markdown("#### Panel B — Sequence Logo")
 
-        # Prepare hashable tuples for caching
-        mutations_tuple = tuple(library["mutations"].fillna("").tolist())
-        combined_tuple = tuple(library["combined_score"].tolist()) if "combined_score" in library.columns else None
+        if vhh is not None and "aa_sequence" in library.columns:
+            import numpy as _np2  # module-level import already present; alias avoids redeclaration warning
 
-        # --- Panel B: Mutation Frequency Heatmap ---
-        st.markdown("#### Panel B — Mutation Frequency Heatmap")
-        freq_df = _cached_mutation_frequency(mutations_tuple, top_n_val, combined_tuple)
-        if not freq_df.empty:
-            fig_freq = px.imshow(
-                freq_df.values,
-                x=freq_df.columns.tolist(),
-                y=freq_df.index.tolist(),
-                labels={"x": "Amino Acid", "y": "IMGT Position", "color": "Frequency"},
-                color_continuous_scale="Blues",
-                aspect="auto",
-                title="Mutation Frequency by Position",
+            imgt_numbered: dict[str, str] = vhh.imgt_numbered if hasattr(vhh, "imgt_numbered") else {}
+
+            # Optional top-N filter for the logo
+            logo_top_n: int | None = None
+            use_top_n_logo = st.checkbox(
+                "Filter logo to top N variants by combined_score",
+                key="logo_top_n_toggle",
             )
-            fig_freq.update_layout(width=800, height=max(300, 20 * len(freq_df)))
-            st.plotly_chart(fig_freq, use_container_width=True)
+            if use_top_n_logo:
+                logo_top_n = st.slider(
+                    "Top N variants (logo)",
+                    min_value=10,
+                    max_value=min(n_variants, 5000),
+                    value=min(100, n_variants),
+                    step=10,
+                    key="logo_top_n_slider",
+                )
+
+            logo_df = library
+            if logo_top_n is not None and "combined_score" in logo_df.columns:
+                logo_df = logo_df.nlargest(logo_top_n, "combined_score")
+
+            freq_df = compute_position_frequencies(logo_df, wt_seq, imgt_numbered)
+
+            if not freq_df.empty:
+                sorted_positions = list(freq_df.index)
+                n_positions = len(sorted_positions)
+                aa_cols = [c for c in freq_df.columns if c != "wt_aa"]
+
+                # Position range slider — default window of first 30 positions
+                pos_max = max(0, n_positions - 1)
+                pos_default_end = min(29, pos_max)
+                pos_start, pos_end = st.slider(
+                    "IMGT position range",
+                    min_value=0,
+                    max_value=pos_max,
+                    value=(0, pos_default_end),
+                    step=1,
+                    key="logo_pos_range",
+                )
+
+                visible_positions = sorted_positions[pos_start : pos_end + 1]
+                visible_freq = freq_df.loc[visible_positions, aa_cols]
+                wt_aas = (
+                    freq_df.loc[visible_positions, "wt_aa"].tolist()
+                    if "wt_aa" in freq_df.columns
+                    else [""] * len(visible_positions)
+                )
+
+                n_vis = len(visible_positions)
+                x = _np2.arange(n_vis)
+
+                fig_logo, ax_logo = plt.subplots(figsize=(max(8, n_vis * 0.5), 4))
+                bottoms = _np2.zeros(n_vis)
+
+                for aa in aa_cols:
+                    heights = visible_freq[aa].values.astype(float)
+                    if heights.sum() == 0:
+                        continue
+                    bar_color = _AA_COLORS.get(aa, _DEFAULT_AA_COLOR)
+                    ax_logo.bar(x, heights, bottom=bottoms, color=bar_color, width=0.85)
+                    bottoms += heights
+
+                # Mark the wild-type residue at each position with ★
+                for xi, (pos, wt_aa) in enumerate(zip(visible_positions, wt_aas)):
+                    if wt_aa and wt_aa in aa_cols:
+                        wt_freq = float(freq_df.loc[pos, wt_aa])
+                        if wt_freq > 0:
+                            preceding_aas = aa_cols[: aa_cols.index(wt_aa)]
+                            wt_bottom = float(freq_df.loc[pos, preceding_aas].sum()) if preceding_aas else 0.0
+                            ax_logo.text(
+                                xi,
+                                wt_bottom + wt_freq / 2,
+                                "★",
+                                ha="center",
+                                va="center",
+                                fontsize=7,
+                                color="black",
+                                fontweight="bold",
+                            )
+
+                ax_logo.set_xticks(x)
+                ax_logo.set_xticklabels(visible_positions, rotation=90, fontsize=8)
+                ax_logo.set_ylim(0, 1)
+                ax_logo.set_ylabel("Frequency")
+                ax_logo.set_xlabel("IMGT Position")
+                ax_logo.set_title("Amino Acid Frequency by IMGT Position")
+                plt.tight_layout()
+                st.pyplot(fig_logo)
+                plt.close(fig_logo)
+
+                st.caption(
+                    "Stacked bars show amino acid frequencies at each IMGT position. "
+                    "WT residue indicated by ★."
+                )
+            else:
+                st.info(
+                    "Sequence logo requires IMGT-numbered variant sequences. "
+                    "Make sure a VHH sequence is loaded and the library was generated with "
+                    "IMGT numbering enabled."
+                )
         else:
-            st.info("No mutation data available for frequency heatmap.")
-
-        # --- Panel C: Position Co-occurrence Matrix ---
-        st.markdown("#### Panel C — Position Co-occurrence Matrix")
-        cooc_df = _cached_cooccurrence(mutations_tuple, top_n_val, combined_tuple)
-        if not cooc_df.empty:
-            fig_cooc = px.imshow(
-                cooc_df.values,
-                x=cooc_df.columns.tolist(),
-                y=cooc_df.index.tolist(),
-                labels={"x": "IMGT Position", "y": "IMGT Position", "color": "Co-occurrence"},
-                color_continuous_scale="Blues",
-                aspect="auto",
-                title="Position Pair Co-occurrence",
-            )
-            fig_cooc.update_layout(width=700, height=700)
-            st.plotly_chart(fig_cooc, use_container_width=True)
-        else:
-            st.info("No mutation data available for co-occurrence matrix.")
+            st.info("Load a VHH sequence and generate a library to see the sequence logo.")
 
 
 def tab_library(viz):
