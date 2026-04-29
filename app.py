@@ -43,6 +43,7 @@ from vhh_library.calibration import (
     run_calibration as _run_calibration,
 )
 from vhh_library.codon_optimizer import CodonOptimizer
+from vhh_library.components.overlap_selector import overlap_selector
 from vhh_library.components.sequence_selector import imgt_key_int_part, sequence_selector
 from vhh_library.developability import SurfaceHydrophobicityScorer
 from vhh_library.library_manager import LibraryManager
@@ -669,27 +670,100 @@ def sidebar():
                 help="Split construct into two halves at a center position for PCR overlap assembly.",
             )
             _two_part_on = st.session_state.get("enable_two_part_assembly", False)
-            st.text_input(
-                "Split position (IMGT)",
-                value="60",
-                key="two_part_split_position",
-                disabled=not _two_part_on,
-                help="IMGT-numbered position defining the Part 1 / Part 2 boundary.",
-            )
-            st.text_input(
-                "Overlap N-terminal boundary (IMGT)",
-                value="56",
-                key="two_part_overlap_n_boundary",
-                disabled=not _two_part_on,
-                help="IMGT position of the first (N-terminal) residue in the overlap region.",
-            )
-            st.text_input(
-                "Overlap C-terminal boundary (IMGT)",
-                value="66",
-                key="two_part_overlap_c_boundary",
-                disabled=not _two_part_on,
-                help="IMGT position of the last (C-terminal) residue in the overlap region.",
-            )
+
+            # Build the list of valid IMGT positions from the analysed sequence.
+            _vhh_for_assembly = st.session_state.get("vhh_seq")
+            if _vhh_for_assembly is not None and _vhh_for_assembly.imgt_numbered:
+                _imgt_keys_assembly = list(_vhh_for_assembly.imgt_numbered.keys())
+            else:
+                _imgt_keys_assembly = []
+
+            if _imgt_keys_assembly:
+                # Pick sensible defaults: midpoint for split, ±5 for overlap.
+                _mid_idx = len(_imgt_keys_assembly) // 2
+                _default_split = _imgt_keys_assembly[_mid_idx]
+                _default_n = _imgt_keys_assembly[max(0, _mid_idx - 5)]
+                _default_c = _imgt_keys_assembly[min(len(_imgt_keys_assembly) - 1, _mid_idx + 5)]
+
+                def _imgt_label(k: str) -> str:
+                    aa = _vhh_for_assembly.imgt_numbered.get(k, "?")  # type: ignore[union-attr]
+                    return f"{k} ({aa})"
+
+                _display_options = [_imgt_label(k) for k in _imgt_keys_assembly]
+
+                def _safe_index(key: str) -> int:
+                    """Return the index of *key* in the IMGT keys list, or a sensible default."""
+                    try:
+                        return _imgt_keys_assembly.index(key)
+                    except ValueError:
+                        return _mid_idx
+
+                # --- Split position selectbox ---
+                _prev_split = st.session_state.get("two_part_split_position", _default_split)
+                _split_idx = _safe_index(_prev_split)
+                st.selectbox(
+                    "Split position (IMGT)",
+                    options=_display_options,
+                    index=_split_idx,
+                    key="two_part_split_display",
+                    disabled=not _two_part_on,
+                    help="IMGT-numbered position defining the Part 1 / Part 2 boundary.",
+                )
+                # Sync display value back to the canonical session-state key.
+                _split_display_val = st.session_state.get("two_part_split_display", "")
+                _split_pos = _split_display_val.split(" ")[0] if _split_display_val else _default_split
+                st.session_state["two_part_split_position"] = _split_pos
+
+                # --- N-terminal boundary selectbox ---
+                _prev_n = st.session_state.get("two_part_overlap_n_boundary", _default_n)
+                _n_idx = _safe_index(_prev_n)
+                st.selectbox(
+                    "Overlap N-terminal boundary (IMGT)",
+                    options=_display_options,
+                    index=_n_idx,
+                    key="two_part_n_boundary_display",
+                    disabled=not _two_part_on,
+                    help="IMGT position of the first (N-terminal) residue in the overlap region.",
+                )
+                _n_display_val = st.session_state.get("two_part_n_boundary_display", "")
+                _n_bnd = _n_display_val.split(" ")[0] if _n_display_val else _default_n
+                st.session_state["two_part_overlap_n_boundary"] = _n_bnd
+
+                # --- C-terminal boundary selectbox ---
+                _prev_c = st.session_state.get("two_part_overlap_c_boundary", _default_c)
+                _c_idx = _safe_index(_prev_c)
+                st.selectbox(
+                    "Overlap C-terminal boundary (IMGT)",
+                    options=_display_options,
+                    index=_c_idx,
+                    key="two_part_c_boundary_display",
+                    disabled=not _two_part_on,
+                    help="IMGT position of the last (C-terminal) residue in the overlap region.",
+                )
+                _c_display_val = st.session_state.get("two_part_c_boundary_display", "")
+                _c_bnd = _c_display_val.split(" ")[0] if _c_display_val else _default_c
+                st.session_state["two_part_overlap_c_boundary"] = _c_bnd
+            else:
+                # No sequence analysed yet — show disabled placeholders.
+                st.text_input(
+                    "Split position (IMGT)",
+                    value="(analyse a sequence first)",
+                    key="two_part_split_placeholder",
+                    disabled=True,
+                )
+                st.text_input(
+                    "Overlap N-terminal boundary (IMGT)",
+                    value="(analyse a sequence first)",
+                    key="two_part_n_boundary_placeholder",
+                    disabled=True,
+                )
+                st.text_input(
+                    "Overlap C-terminal boundary (IMGT)",
+                    value="(analyse a sequence first)",
+                    key="two_part_c_boundary_placeholder",
+                    disabled=True,
+                )
+
             st.number_input(
                 "Parts per half",
                 min_value=1,
@@ -701,34 +775,54 @@ def sidebar():
                 help="Number of unique variants to generate per half (N Part 1 × M Part 2 = total).",
             )
 
-            # Display locked overlap residues when two-part is active and a
+            # Visual overlap selector — rendered when two-part is active and a
             # sequence has been analysed.
-            if _two_part_on and st.session_state.get("vhh_seq") is not None:
-                _vhh_preview = st.session_state["vhh_seq"]
-                _imgt_keys_preview = list(_vhh_preview.imgt_numbered.keys())
-                _n_bnd = st.session_state.get("two_part_overlap_n_boundary", "56")
-                _c_bnd = st.session_state.get("two_part_overlap_c_boundary", "66")
-                if _n_bnd in _imgt_keys_preview and _c_bnd in _imgt_keys_preview:
-                    _n_idx = _imgt_keys_preview.index(_n_bnd)
-                    _c_idx = _imgt_keys_preview.index(_c_bnd)
-                    if _n_idx <= _c_idx:
-                        _locked_keys = _imgt_keys_preview[_n_idx : _c_idx + 1]
-                        _locked_display = " ".join(
-                            f"{k}({_vhh_preview.imgt_numbered[k]})" for k in _locked_keys
-                        )
-                        st.info(f"Overlap region: {_locked_display}")
+            if _two_part_on and _imgt_keys_assembly:
+                st.caption(
+                    "**Visual overlap selector** — click a residue to set the "
+                    "N-terminal boundary, then click another for the C-terminal boundary."
+                )
+                _curr_n = st.session_state.get("two_part_overlap_n_boundary")
+                _curr_c = st.session_state.get("two_part_overlap_c_boundary")
+                _overlap_result = overlap_selector(
+                    imgt_numbered=_vhh_for_assembly.imgt_numbered,
+                    n_boundary=_curr_n,
+                    c_boundary=_curr_c,
+                    key="overlap_selector",
+                )
+                # Sync visual selector result back to session state.
+                if _overlap_result is not None:
+                    _new_n = _overlap_result.get("n_boundary")
+                    _new_c = _overlap_result.get("c_boundary")
+                    if _new_n != _curr_n or _new_c != _curr_c:
+                        if _new_n is not None:
+                            st.session_state["two_part_overlap_n_boundary"] = _new_n
+                        if _new_c is not None:
+                            st.session_state["two_part_overlap_c_boundary"] = _new_c
+                            # Auto-derive split position as midpoint of overlap.
+                            _n_i = _imgt_keys_assembly.index(_new_n)
+                            _c_i = _imgt_keys_assembly.index(_new_c)
+                            _mid_i = (_n_i + _c_i) // 2
+                            st.session_state["two_part_split_position"] = _imgt_keys_assembly[_mid_i]
+                        st.rerun()
+
+                # Display locked residue summary.
+                _n_bnd_disp = st.session_state.get("two_part_overlap_n_boundary")
+                _c_bnd_disp = st.session_state.get("two_part_overlap_c_boundary")
+                if (
+                    _n_bnd_disp
+                    and _c_bnd_disp
+                    and _n_bnd_disp in _imgt_keys_assembly
+                    and _c_bnd_disp in _imgt_keys_assembly
+                ):
+                    _ni = _imgt_keys_assembly.index(_n_bnd_disp)
+                    _ci = _imgt_keys_assembly.index(_c_bnd_disp)
+                    if _ni <= _ci:
+                        _locked_keys = _imgt_keys_assembly[_ni : _ci + 1]
+                        _locked_display = " ".join(f"{k}({_vhh_for_assembly.imgt_numbered[k]})" for k in _locked_keys)
+                        st.info(f"Overlap region ({len(_locked_keys)} residues locked): {_locked_display}")
                     else:
                         st.warning("Invalid overlap boundaries: N-terminal boundary comes after C-terminal boundary.")
-                else:
-                    _missing = []
-                    if _n_bnd not in _imgt_keys_preview:
-                        _missing.append(f"N-terminal boundary '{_n_bnd}'")
-                    if _c_bnd not in _imgt_keys_preview:
-                        _missing.append(f"C-terminal boundary '{_c_bnd}'")
-                    st.warning(
-                        f"Invalid boundary position(s): {', '.join(_missing)}"
-                        " not found in sequence IMGT numbering."
-                    )
 
         st.divider()
 
@@ -1305,10 +1399,10 @@ def tab_mutations(stability_scorer):
         if st.session_state.get("enable_two_part_assembly", False):
             from vhh_library.two_part_assembly import lock_overlap_positions
 
-            _n_bnd_lock = st.session_state.get("two_part_overlap_n_boundary", "56")
-            _c_bnd_lock = st.session_state.get("two_part_overlap_c_boundary", "66")
+            _n_bnd_lock = st.session_state.get("two_part_overlap_n_boundary")
+            _c_bnd_lock = st.session_state.get("two_part_overlap_c_boundary")
             _imgt_keys = list(_vhh.imgt_numbered.keys())
-            if _n_bnd_lock in _imgt_keys and _c_bnd_lock in _imgt_keys:
+            if _n_bnd_lock and _c_bnd_lock and _n_bnd_lock in _imgt_keys and _c_bnd_lock in _imgt_keys:
                 _overlap_locked = lock_overlap_positions(_n_bnd_lock, _c_bnd_lock, _imgt_keys)
                 if _off_limits is None:
                     _off_limits = _overlap_locked
@@ -1474,10 +1568,26 @@ def tab_mutations(stability_scorer):
             # Two-part assembly settings
             _two_part_enabled = st.session_state.get("enable_two_part_assembly", False)
             _assembly_mode = "two_part" if _two_part_enabled else None
-            _split_position = st.session_state.get("two_part_split_position", "60") if _two_part_enabled else None
-            _overlap_n_boundary = st.session_state.get("two_part_overlap_n_boundary", "56")
-            _overlap_c_boundary = st.session_state.get("two_part_overlap_c_boundary", "66")
+            _split_position = st.session_state.get("two_part_split_position") if _two_part_enabled else None
+            _overlap_n_boundary = st.session_state.get("two_part_overlap_n_boundary")
+            _overlap_c_boundary = st.session_state.get("two_part_overlap_c_boundary")
             if _two_part_enabled:
+                # Validate that all positions exist in the sequence before proceeding.
+                _assembly_imgt_keys = list(vhh.imgt_numbered.keys())
+                _assembly_valid = True
+                for _pos_name, _pos_val in [
+                    ("split position", _split_position),
+                    ("N-terminal boundary", _overlap_n_boundary),
+                    ("C-terminal boundary", _overlap_c_boundary),
+                ]:
+                    if not _pos_val or _pos_val not in _assembly_imgt_keys:
+                        st.error(
+                            f"Two-part assembly: {_pos_name} '{_pos_val}' is not a valid IMGT position. "
+                            "Please select valid positions in the Yeast Display Assembly settings."
+                        )
+                        _assembly_valid = False
+                if not _assembly_valid:
+                    st.stop()
                 _max_variants = st.session_state.get("two_part_parts_per_half", 250)
 
             def _library_gen_work():
@@ -1540,10 +1650,10 @@ _DIVERSITY_SUBSAMPLE_THRESHOLD = 50_000
 # 50 dims balances information retention and UMAP speed for typical library sizes.
 _ESM2_PCA_DIM = 50
 # Sequence logo figure sizing constants.
-_LOGO_MIN_WIDTH_INCHES = 8       # minimum figure width
+_LOGO_MIN_WIDTH_INCHES = 8  # minimum figure width
 _LOGO_WIDTH_PER_POS_INCHES = 0.5  # figure width added per visible IMGT position
-_LOGO_HEIGHT_INCHES = 4          # fixed figure height
-_LOGO_WT_MARKER_FONTSIZE = 7     # font size for the WT ★ annotation
+_LOGO_HEIGHT_INCHES = 4  # fixed figure height
+_LOGO_WT_MARKER_FONTSIZE = 7  # font size for the WT ★ annotation
 
 
 def _render_diversity_analysis(library: pd.DataFrame) -> None:
@@ -1551,18 +1661,29 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
     # Clustal-like amino-acid color scheme (by physicochemical property).
     _AA_COLORS: dict[str, str] = {
         # Hydrophobic
-        "A": "#4169E1", "V": "#4169E1", "I": "#4169E1", "L": "#4169E1",
-        "M": "#4169E1", "F": "#4169E1", "W": "#4169E1",
+        "A": "#4169E1",
+        "V": "#4169E1",
+        "I": "#4169E1",
+        "L": "#4169E1",
+        "M": "#4169E1",
+        "F": "#4169E1",
+        "W": "#4169E1",
         # Cysteine (special hydrophobic)
         "C": "#20B2AA",
         # Positively charged
-        "K": "#DC143C", "R": "#DC143C",
+        "K": "#DC143C",
+        "R": "#DC143C",
         # Negatively charged
-        "D": "#C71585", "E": "#C71585",
+        "D": "#C71585",
+        "E": "#C71585",
         # Polar / uncharged
-        "S": "#2E8B57", "T": "#2E8B57", "N": "#2E8B57", "Q": "#2E8B57",
+        "S": "#2E8B57",
+        "T": "#2E8B57",
+        "N": "#2E8B57",
+        "Q": "#2E8B57",
         # Aromatic / polar
-        "H": "#20B2AA", "Y": "#2E8B57",
+        "H": "#20B2AA",
+        "Y": "#2E8B57",
         # Special backbone
         "G": "#FF8C00",
         "P": "#DAA520",
@@ -1615,16 +1736,19 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
 
         # Detect float score columns for color selection
         score_cols = [
-            c for c in umap_df.columns
-            if umap_df[c].dtype in ("float64", "float32") and umap_df[c].notna().any()
+            c for c in umap_df.columns if umap_df[c].dtype in ("float64", "float32") and umap_df[c].notna().any()
         ]
         default_col = "combined_score" if "combined_score" in score_cols else (score_cols[0] if score_cols else None)
-        color_col = st.selectbox(
-            "Color by",
-            options=score_cols,
-            index=score_cols.index(default_col) if default_col and default_col in score_cols else 0,
-            key="diversity_color_col",
-        ) if score_cols else None
+        color_col = (
+            st.selectbox(
+                "Color by",
+                options=score_cols,
+                index=score_cols.index(default_col) if default_col and default_col in score_cols else 0,
+                key="diversity_color_col",
+            )
+            if score_cols
+            else None
+        )
 
         # Try ESM-2 embeddings first; fall back to mutation matrix + Hamming.
         _esm2_available = False
@@ -1642,6 +1766,7 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                 # PCA pre-reduction before UMAP (standard practice for dense embeddings).
                 if esm2_emb.shape[1] > _ESM2_PCA_DIM:
                     from sklearn.decomposition import PCA
+
                     esm2_emb = PCA(n_components=_ESM2_PCA_DIM, random_state=42).fit_transform(
                         esm2_emb.astype(np.float32)
                     )
@@ -1819,10 +1944,7 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                 st.pyplot(fig_logo)
                 plt.close(fig_logo)
 
-                st.caption(
-                    "Stacked bars show amino acid frequencies at each IMGT position. "
-                    "WT residue indicated by ★."
-                )
+                st.caption("Stacked bars show amino acid frequencies at each IMGT position. WT residue indicated by ★.")
             else:
                 st.info(
                     "Sequence logo requires IMGT-numbered variant sequences. "

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; overflow-x: hidden; overflow-y: hidden; }
+  #scroll-wrapper { width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+  #container { display: inline-block; padding: 6px 4px 4px 4px; user-select: none; -webkit-user-select: none; min-width: max-content; }
+  #annotations { position: relative; height: 36px; white-space: nowrap; min-width: max-content; }
+  .region-label { position: absolute; font-size: 9px; font-weight: 700; text-align: center; pointer-events: none; }
+  .region-bracket { position: absolute; bottom: 0; height: 6px; border-left: 2px solid; border-right: 2px solid; border-bottom: 2px solid; pointer-events: none; }
+  #sequence-row { display: flex; white-space: nowrap; cursor: pointer; }
+  .residue { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 22px; font-family: "Courier New", monospace; font-size: 10px; font-weight: 600; border: 0.5px solid #ccc; transition: background-color 0.15s; position: relative; flex-shrink: 0; }
+  .residue:hover { outline: 2px solid #1976D2; outline-offset: -2px; z-index: 2; }
+  .residue.in-overlap { border-bottom: 3px solid #E65100; }
+  .residue.n-boundary { border-left: 3px solid #E65100; border-bottom: 3px solid #E65100; }
+  .residue.c-boundary { border-right: 3px solid #E65100; border-bottom: 3px solid #E65100; }
+  .residue.n-boundary.c-boundary { border-left: 3px solid #E65100; border-right: 3px solid #E65100; border-bottom: 3px solid #E65100; }
+  .residue.overlap-locked::after { content: ""; position: absolute; inset: 0; background: rgba(230, 81, 0, 0.18); pointer-events: none; }
+  #overlap-row { display: flex; white-space: nowrap; height: 10px; }
+  .overlap-cell { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 10px; flex-shrink: 0; }
+  .overlap-cell.active { background: #FFE0B2; }
+  .overlap-cell.n-marker, .overlap-cell.c-marker { background: #E65100; }
+  #ticks { display: flex; white-space: nowrap; height: 14px; position: relative; }
+  .tick { display: inline-flex; align-items: flex-start; justify-content: center; width: 12px; font-size: 7px; color: #999; flex-shrink: 0; }
+  #legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; font-size: 9px; color: #555; }
+  .legend-item { display: flex; align-items: center; gap: 3px; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #bbb; flex-shrink: 0; }
+  .legend-swatch.overlap-swatch { background: #FFE0B2; border-color: #E65100; }
+  .legend-swatch.boundary-swatch { background: #E65100; }
+  #tooltip { display: none; position: fixed; background: #333; color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 4px; pointer-events: none; z-index: 100; white-space: nowrap; }
+  #instructions { font-size: 10px; color: #666; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div id="instructions">Click a residue to set the <b>N-terminal</b> boundary, then click another to set the <b>C-terminal</b> boundary. Click again to reset.</div>
+<div id="scroll-wrapper">
+<div id="container">
+  <div id="annotations"></div>
+  <div id="sequence-row"></div>
+  <div id="overlap-row"></div>
+  <div id="ticks"></div>
+  <div id="legend"></div>
+</div>
+</div>
+<div id="tooltip"></div>
+
+<script>
+function sendMessageToStreamlitClient(type, data) {
+  var outData = Object.assign({isStreamlitMessage: true, type: type}, data);
+  window.parent.postMessage(outData, "*");
+}
+
+var Streamlit = {
+  setComponentReady: function() { sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1}); },
+  setFrameHeight: function(height) { sendMessageToStreamlitClient("streamlit:setFrameHeight", {height: height}); },
+  setComponentValue: function(value) { sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value}); }
+};
+
+var imgtPositionsList = [];
+var regions = [];
+var notablePositions = {};
+var seqLen = 0;
+var pendingUpdate = false;
+
+/* Overlap boundary state: null means not set */
+var nBoundary = null;
+var cBoundary = null;
+/* Click state: 0 = waiting for N click, 1 = waiting for C click, 2 = both set */
+var clickState = 0;
+
+function imgtKeyInt(key) {
+  var m = key.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function posIndex(pos) {
+  for (var i = 0; i < seqLen; i++) {
+    if (imgtPositionsList[i][0] === pos) return i;
+  }
+  return -1;
+}
+
+function isInOverlap(idx) {
+  if (nBoundary === null || cBoundary === null) return false;
+  var nIdx = posIndex(nBoundary);
+  var cIdx = posIndex(cBoundary);
+  return idx >= nIdx && idx <= cIdx;
+}
+
+function render() {
+  var CELL_W = 12;
+  var annotDiv = document.getElementById("annotations");
+  var seqDiv = document.getElementById("sequence-row");
+  var overlapDiv = document.getElementById("overlap-row");
+  var tickDiv = document.getElementById("ticks");
+  var legendDiv = document.getElementById("legend");
+  annotDiv.innerHTML = ""; seqDiv.innerHTML = ""; overlapDiv.innerHTML = ""; tickDiv.innerHTML = "";
+
+  annotDiv.style.width = (seqLen * CELL_W) + "px";
+
+  var nIdx = nBoundary !== null ? posIndex(nBoundary) : -1;
+  var cIdx = cBoundary !== null ? posIndex(cBoundary) : -1;
+
+  /* Region brackets */
+  for (var r = 0; r < regions.length; r++) {
+    var reg = regions[r];
+    var firstIdx = -1, lastIdx = -1;
+    for (var ci = 0; ci < seqLen; ci++) {
+      var num = imgtKeyInt(imgtPositionsList[ci][0]);
+      if (num >= reg.start && num <= reg.end) {
+        if (firstIdx === -1) firstIdx = ci;
+        lastIdx = ci;
+      }
+    }
+    if (firstIdx === -1) continue;
+    var x1 = firstIdx * CELL_W, x2 = (lastIdx + 1) * CELL_W, midX = (x1 + x2) / 2;
+    var lbl = document.createElement("span");
+    lbl.className = "region-label"; lbl.style.left = midX + "px"; lbl.style.transform = "translateX(-50%)";
+    lbl.style.top = "2px"; lbl.style.color = reg.labelColor; lbl.textContent = reg.name;
+    annotDiv.appendChild(lbl);
+    var brk = document.createElement("div");
+    brk.className = "region-bracket"; brk.style.left = x1 + "px"; brk.style.width = (x2 - x1) + "px";
+    brk.style.borderColor = reg.labelColor; annotDiv.appendChild(brk);
+  }
+
+  /* Residue cells */
+  for (var i = 0; i < seqLen; i++) {
+    var pos = imgtPositionsList[i][0];
+    var aa = imgtPositionsList[i][1];
+    var posInt = imgtKeyInt(pos);
+    var cell = document.createElement("span");
+    cell.className = "residue"; cell.dataset.pos = pos; cell.dataset.idx = i; cell.textContent = aa;
+    var bgColor = "#F5F5F5";
+    for (var r2 = 0; r2 < regions.length; r2++) {
+      if (posInt >= regions[r2].start && posInt <= regions[r2].end) { bgColor = regions[r2].color; break; }
+    }
+    if (notablePositions[pos]) { bgColor = notablePositions[pos].bg; cell.style.color = notablePositions[pos].fg; }
+    cell.style.backgroundColor = bgColor; cell.style.borderColor = "#CCC";
+
+    /* Overlap highlight */
+    if (nIdx >= 0 && cIdx >= 0 && i >= nIdx && i <= cIdx) {
+      cell.classList.add("in-overlap");
+      cell.classList.add("overlap-locked");
+      if (i === nIdx) cell.classList.add("n-boundary");
+      if (i === cIdx) cell.classList.add("c-boundary");
+    }
+
+    cell.addEventListener("mousedown", onCellClick);
+    cell.addEventListener("mouseover", onCellHover);
+    cell.addEventListener("mouseout", onCellOut);
+    seqDiv.appendChild(cell);
+  }
+
+  /* Overlap indicator row */
+  for (var oi = 0; oi < seqLen; oi++) {
+    var oc = document.createElement("span");
+    oc.className = "overlap-cell";
+    if (nIdx >= 0 && cIdx >= 0 && oi >= nIdx && oi <= cIdx) {
+      oc.classList.add("active");
+      if (oi === nIdx) oc.classList.add("n-marker");
+      if (oi === cIdx) oc.classList.add("c-marker");
+    }
+    overlapDiv.appendChild(oc);
+  }
+
+  /* Tick marks */
+  for (var t = 0; t < seqLen; t++) {
+    var tKey = imgtPositionsList[t][0];
+    var tInt = imgtKeyInt(tKey);
+    var tk = document.createElement("span"); tk.className = "tick";
+    if (t === 0 || tInt % 10 === 0) tk.textContent = tKey;
+    tickDiv.appendChild(tk);
+  }
+
+  legendDiv.innerHTML = "";
+  var items = [
+    {label: "FR region", color: "#E3F2FD", border: "#90CAF9"},
+    {label: "CDR region", color: "#FFCDD2", border: "#EF9A9A"},
+    {label: "Overlap region", cls: "overlap-swatch"},
+    {label: "Boundary", cls: "boundary-swatch"},
+  ];
+  if (notablePositions && Object.keys(notablePositions).length > 0) {
+    items.splice(2, 0,
+      {label: "Cys (disulfide)", color: "#FFD600", border: "#FFD600"},
+      {label: "Trp (VHH hallmark)", color: "#AB47BC", border: "#AB47BC"}
+    );
+  }
+  for (var li = 0; li < items.length; li++) {
+    var it = items[li];
+    var div = document.createElement("span"); div.className = "legend-item";
+    var sw = document.createElement("span"); sw.className = "legend-swatch" + (it.cls ? " " + it.cls : "");
+    if (it.color) { sw.style.background = it.color; sw.style.borderColor = it.border || it.color; }
+    div.appendChild(sw);
+    var txt = document.createElement("span"); txt.textContent = it.label;
+    div.appendChild(txt); legendDiv.appendChild(div);
+  }
+
+  /* Update instructions */
+  var instrDiv = document.getElementById("instructions");
+  if (nBoundary === null) {
+    instrDiv.innerHTML = "Click a residue to set the <b>N-terminal</b> boundary.";
+  } else if (cBoundary === null) {
+    instrDiv.innerHTML = "N-boundary: <b>IMGT " + nBoundary + "</b>. Click a residue to set the <b>C-terminal</b> boundary.";
+  } else {
+    instrDiv.innerHTML = "Overlap: <b>IMGT " + nBoundary + "</b> → <b>IMGT " + cBoundary + "</b> (" + (cIdx - nIdx + 1) + " residues locked). Click any residue to reset.";
+  }
+
+  Streamlit.setFrameHeight(document.getElementById("scroll-wrapper").scrollHeight + 28);
+}
+
+function onCellClick(e) {
+  e.preventDefault();
+  var pos = e.currentTarget.dataset.pos;
+  var idx = parseInt(e.currentTarget.dataset.idx, 10);
+
+  if (clickState === 0) {
+    /* Set N boundary */
+    nBoundary = pos;
+    cBoundary = null;
+    clickState = 1;
+  } else if (clickState === 1) {
+    /* Set C boundary */
+    var nIdx = posIndex(nBoundary);
+    if (idx < nIdx) {
+      /* Clicked before N boundary — treat as new N boundary */
+      nBoundary = pos;
+      cBoundary = null;
+      clickState = 1;
+    } else {
+      cBoundary = pos;
+      clickState = 2;
+    }
+  } else {
+    /* Reset — start over */
+    nBoundary = pos;
+    cBoundary = null;
+    clickState = 1;
+  }
+
+  pendingUpdate = true;
+  render();
+
+  /* Send value to Streamlit */
+  Streamlit.setComponentValue({
+    n_boundary: nBoundary,
+    c_boundary: cBoundary
+  });
+}
+
+function onCellHover(e) {
+  var pos = e.currentTarget.dataset.pos;
+  var aa = "";
+  for (var k = 0; k < imgtPositionsList.length; k++) {
+    if (imgtPositionsList[k][0] === pos) { aa = imgtPositionsList[k][1]; break; }
+  }
+  var posInt = imgtKeyInt(pos);
+  var regionName = "";
+  for (var r = 0; r < regions.length; r++) {
+    if (posInt >= regions[r].start && posInt <= regions[r].end) { regionName = regions[r].name; break; }
+  }
+  var tip = "IMGT " + pos + " (" + regionName + ") — " + aa;
+  if (nBoundary !== null && cBoundary !== null && isInOverlap(parseInt(e.currentTarget.dataset.idx, 10))) {
+    tip += " [OVERLAP — LOCKED]";
+  }
+  if (notablePositions[pos]) tip += " • " + notablePositions[pos].label;
+  var tooltip = document.getElementById("tooltip");
+  tooltip.textContent = tip; tooltip.style.display = "block";
+  tooltip.style.left = (e.clientX + 10) + "px"; tooltip.style.top = (e.clientY - 28) + "px";
+}
+
+function onCellOut() { document.getElementById("tooltip").style.display = "none"; }
+
+function onStreamlitRender(event) {
+  var args = event.detail ? event.detail.args : event.data.args;
+  if (!args) return;
+  imgtPositionsList = args.imgtPositionsList || [];
+  regions = args.regions || [];
+  notablePositions = args.notablePositions || {};
+  seqLen = imgtPositionsList.length;
+
+  if (pendingUpdate) {
+    pendingUpdate = false;
+  } else {
+    /* Sync from Python's authoritative state */
+    nBoundary = args.nBoundary || null;
+    cBoundary = args.cBoundary || null;
+    if (nBoundary !== null && cBoundary !== null) {
+      clickState = 2;
+    } else if (nBoundary !== null) {
+      clickState = 1;
+    } else {
+      clickState = 0;
+    }
+  }
+  render();
+}
+
+window.addEventListener("message", function(event) {
+  if (event.data.type === "streamlit:render") onStreamlitRender({detail: {args: event.data.args}});
+});
+
+Streamlit.setComponentReady();
+</script>
+</body>
+</html>
