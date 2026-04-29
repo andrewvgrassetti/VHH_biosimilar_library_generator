@@ -1536,6 +1536,14 @@ def tab_mutations(stability_scorer):
 
 _DIVERSITY_SUBSAMPLE_DEFAULT = 20_000
 _DIVERSITY_SUBSAMPLE_THRESHOLD = 50_000
+# PCA dimensionality for pre-reducing ESM-2 embeddings before UMAP.
+# 50 dims balances information retention and UMAP speed for typical library sizes.
+_ESM2_PCA_DIM = 50
+# Sequence logo figure sizing constants.
+_LOGO_MIN_WIDTH_INCHES = 8       # minimum figure width
+_LOGO_WIDTH_PER_POS_INCHES = 0.5  # figure width added per visible IMGT position
+_LOGO_HEIGHT_INCHES = 4          # fixed figure height
+_LOGO_WT_MARKER_FONTSIZE = 7     # font size for the WT ★ annotation
 
 
 def _render_diversity_analysis(library: pd.DataFrame) -> None:
@@ -1631,18 +1639,17 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                 sequences = umap_df["aa_sequence"].fillna("").tolist()
                 with st.spinner("Computing ESM-2 embeddings for UMAP…"):
                     esm2_emb = compute_esm2_embeddings(sequences)
-                # PCA pre-reduction: 50 dims balances speed and information retention
-                # before handing off to UMAP (standard practice for dense embeddings).
-                if esm2_emb.shape[1] > 50:  # noqa: PLR2004
+                # PCA pre-reduction before UMAP (standard practice for dense embeddings).
+                if esm2_emb.shape[1] > _ESM2_PCA_DIM:
                     from sklearn.decomposition import PCA
-                    esm2_emb = PCA(n_components=50, random_state=42).fit_transform(
+                    esm2_emb = PCA(n_components=_ESM2_PCA_DIM, random_state=42).fit_transform(
                         esm2_emb.astype(np.float32)
                     )
                 _feature_matrix = esm2_emb
                 _umap_metric = "euclidean"
                 _esm2_available = True
             except (ImportError, ValueError, RuntimeError, OSError):
-                logger.info("ESM-2 embeddings unavailable for UMAP, falling back to mutation matrix", exc_info=True)
+                logger.debug("ESM-2 embeddings unavailable for UMAP, falling back to mutation matrix", exc_info=True)
 
         if not _esm2_available:
             try:
@@ -1771,8 +1778,9 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                 n_vis = len(visible_positions)
                 x = np.arange(n_vis)
 
-                # Figure width: min 8 inches, scaled by ~0.5 in/position; height fixed at 4 in.
-                fig_logo, ax_logo = plt.subplots(figsize=(max(8, n_vis * 0.5), 4))
+                fig_logo, ax_logo = plt.subplots(
+                    figsize=(max(_LOGO_MIN_WIDTH_INCHES, n_vis * _LOGO_WIDTH_PER_POS_INCHES), _LOGO_HEIGHT_INCHES)
+                )
                 bottoms = np.zeros(n_vis)
 
                 for aa in aa_cols:
@@ -1796,7 +1804,7 @@ def _render_diversity_analysis(library: pd.DataFrame) -> None:
                                 "★",
                                 ha="center",
                                 va="center",
-                                fontsize=7,
+                                fontsize=_LOGO_WT_MARKER_FONTSIZE,
                                 color="black",
                                 fontweight="bold",
                             )

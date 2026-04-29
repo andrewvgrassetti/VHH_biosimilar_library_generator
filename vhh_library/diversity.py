@@ -193,6 +193,9 @@ def compute_esm2_embeddings(
         resolved_device = device
 
     model_name = "facebook/esm2_t6_8M_UR50D"
+    # The cache key uses (model_name, device) only. batch_size is a processing
+    # parameter that does not affect the model weights, so it is intentionally
+    # excluded from the key.
     cache_key = (model_name, resolved_device)
     if cache_key not in _ESM2_MODEL_CACHE:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -275,8 +278,7 @@ def compute_position_frequencies(
                 counts[i, idx] += 1
                 valid_count[i] += 1
 
-    with np.errstate(invalid="ignore", divide="ignore"):
-        freq = np.where(valid_count[:, None] > 0, counts / valid_count[:, None], 0.0)
+    freq = np.where(valid_count[:, None] > 0, counts / valid_count[:, None], 0.0)
 
     result = pd.DataFrame(freq, index=sorted_positions, columns=aa_list)
     result["wt_aa"] = [imgt_numbered.get(pos, "") for pos in sorted_positions]
