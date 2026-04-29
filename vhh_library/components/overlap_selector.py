@@ -8,7 +8,6 @@ yeast-display two-part assembly.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional
 
 import streamlit.components.v1 as components
 
@@ -42,10 +41,10 @@ _REGION_LABEL_COLORS = {
 
 
 def overlap_selector(
-    imgt_numbered: Dict[str, str],
+    imgt_numbered: dict[str, str],
     n_boundary: str | None = None,
     c_boundary: str | None = None,
-    key: Optional[str] = None,
+    key: str | None = None,
 ) -> dict[str, str | None] | None:
     """Render the interactive overlap range selector and return boundary positions.
 
